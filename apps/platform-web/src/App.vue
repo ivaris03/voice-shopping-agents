@@ -1,0 +1,117 @@
+<script setup lang="ts">
+import {
+  AppShell,
+  requestJson,
+  type ItemsResponse,
+  type Merchant,
+  type Order,
+  type Product,
+} from '@voice-shopping/web-ui'
+import { computed, onMounted, ref } from 'vue'
+
+const navItems = [
+  { label: '平台概览', href: '#overview' },
+  { label: '商家治理', href: '#merchants' },
+  { label: '商品总览', href: '#products' },
+  { label: '全量订单', href: '#orders' },
+]
+const merchants = ref<Merchant[]>([])
+const products = ref<Product[]>([])
+const orders = ref<Order[]>([])
+const error = ref('')
+const productQuery = ref('')
+const orderStatus = ref('')
+const enabledMerchants = computed(() => merchants.value.filter((item) => item.isEnabled).length)
+const successfulOrders = computed(() => orders.value.filter((item) => item.status === 'success'))
+const grossMerchandiseValue = computed(() => successfulOrders.value.reduce((sum, item) => sum + Number(item.totalAmount), 0))
+const visibleProducts = computed(() => {
+  const query = productQuery.value.trim().toLowerCase()
+  if (!query) return products.value
+  return products.value.filter((item) => `${item.name} ${item.brand ?? ''} ${item.merchantName ?? ''}`.toLowerCase().includes(query))
+})
+const visibleOrders = computed(() =>
+  orderStatus.value ? orders.value.filter((item) => item.status === orderStatus.value) : orders.value,
+)
+
+async function loadData() {
+  error.value = ''
+  try {
+    const [merchantData, productData, orderData] = await Promise.all([
+      requestJson<ItemsResponse<Merchant>>('/platform/merchants'),
+      requestJson<ItemsResponse<Product>>('/platform/products'),
+      requestJson<ItemsResponse<Order>>('/platform/orders'),
+    ])
+    merchants.value = merchantData.items
+    products.value = productData.items
+    orders.value = orderData.items
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '平台数据加载失败'
+  }
+}
+
+async function toggleMerchant(merchant: Merchant) {
+  let reason: string | undefined
+  if (merchant.isEnabled) {
+    const value = window.prompt(`请输入禁用“${merchant.name}”的原因`, '平台人工审核')
+    if (!value?.trim()) return
+    reason = value.trim()
+  }
+  try {
+    await requestJson<Merchant>(`/platform/merchants/${merchant.id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ isEnabled: !merchant.isEnabled, disabledReason: reason }),
+    })
+    await loadData()
+  } catch (failure) {
+    error.value = failure instanceof Error ? failure.message : '商家状态更新失败'
+  }
+}
+
+onMounted(() => void loadData())
+</script>
+
+<template>
+  <AppShell
+    eyebrow="VOICE COMMERCE · PLATFORM"
+    title="声选平台"
+    description="集中查看全量商家、商品和订单，以商家启停状态实时控制用户端供给。"
+    :nav-items="navItems"
+    action-label="平台管理员"
+  >
+    <template #headline>看清平台全局，<br />守住交易边界。</template>
+    <template #hero-action><a class="primary-button" href="#overview">打开运营总览</a></template>
+    <template #hero-panel><div class="hero-panel"><span class="hero-panel__label">平台健康度</span><div><p class="hero-panel__value">{{ enabledMerchants }}/{{ merchants.length }} 商家启用</p><p class="hero-panel__note">商家禁用后，其在售商品会立即从用户浏览和 Agent 推荐候选中移除。</p></div></div></template>
+
+    <div class="workspace">
+      <p v-if="error" class="error-banner">{{ error }}</p>
+      <section id="overview" class="stat-grid">
+        <article class="stat-card"><span class="stat-label">全部商家</span><span class="stat-value">{{ merchants.length }}</span></article>
+        <article class="stat-card"><span class="stat-label">全部商品</span><span class="stat-value">{{ products.length }}</span></article>
+        <article class="stat-card"><span class="stat-label">成功订单</span><span class="stat-value">{{ successfulOrders.length }}</span></article>
+        <article class="stat-card"><span class="stat-label">平台成交额</span><span class="stat-value">¥{{ grossMerchandiseValue }}</span></article>
+      </section>
+
+      <section id="merchants" class="section-panel">
+        <div class="section-heading"><div><h2>商家治理</h2><p>禁用必须记录原因；恢复启用后供给会重新可见。</p></div></div>
+        <div class="store-grid">
+          <article v-for="merchant in merchants" :key="merchant.id" class="store-card">
+            <span class="badge" :class="{ 'badge--disabled': !merchant.isEnabled }">{{ merchant.isEnabled ? '已启用' : '已禁用' }}</span>
+            <h3>{{ merchant.name }}</h3><p>{{ merchant.description }}</p>
+            <p v-if="merchant.disabledReason" class="reason">禁用原因：{{ merchant.disabledReason }}</p>
+            <div class="card-footer"><span class="muted">{{ merchant.productCount }} 件商品</span><button :class="merchant.isEnabled ? 'danger-button' : 'secondary-button'" class="small-button" @click="toggleMerchant(merchant)">{{ merchant.isEnabled ? '禁用商家' : '恢复启用' }}</button></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="products" class="section-panel">
+        <div class="section-heading"><div><h2>商品总览</h2><p>跨商家检查价格、库存、品类与上下架状态。</p></div><input v-model="productQuery" class="input" style="width: 260px" placeholder="搜索商品、品牌或店铺" /></div>
+        <div class="table-wrap"><table class="data-table"><thead><tr><th>商品</th><th>店铺</th><th>标准品类</th><th>价格</th><th>库存</th><th>状态</th></tr></thead><tbody><tr v-for="product in visibleProducts" :key="product.id"><td><strong>{{ product.name }}</strong><br><span class="muted">{{ product.brand || '无品牌' }}</span></td><td>{{ product.merchantName }}</td><td>{{ product.categoryL2 }}</td><td>¥{{ product.price }}</td><td>{{ product.stock }}</td><td><span class="badge" :class="{ 'badge--disabled': product.status !== 'on_sale' }">{{ product.status }}</span></td></tr></tbody></table></div>
+      </section>
+
+      <section id="orders" class="section-panel">
+        <div class="section-heading"><div><h2>全平台订单</h2><p>订单状态固定为 pending、success 和 fail。</p></div><select v-model="orderStatus" class="select" style="width: auto"><option value="">全部状态</option><option value="pending">pending</option><option value="success">success</option><option value="fail">fail</option></select></div>
+        <div class="table-wrap"><table class="data-table"><thead><tr><th>商品</th><th>商家</th><th>用户</th><th>金额</th><th>状态</th><th>失败原因</th><th>时间</th></tr></thead><tbody><tr v-for="order in visibleOrders" :key="order.id"><td>{{ order.productSnapshot.name }}</td><td>{{ order.merchantSnapshot.name }}</td><td>{{ order.userId.slice(0, 8) }}…</td><td>¥{{ order.totalAmount }}</td><td><span class="badge" :class="`badge--${order.status}`">{{ order.status }}</span></td><td>{{ order.failureReason || '—' }}</td><td>{{ new Date(order.createdAt).toLocaleString() }}</td></tr></tbody></table></div>
+      </section>
+    </div>
+  </AppShell>
+</template>
