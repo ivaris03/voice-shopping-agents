@@ -1,0 +1,186 @@
+# 语音导购 Agent 架构文档
+
+## 1. 架构总览
+
+### 1.1 业务如何解决
+
+平台在普通商品浏览之外增加语音导购：系统理解用户意图，必要时澄清需求，从商品库中选出 3 个商品，再逐商品生成推荐理由和语音话术。点击与下单行为持续更新画像，影响后续精排；语音下单经过二次确认后创建正式订单。
+
+```mermaid
+flowchart LR
+    U["用户"] --> V["语音导购"]
+    V --> W["四个 Agent 的 Custom Workflow"]
+    C["商品库"] --> W
+    P["用户画像快照"] --> W
+    W --> R["商品卡、理由和语音"]
+    R --> E["点击/下单事件"]
+    E --> P
+```
+
+系统包含三个闭环：语音输入到推荐结果的导购闭环、行为更新画像的个性化闭环、二次确认到正式订单的交易闭环。
+
+### 1.2 LangGraph 核心设计
+
+| 核心部分 | 作用 |
+| --- | --- |
+| LangGraph | 运行工作流并支持条件路由、状态持久化和多轮恢复 |
+| Custom Workflow | 使用代码明确规定 Agent 与业务节点的路径 |
+| StateGraph | 定义共享状态、节点、普通边和条件边 |
+| LangChain | 封装模型调用、Prompt 和结构化输出 |
+| LangSmith | 追踪、调试、评估和监控 Agent 工作流 |
+
+## 2. 业务架构
+
+### 2.1 三端业务能力
+
+| 前端 | 能力 |
+| --- | --- |
+| 用户端 | 店铺商品浏览、语音导购、我的订单 |
+| 商家端 | 店铺 CRUD、商品 CRUD、本店订单 |
+| 平台端 | 商家和商品查看、商家启用/禁用、全平台订单 |
+
+三个前端均为独立 Vue 应用，可在同一 Monorepo 中共享组件与 API 类型。
+
+### 2.2 核心业务模块
+
+| 模块 | 职责 |
+| --- | --- |
+| 商家商品 | 店铺、商品、库存和商家启用状态 |
+| 用户画像 | 更新静态/动态画像并生成只读快照 |
+| 导购会话 | 保存消息、槽位和工作流状态 |
+| Agent 工作流 | 意图识别、需求澄清、商品推荐和情感应答 |
+| 合规检查 | 使用正则匹配禁用关键词 |
+| 订单 | 待确认订单、正式订单和三端查询 |
+
+## 3. 技术架构
+
+### 3.1 技术与模型选型
+
+后端采用 FastAPI 模块化单体，三个前端使用 Vue。
+
+| 能力 | 选型 |
+| --- | --- |
+| 工作流/模型封装 | LangGraph、LangChain |
+| Agent 可观测性 | LangSmith |
+| 数据库/向量检索 | PostgreSQL 15 + PGVector |
+| 缓存 | Redis 7 |
+| Agent LLM | `qwen3.7-flash` |
+| 流式 ASR | `qwen-audio-3.0-asr-flash-streaming` |
+| TTS | `qwen-audio-3.0-tts-plus` |
+| Embedding | `qwen3.7-text-embedding` |
+| Reranker | `qwen3-rerank` |
+
+### 3.2 LangGraph Custom Workflow
+
+Agent 与普通 Python 业务代码均作为 StateGraph 节点。Agent 不直接互调，只读取共享 `ShoppingState` 并返回局部状态更新。
+
+```mermaid
+flowchart TD
+    ASR["ASR 转写"] --> I["意图识别 Agent"]
+    I --> R{"代码条件路由"}
+    R -->|推荐| C["需求澄清 Agent：加载品类槽位配置"]
+    C -->|ASK| E["情感应答 Agent"]
+    C -->|READY| P["商品推荐 Agent"]
+    R -->|对比/查询| P
+    R -->|订单| O["订单节点"]
+    R -->|聊天/不支持| E
+    P --> W["文本 WS：推送商品卡"]
+    W --> E
+    O --> E
+    E --> F["流式正则过滤"]
+    F --> T["文本 WS：理由/话术增量"]
+    T --> K["完整文本合规检查"]
+    K --> S["TTS"]
+    S --> A["语音 WS：音频流"]
+```
+
+LangGraph Checkpointer 负责持久化每轮 `ShoppingState`，使工作流能在下一轮继续恢复；本项目使用 `sessionId` 作为 `thread_id`。核心状态包括 `turnId`、`utterance`、`intents`、`actionQueue`、`productCategory`、`requiredSlots`、`slots`、`pendingQuestion`、`userProfileSnapshot`、`productCards`、`emotionStyle`、`pendingOrder` 和最终回复。
+
+LangSmith 记录整条 StateGraph Trace，并以 `sessionId`、`turnId`、意图和 Agent 节点作为元数据，用于查看节点输入输出、模型调用、延迟、Token 消耗和错误。Trace 只用于可观测与评估，不保存业务状态；用户原话、画像和订单数据写入前需要脱敏。
+
+### 3.3 意图、槽位与 Agent 契约
+
+意图识别输入为当前 `utterance` 和最近 3 轮对话摘要。每个意图带 `confidence`；多意图按语义顺序进入 `actionQueue`。推荐意图还需输出标准化 `productCategory`。
+
+```text
+PRODUCT_RECOMMENDATION  PRODUCT_ORDER
+PRODUCT_COMPARE         PRODUCT_QUERY
+CHAT                    UNSUPPORTED_REQUEST
+```
+
+`PRODUCT_ORDER` 的 `action` 为 `CREATE/CONFIRM/CANCEL`。商品需求槽位不由意图识别 Agent 输出，而是在需求澄清阶段按品类动态加载和填充。
+
+| 节点 | 输入 | 输出 |
+| --- | --- | --- |
+| 意图识别 Agent | 当前话语、最近 3 轮摘要 | 意图及置信度、可选订单 action、`productCategory` |
+| 需求澄清 Agent | 当前话语、商品品类、该品类 `requiredSlots`、当前槽位、澄清记录 | `ASK/READY`、已更新槽位、缺失槽位、问题 |
+| 商品推荐 Agent | 意图、槽位、画像快照、商品事实 | `productCards`、`emotionStyle` |
+| 情感应答 Agent | 商品卡、情绪风格、用户原话、会话情绪 | 每个商品的 `productId + reason`、文本增量、`speechText` |
+
+所有结构化输出通过 Pydantic 校验后写入 `ShoppingState`。商品事实由后端提供，Agent 不编造商品 ID、价格、图片和属性；商品卡顺序以加权精排结果为准。
+
+推荐流程首次进入需求澄清节点时，根据 `productCategory` 查询 `requiredSlots`。节点先抽取用户已经表达的槽位，再逐轮询问缺失项；当 `pendingQuestion` 存在时，下一轮用户回答直接路由回需求澄清节点。全部必填槽位完成后才进入商品推荐 Agent。第一版的品类槽位规则可使用应用配置维护，不新增核心业务表。
+
+### 3.4 商品推荐与用户画像
+
+```mermaid
+flowchart LR
+    A["结构化需求"] --> B["硬约束过滤"]
+    B --> C["Embedding + PGVector 召回"]
+    C --> D["粗排 Top 20"]
+    D --> E["Reranker + 静态/动态画像加权"]
+    E --> F["Top 3 商品卡 + emotionStyle"]
+```
+
+```text
+matchScore = 0.4 × rerankerScore
+           + 0.4 × dynamicProfileScore
+           + 0.2 × staticProfileScore
+```
+
+推荐前从 `user_static_profiles`、`user_dynamic_profiles` 生成只读 `userProfileSnapshot`；同一轮推荐只读取该快照。商品点击和正式下单更新两张画像表，下单权重更高。具体画像字段和有效期在建表时确定。
+
+`PRODUCT_COMPARE` 和 `PRODUCT_QUERY` 同样由商品推荐 Agent 处理，但不重新召回商品。情感应答 Agent 为每张商品卡生成一条推荐理由；文本增量携带 `productId`，前端据此填入对应卡片。
+
+### 3.5 语音订单
+
+`PRODUCT_ORDER + CREATE` 创建状态为 `pending` 的订单，有效期 15 分钟；`CONFIRM` 重新校验商家、商品、价格和库存，在事务内扣减库存并更新为 `success`；`CANCEL`、超时或校验失败更新为 `fail`。订单状态仅包含 `pending`、`success`、`fail`，并保存成交快照和幂等键。当前版本不创建支付记录。
+
+### 3.6 核心数据
+
+| 表 | 主要内容 |
+| --- | --- |
+| `merchants` | 店铺信息和启用状态 |
+| `users` | 用户身份和基础信息 |
+| `products` | 商家、价格、库存、属性、状态和商品向量 |
+| `orders` | 用户、商家、商品、成交快照、金额、15 分钟有效期、状态和幂等键 |
+| `user_static_profiles` | 长期用户偏好 |
+| `user_dynamic_profiles` | 近期行为和会话兴趣 |
+| `sessions` | 会话基本信息 |
+| `session_messages` | 会话消息和轮次 ID |
+| `session_states` | `ShoppingState`、画像快照和待确认订单 |
+
+PGVector 字段保存在 `products`；订单成交快照保存在 `orders`。Redis 只保存连接和短期缓存，不保存业务事实。
+
+### 3.7 通信与接口
+
+| 通道 | 数据 |
+| --- | --- |
+| `/ws/text/{session_id}` | 商品卡、推荐理由/话术增量、完整文本、流程状态 |
+| `/ws/audio/{session_id}` | 上行用户录音；下行 TTS 控制消息和二进制音频分片 |
+
+文本连接依次发送 `recommendation.cards`、`text.delta`、`text.completed`。事件统一包含 `type`、`sessionId`、`turnId`、`seq` 和 `payload`，使用 `sessionId + turnId + seq` 唯一定位并排序。语音连接依次发送 `audio.start`、二进制音频分片、`audio.end`。两个连接使用 `sessionId + turnId` 关联并支持重连。
+
+主要 HTTP API：
+
+| 范围 | API |
+| --- | --- |
+| 用户 | 店铺/商品查询、行为上报、本人订单查询 |
+| 商家 | 自有店铺/商品 CRUD、本店订单查询 |
+| 平台 | 商家查询与启停、全平台订单查询 |
+
+### 3.8 待确认事项
+
+1. 各商品品类的 `requiredSlots` 具体配置。
+2. 静态/动态画像的具体字段和有效期，在 Schema 与表设计阶段确定。
+3. Compliance Check 的关键词规则和兜底文本后续确定。
