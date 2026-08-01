@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --port 5173",
     "build": "vue-tsc --noEmit && vite build",
-    "typecheck": "vue-tsc --noEmit"
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@voice-shopping/web-ui": "workspace:*",
@@ -14,8 +15,11 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.1",
+    "@vue/test-utils": "2.4.6",
+    "jsdom": "26.1.0",
     "typescript": "^5.9.2",
     "vite": "^7.1.1",
+    "vitest": "3.2.4",
     "vue-tsc": "^3.0.5"
   }
 }

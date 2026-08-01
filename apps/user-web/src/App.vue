@@ -74,7 +74,9 @@ let audioContext: AudioContext | null = null
 let audioSource: MediaStreamAudioSourceNode | null = null
 let audioProcessor: ScriptProcessorNode | null = null
 let audioChunks: Blob[] = []
+let audioFallbackActive = false
 let locallySubmittedTranscript = ''
+const pendingSpeechByTurn = new Map<string, string>()
 
 const categories = computed(() => [...new Set(products.value.map((item) => item.categoryL2))])
 const visibleProducts = computed(() =>
@@ -127,7 +129,11 @@ function handleEvent(event: ApiEvent<Record<string, unknown>>) {
   if (event.type === 'text.completed') {
     const text = String(event.payload.text ?? '')
     messages.value.push({ role: 'assistant', text })
-    speak(text)
+    if (audioSocket?.readyState === WebSocket.OPEN) {
+      pendingSpeechByTurn.set(event.turnId, text)
+    } else {
+      speak(text)
+    }
   }
   if (event.type === 'order.updated') void loadData()
 }
@@ -158,25 +164,46 @@ function connectAudio(): Promise<void> {
     audioSocket.binaryType = 'blob'
     audioSocket.onopen = () => resolve()
     audioSocket.onerror = () => reject(new Error('音频连接失败'))
+    audioSocket.onclose = () => {
+      for (const text of pendingSpeechByTurn.values()) speak(text)
+      pendingSpeechByTurn.clear()
+      audioChunks = []
+      audioFallbackActive = false
+    }
     audioSocket.onmessage = (message) => {
       if (message.data instanceof Blob) {
-        audioChunks.push(message.data)
+        if (!audioFallbackActive) audioChunks.push(message.data)
         return
       }
-      const event = JSON.parse(String(message.data)) as { type: string; payload?: Record<string, unknown> }
+      const event = JSON.parse(String(message.data)) as {
+        type: string
+        turnId?: string
+        payload?: Record<string, unknown>
+      }
       if (event.type === 'asr.completed') {
         const transcript = String(event.payload?.transcript ?? '')
         if (transcript && transcript !== locallySubmittedTranscript) messages.value.push({ role: 'user', text: transcript })
       }
       if (event.type === 'audio.start') {
         audioChunks = []
-        if (event.payload?.fallback === false) window.speechSynthesis.cancel()
+        audioFallbackActive = event.payload?.fallback === true
+        const pendingText = event.turnId ? pendingSpeechByTurn.get(event.turnId) : undefined
+        if (event.turnId) pendingSpeechByTurn.delete(event.turnId)
+        if (audioFallbackActive) {
+          speak(String(event.payload?.text ?? pendingText ?? ''))
+        } else if ('speechSynthesis' in window) {
+          window.speechSynthesis.cancel()
+        }
       }
-      if (event.type === 'audio.end' && audioChunks.length) {
-        const url = URL.createObjectURL(new Blob(audioChunks, { type: 'audio/wav' }))
-        const audio = new Audio(url)
-        audio.onended = () => URL.revokeObjectURL(url)
-        void audio.play().catch(() => URL.revokeObjectURL(url))
+      if (event.type === 'audio.end') {
+        if (!audioFallbackActive && audioChunks.length) {
+          const url = URL.createObjectURL(new Blob(audioChunks, { type: 'audio/wav' }))
+          const audio = new Audio(url)
+          audio.onended = () => URL.revokeObjectURL(url)
+          void audio.play().catch(() => URL.revokeObjectURL(url))
+        }
+        audioChunks = []
+        audioFallbackActive = false
       }
     }
   })
