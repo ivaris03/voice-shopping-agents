@@ -36,6 +36,8 @@ CHAT                    UNSUPPORTED_REQUEST
 - 每个意图包含 `confidence`，多意图按语义顺序返回。
 - `PRODUCT_ORDER` 使用 `action=CREATE/CONFIRM/CANCEL` 区分订单阶段。
 - `UNSUPPORTED_REQUEST` 不再细分原因。
+- 意图识别 Agent 的 System Prompt 必须包含平台当前维护的全部二级分类，以及各分类的
+  `requiredSlots` 和 `optionalSlots`。
 
 用户发起推荐时必须说明要购买的商品品类。意图识别 Agent 输出标准化 `productCategory` 后，需求澄清 Agent：
 

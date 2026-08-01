@@ -73,6 +73,7 @@ class ShoppingState(TypedDict, total=False):
     taxonomy_slot_definitions: dict[str, dict[str, Any]]
     taxonomy_slot_questions: dict[str, str]
     taxonomy_category_names: dict[str, str]
+    taxonomy_categories: list[dict[str, Any]]
     slots: dict[str, Any]
     clarification_status: Literal["ASK", "READY"]
     missing_slots: list[str]

@@ -95,6 +95,15 @@ async def _taxonomy_context(session: AsyncSession) -> dict[str, Any]:
         "taxonomy_slot_definitions": definitions,
         "taxonomy_slot_questions": questions,
         "taxonomy_category_names": names,
+        "taxonomy_categories": [
+            {
+                "categoryL1": category["category_l1"],
+                "categoryL2": category["category_l2"],
+                "requiredSlots": list(category["required_slots"]),
+                "optionalSlots": list(category["optional_slots"]),
+            }
+            for category in categories
+        ],
     }
 
 
@@ -220,7 +229,17 @@ async def _persist(
     persistable = {
         key: value
         for key, value in state.items()
-        if key not in {"catalog_products", "conversation_history", "previous_product_cards"}
+        if key
+        not in {
+            "catalog_products",
+            "conversation_history",
+            "previous_product_cards",
+            "required_slots_by_category",
+            "taxonomy_slot_definitions",
+            "taxonomy_slot_questions",
+            "taxonomy_category_names",
+            "taxonomy_categories",
+        }
     }
     payload = json.dumps(persistable, ensure_ascii=False, default=_json_default)
     profile = json.dumps(state.get("user_profile_snapshot", {}), ensure_ascii=False)

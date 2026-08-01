@@ -198,7 +198,9 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
     ):
         try:
             model_results = await recognize_with_model(
-                utterance, state.get("conversation_history", [])
+                utterance,
+                state.get("conversation_history", []),
+                state.get("taxonomy_categories", []),
             )
             if model_results:
                 normalized_results: list[IntentResult] = []

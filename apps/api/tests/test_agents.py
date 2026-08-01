@@ -1,5 +1,6 @@
 import pytest
 
+from voice_shopping_api.agents import model as model_module
 from voice_shopping_api.agents import workflow as workflow_module
 from voice_shopping_api.agents.state import IntentResult
 from voice_shopping_api.agents.workflow import (
@@ -104,9 +105,7 @@ async def test_category_switch_clears_old_slots_and_routes_to_clarification() ->
                 "noiseCancellation": True,
             },
             "catalog_products": [],
-            "user_profile_snapshot": {
-                "dynamic": {"categoryScores": {"HEADPHONES": 0.94}}
-            },
+            "user_profile_snapshot": {"dynamic": {"categoryScores": {"HEADPHONES": 0.94}}},
         }
     )
 
@@ -186,7 +185,9 @@ async def test_model_category_switch_overrides_history_and_does_not_create_order
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def fake_recognize_with_model(
-        utterance: str, conversation_history: list[str]
+        utterance: str,
+        conversation_history: list[str],
+        taxonomy_categories: list[dict[str, object]],
     ) -> list[IntentResult]:
         return [
             IntentResult(
@@ -200,9 +201,7 @@ async def test_model_category_switch_overrides_history_and_does_not_create_order
     async def fake_clarify_with_model(*args: object) -> dict[str, object]:
         return {}
 
-    monkeypatch.setattr(
-        workflow_module, "recognize_with_model", fake_recognize_with_model
-    )
+    monkeypatch.setattr(workflow_module, "recognize_with_model", fake_recognize_with_model)
     monkeypatch.setattr(workflow_module, "clarify_with_model", fake_clarify_with_model)
     result = await shopping_workflow.ainvoke(
         {
@@ -224,6 +223,51 @@ async def test_model_category_switch_overrides_history_and_does_not_create_order
     assert result["product_category"] == "RUNNING_SHOES"
     assert result["pending_question"]["slot"] == "gender"
     assert result["pending_question"]["slots"] == ["gender", "size"]
+
+
+@pytest.mark.asyncio
+async def test_intent_system_prompt_contains_all_category_slot_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_chat_json(system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
+        captured["system_prompt"] = system_prompt
+        captured["payload"] = payload
+        return {
+            "intents": [
+                {
+                    "type": "PRODUCT_RECOMMENDATION",
+                    "confidence": 0.98,
+                    "product_category": "HEADPHONES",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(model_module, "_chat_json", fake_chat_json)
+    categories = [
+        {
+            "categoryL1": "ELECTRONICS",
+            "categoryL2": "HEADPHONES",
+            "requiredSlots": ["form", "connectivity"],
+            "optionalSlots": ["noiseCancellation", "batteryHours"],
+        },
+        {
+            "categoryL1": "SPORTS",
+            "categoryL2": "RUNNING_SHOES",
+            "requiredSlots": ["gender", "size", "terrain"],
+            "optionalSlots": ["cushion", "footType"],
+        },
+    ]
+
+    await model_module.recognize_with_model("推荐耳机", [], categories)
+
+    prompt = str(captured["system_prompt"])
+    assert '"categoryL2":"HEADPHONES"' in prompt
+    assert '"requiredSlots":["form","connectivity"]' in prompt
+    assert '"optionalSlots":["noiseCancellation","batteryHours"]' in prompt
+    assert '"categoryL2":"RUNNING_SHOES"' in prompt
+    assert categories not in captured["payload"].values()
 
 
 @pytest.mark.asyncio
