@@ -66,7 +66,7 @@ const loading = ref(true)
 const error = ref('')
 const flowStatus = ref('正在连接导购…')
 const messages = ref<ChatMessage[]>([
-  { role: 'assistant', text: '你好，我是声选导购。告诉我想买什么，我会一次只问一个必要问题。' },
+  { role: 'assistant', text: '你好，我是声选导购。告诉我想买什么，我每次会问一到两个必要问题。' },
 ])
 const isRecording = ref(false)
 let textSocket: WebSocket | null = null
@@ -592,7 +592,7 @@ onBeforeUnmount(() => {
         <div class="voice-controls">
           <p class="eyebrow">LIVE SHOPPING AGENT</p>
           <h2>把需求说给我听</h2>
-          <p style="color: rgba(255,255,255,.68); line-height: 1.7">支持推荐、对比、查询和二次确认下单；每次只追问一个缺失条件。</p>
+          <p style="color: rgba(255,255,255,.68); line-height: 1.7">支持推荐、对比、查询和二次确认下单；每次追问一到两个缺失条件。</p>
           <button
             class="mic-button"
             :class="{ 'mic-button--active': isRecording }"

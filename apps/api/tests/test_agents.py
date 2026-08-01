@@ -24,7 +24,7 @@ async def test_intents_are_returned_in_semantic_order() -> None:
 
 
 @pytest.mark.asyncio
-async def test_clarification_asks_only_one_slot_then_recommends() -> None:
+async def test_clarification_asks_up_to_two_slots_then_recommends() -> None:
     first = await shopping_workflow.ainvoke(
         {
             "utterance": "我想买双跑鞋",
@@ -41,17 +41,16 @@ async def test_clarification_asks_only_one_slot_then_recommends() -> None:
         "cushion",
         "footType",
     ]
-    assert first["pending_question"]["slot"] == "gender"
+    assert first["pending_question"]["slots"] == ["gender", "size"]
+    assert first["pending_question"]["question"] == (
+        "你需要男款、女款还是中性款？另外，你需要多大尺码？"
+    )
 
-    second = await shopping_workflow.ainvoke({**first, "utterance": "男款"})
+    second = await shopping_workflow.ainvoke({**first, "utterance": "男款，42码"})
     assert second["clarification_status"] == "ASK"
-    assert second["pending_question"]["slot"] == "size"
-    third = await shopping_workflow.ainvoke({**second, "utterance": "42码"})
-    assert third["pending_question"]["slot"] == "terrain"
-    fourth = await shopping_workflow.ainvoke({**third, "utterance": "主要日常路跑"})
-    assert fourth["pending_question"]["slot"] == "cushion"
-    fifth = await shopping_workflow.ainvoke({**fourth, "utterance": "高缓震"})
-    assert fifth["pending_question"]["slot"] == "footType"
+    assert second["pending_question"]["slots"] == ["terrain", "cushion"]
+    third = await shopping_workflow.ainvoke({**second, "utterance": "公路，高缓震"})
+    assert third["pending_question"]["slots"] == ["footType"]
 
     product = {
         "id": "20000000-0000-4000-8000-000000000101",
@@ -73,24 +72,24 @@ async def test_clarification_asks_only_one_slot_then_recommends() -> None:
         "selling_points": ["缓震舒适"],
         "image_urls": [],
     }
-    sixth = await shopping_workflow.ainvoke(
-        {**fifth, "utterance": "正常足", "catalog_products": [product]}
+    fourth = await shopping_workflow.ainvoke(
+        {**third, "utterance": "正常足", "catalog_products": [product]}
     )
-    assert sixth["clarification_status"] == "READY"
-    assert sixth["missing_slots"] == []
-    assert sixth["product_cards"][0]["productId"] == product["id"]
-    assert sixth["reasons"][0]["product_id"] == product["id"]
+    assert fourth["clarification_status"] == "READY"
+    assert fourth["missing_slots"] == []
+    assert fourth["product_cards"][0]["productId"] == product["id"]
+    assert fourth["reasons"][0]["product_id"] == product["id"]
 
     comparison = await shopping_workflow.ainvoke(
         {
-            **sixth,
+            **fourth,
             "utterance": "对比一下刚才的商品",
             "product_cards": [],
-            "previous_product_cards": sixth["product_cards"],
+            "previous_product_cards": fourth["product_cards"],
             "catalog_products": [],
         }
     )
-    assert comparison["product_cards"] == sixth["product_cards"]
+    assert comparison["product_cards"] == fourth["product_cards"]
 
 
 @pytest.mark.asyncio
@@ -123,6 +122,7 @@ async def test_category_switch_clears_old_slots_and_routes_to_clarification() ->
         "footType",
     ]
     assert result["pending_question"]["slot"] == "gender"
+    assert result["pending_question"]["slots"] == ["gender", "size"]
     assert result.get("product_cards", []) == []
 
 
@@ -223,6 +223,7 @@ async def test_model_category_switch_overrides_history_and_does_not_create_order
     assert result["intents"][0]["product_category"] == "RUNNING_SHOES"
     assert result["product_category"] == "RUNNING_SHOES"
     assert result["pending_question"]["slot"] == "gender"
+    assert result["pending_question"]["slots"] == ["gender", "size"]
 
 
 @pytest.mark.asyncio
@@ -236,7 +237,7 @@ async def test_clarification_agent_resolves_contextual_asr_error(
         product_category: str,
         required_slots: list[str],
         current_slots: dict[str, object],
-        pending_question: dict[str, str] | None,
+        pending_question: dict[str, object] | None,
         slot_definitions: dict[str, dict[str, object]],
         conversation_history: list[str],
     ) -> dict[str, object]:
@@ -271,6 +272,7 @@ async def test_clarification_agent_resolves_contextual_asr_error(
     }
     assert result["slots"] == {"noiseCancellation": True, "form": "in-ear"}
     assert result["pending_question"]["slot"] == "connectivity"
+    assert result["pending_question"]["slots"] == ["connectivity", "batteryHours"]
 
 
 @pytest.mark.asyncio
@@ -297,6 +299,7 @@ async def test_clarification_agent_rejects_unknown_or_invalid_slot_values(
 
     assert result["slots"] == {"noiseCancellation": True}
     assert result["pending_question"]["slot"] == "form"
+    assert result["pending_question"]["slots"] == ["form", "connectivity"]
 
 
 @pytest.mark.asyncio

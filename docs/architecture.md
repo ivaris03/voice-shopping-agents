@@ -119,7 +119,7 @@ CHAT                    UNSUPPORTED_REQUEST
 
 所有结构化输出通过 Pydantic 校验后写入 `ShoppingState`。商品事实由后端提供，Agent 不编造商品 ID、价格、图片和属性；商品卡顺序以加权精排结果为准。
 
-推荐流程首次进入需求澄清节点时，根据二级 `productCategory` 查询该品类固定的 3~5 个 `attributes` Key，这组 Key 同时作为 `requiredSlots`。节点先抽取用户已经表达的槽位，再逐轮询问缺失项；当 `pendingQuestion` 存在时，下一轮用户回答直接路由回需求澄清节点。全部必填槽位完成后才进入商品推荐 Agent。`budgetMax` 作为跨品类可选过滤条件，不计入品类必填 Key。第一版的品类槽位规则使用应用配置维护，并由数据库约束保证同品类商品 Key 集合一致。
+推荐流程首次进入需求澄清节点时，根据二级 `productCategory` 查询该品类固定的 3~5 个 `attributes` Key，这组 Key 同时作为 `requiredSlots`。节点先抽取用户已经表达的槽位，再逐轮询问一到两个缺失项；当 `pendingQuestion` 存在时，下一轮用户回答直接路由回需求澄清节点。全部必填槽位完成后才进入商品推荐 Agent。`budgetMax` 作为跨品类可选过滤条件，不计入品类必填 Key。第一版的品类槽位规则使用应用配置维护，并由数据库约束保证同品类商品 Key 集合一致。
 
 ### 3.4 商品推荐与用户画像
 

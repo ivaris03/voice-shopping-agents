@@ -474,6 +474,13 @@ def _validated_agent_slots(
     return validated
 
 
+def _question_for_slots(slots: list[str]) -> str:
+    questions = [QUESTIONS[slot] for slot in slots if slot in QUESTIONS]
+    if len(questions) < 2:
+        return questions[0] if questions else QUESTIONS["productCategory"]
+    return f"{questions[0]}另外，{questions[1]}"
+
+
 async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
     category = state.get("product_category")
     existing_slots = {} if state.get("category_changed") else state.get("slots", {})
@@ -509,23 +516,27 @@ async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
             question=QUESTIONS["productCategory"],
         )
         required_slots: list[str] = []
-        question_slot = "productCategory"
+        question_slots = ["productCategory"]
     else:
         missing = [slot for slot in required_slots if slots.get(slot) in (None, "")]
+        question_slots = missing[:2]
         result = ClarificationResult(
             status="ASK" if missing else "READY",
             slots=slots,
             missing_slots=missing,
-            question=QUESTIONS.get(missing[0]) if missing else None,
+            question=_question_for_slots(question_slots) if missing else None,
         )
-        question_slot = missing[0] if missing else ""
     return {
         "required_slots": required_slots,
         "slots": result.slots,
         "clarification_status": result.status,
         "missing_slots": result.missing_slots,
         "pending_question": (
-            {"slot": question_slot, "question": result.question or ""}
+            {
+                "slot": question_slots[0],
+                "slots": question_slots,
+                "question": result.question or "",
+            }
             if result.status == "ASK"
             else None
         ),

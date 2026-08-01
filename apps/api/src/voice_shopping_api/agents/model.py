@@ -120,7 +120,7 @@ async def clarify_with_model(
     product_category: str,
     required_slots: list[str],
     current_slots: dict[str, Any],
-    pending_question: dict[str, str] | None,
+    pending_question: dict[str, Any] | None,
     slot_definitions: dict[str, dict[str, Any]],
     conversation_history: list[str],
 ) -> dict[str, Any]:
@@ -129,7 +129,8 @@ async def clarify_with_model(
 只返回 JSON 对象 {"slots": {...}}，slots 只包含本轮能够确定的新值或用户明确修正的值。
 
 规则：
-1. 优先结合 pendingQuestion 理解简短回答；不要因为回答没有重复问题中的关键词而忽略它。
+1. 优先结合 pendingQuestion 理解简短回答；pendingQuestion.slots 最多包含两个本轮正在询问的
+   槽位。用户可以只回答其中一个，也可以同时回答两个，不要猜测没有回答的那一个。
 2. 语音识别文本可能有同音字、近音字或断句错误。若本轮文本与待填槽位某个候选值在
    读音和语境上高度吻合且没有歧义，应纠正并输出该候选值。例如，询问入耳式还是头戴式时，
    “热辣死的”可按近音和上下文理解为“入耳式的”，输出 {"form":"in-ear"}。

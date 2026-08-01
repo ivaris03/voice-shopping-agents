@@ -72,7 +72,7 @@ class ShoppingState(TypedDict, total=False):
     slots: dict[str, Any]
     clarification_status: Literal["ASK", "READY"]
     missing_slots: list[str]
-    pending_question: dict[str, str] | None
+    pending_question: dict[str, Any] | None
     user_profile_snapshot: dict[str, Any]
     catalog_products: list[dict[str, Any]]
     product_cards: list[dict[str, Any]]
