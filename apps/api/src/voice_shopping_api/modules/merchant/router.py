@@ -17,6 +17,7 @@ from voice_shopping_api.core.queries import (
     row_or_404,
     rows,
 )
+from voice_shopping_api.core.taxonomy import normalize_attributes
 from voice_shopping_api.schemas.domain import (
     ItemsResponse,
     MerchantCreate,
@@ -202,6 +203,34 @@ async def update_product(
 ) -> dict[str, object]:
     values = _product_params(payload)
     if values:
+        existing = await session.execute(
+            text(
+                """
+                SELECT p.category_l2, p.attributes
+                FROM products p JOIN merchants m ON m.id = p.merchant_id
+                WHERE p.id = :id AND m.owner_user_id = :owner_id
+                  AND p.deleted_at IS NULL AND m.deleted_at IS NULL
+                """
+            ),
+            {"id": product_id, "owner_id": owner_id},
+        )
+        current_product = existing.mappings().first()
+        if current_product is None:
+            raise HTTPException(status_code=404, detail="商品不存在")
+        if "category_l2" in values or "attributes" in values:
+            category_l2 = values.get("category_l2", current_product["category_l2"])
+            if category_l2 != current_product["category_l2"] and "attributes" not in values:
+                source_attributes: dict[str, Any] = {}
+            elif "attributes" in values:
+                source_attributes = json.loads(values["attributes"])
+            else:
+                source_attributes = dict(current_product["attributes"])
+            try:
+                values["attributes"] = json.dumps(
+                    normalize_attributes(str(category_l2), source_attributes), ensure_ascii=False
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
         expressions = []
         for key in values:
             expressions.append(

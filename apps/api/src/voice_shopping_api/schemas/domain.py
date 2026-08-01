@@ -5,6 +5,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from voice_shopping_api.core.taxonomy import normalize_attributes
+
 
 def to_camel(value: str) -> str:
     head, *tail = value.split("_")
@@ -91,6 +93,11 @@ class ProductCreate(ApiModel):
     selling_points: list[str] = Field(default_factory=list)
     image_urls: list[str] = Field(default_factory=list)
     status: Literal["draft", "on_sale", "off_sale"] = "draft"
+
+    @model_validator(mode="after")
+    def normalize_category_attributes(self) -> "ProductCreate":
+        self.attributes = normalize_attributes(self.category_l2, self.attributes)
+        return self
 
 
 class ProductUpdate(ApiModel):

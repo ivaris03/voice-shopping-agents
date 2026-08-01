@@ -1,6 +1,7 @@
 import asyncio
 import io
 import json
+import logging
 import wave
 from collections import defaultdict, deque
 from contextlib import suppress
@@ -18,6 +19,7 @@ from voice_shopping_api.core.identity import DEFAULT_CUSTOMER_ID
 from voice_shopping_api.realtime.speech import StreamingAsr, synthesize_chunks
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _user_id(websocket: WebSocket) -> UUID:
@@ -218,6 +220,8 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
     try:
         while True:
             message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
             if message.get("bytes") is not None:
                 received_bytes += len(message["bytes"])
                 if asr is not None:
@@ -228,12 +232,66 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
             control = json.loads(message["text"])
             if control.get("type") == "audio.start":
                 received_bytes = 0
-                if get_settings().dashscope_api_key:
+                turn_id = str(control.get("turnId") or "voice-turn")
+                if not get_settings().dashscope_api_key:
+                    await websocket.send_json(
+                        {
+                            "type": "audio.error",
+                            "sessionId": session_id,
+                            "turnId": turn_id,
+                            "payload": {"message": "服务端未配置 ASR 模型"},
+                        }
+                    )
+                    continue
+                try:
+                    if asr is not None:
+                        with suppress(Exception):
+                            await asr.stop()
                     asr = StreamingAsr()
                     await asr.start()
+                except Exception as exc:
+                    logger.exception("ASR failed to start for session %s", session_id)
+                    asr = None
+                    await websocket.send_json(
+                        {
+                            "type": "audio.error",
+                            "sessionId": session_id,
+                            "turnId": turn_id,
+                            "payload": {"message": f"ASR 模型启动失败：{exc}"},
+                        }
+                    )
+                    continue
+                await websocket.send_json(
+                    {
+                        "type": "asr.started",
+                        "sessionId": session_id,
+                        "turnId": turn_id,
+                        "payload": {
+                            "model": get_settings().asr_model,
+                            "sampleRate": 16_000,
+                        },
+                    }
+                )
             elif control.get("type") == "audio.commit":
                 turn_id = str(control.get("turnId") or "voice-turn")
-                server_transcript = await asr.stop() if asr is not None else ""
+                client_metrics = control.get("clientMetrics") or {}
+                try:
+                    server_transcript = await asr.stop() if asr is not None else ""
+                except Exception as exc:
+                    logger.exception("ASR failed to finish for session %s", session_id)
+                    asr = None
+                    await websocket.send_json(
+                        {
+                            "type": "audio.error",
+                            "sessionId": session_id,
+                            "turnId": turn_id,
+                            "payload": {
+                                "message": f"ASR 转写失败：{exc}",
+                                "receivedBytes": received_bytes,
+                            },
+                        }
+                    )
+                    continue
                 asr = None
                 transcript = server_transcript or str(control.get("transcript") or "").strip()
                 if transcript:
@@ -247,16 +305,36 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
                     )
                     await hub.run_turn(session_id, turn_id, transcript, _user_id(websocket))
                 else:
+                    logger.warning(
+                        "ASR returned no transcript for session %s: bytes=%s client=%s",
+                        session_id,
+                        received_bytes,
+                        client_metrics,
+                    )
                     await websocket.send_json(
                         {
                             "type": "audio.error",
                             "sessionId": session_id,
                             "turnId": turn_id,
                             "payload": {
-                                "message": "当前降级模式需要客户端提交 transcript",
+                                "message": "ASR 未识别到有效语音，请靠近麦克风后重试",
                                 "receivedBytes": received_bytes,
+                                "clientMetrics": client_metrics,
                             },
                         }
                     )
-    except WebSocketDisconnect:
+            elif control.get("type") == "audio.cancel":
+                if asr is not None:
+                    with suppress(Exception):
+                        await asr.stop()
+                asr = None
+                received_bytes = 0
+    except (RuntimeError, WebSocketDisconnect):
+        pass
+    except Exception:
+        logger.exception("Unexpected audio socket failure for session %s", session_id)
+    finally:
+        if asr is not None:
+            with suppress(Exception):
+                await asr.stop()
         hub.audio_connections[session_id].discard(websocket)

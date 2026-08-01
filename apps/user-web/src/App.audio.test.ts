@@ -41,6 +41,37 @@ class FakeSpeechSynthesisUtterance {
   constructor(readonly text: string) {}
 }
 
+class FakeAudioContext {
+  static processor: {
+    onaudioprocess: ((event: { inputBuffer: { getChannelData: () => Float32Array } }) => void) | null
+    connect: ReturnType<typeof vi.fn>
+    disconnect: ReturnType<typeof vi.fn>
+  } | null = null
+
+  state = 'running'
+  sampleRate = 48_000
+  destination = {}
+  close = vi.fn(async () => undefined)
+  resume = vi.fn(async () => undefined)
+
+  createMediaStreamSource() {
+    return { connect: vi.fn(), disconnect: vi.fn() }
+  }
+
+  createScriptProcessor() {
+    FakeAudioContext.processor = {
+      onaudioprocess: null,
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+    }
+    return FakeAudioContext.processor
+  }
+
+  createGain() {
+    return { gain: { value: 1 }, connect: vi.fn(), disconnect: vi.fn() }
+  }
+}
+
 describe('assistant reply audio coordination', () => {
   const speak = vi.fn()
   const cancel = vi.fn()
@@ -53,6 +84,22 @@ describe('assistant reply audio coordination', () => {
 
     vi.stubGlobal('WebSocket', FakeWebSocket)
     vi.stubGlobal('SpeechSynthesisUtterance', FakeSpeechSynthesisUtterance)
+    vi.stubGlobal('AudioContext', FakeAudioContext)
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        enumerateDevices: vi.fn(async () => [
+          { deviceId: 'mic-todesk', groupId: 'group-1', kind: 'audioinput', label: '麦克风 (ToDesk Virtual Audio)' },
+          { deviceId: 'mic-realtek', groupId: 'group-2', kind: 'audioinput', label: '麦克风阵列 (Realtek(R) Audio)' },
+        ]),
+        getUserMedia: vi.fn(async () => {
+          const track = { label: '麦克风阵列 (Realtek(R) Audio)', stop: vi.fn() }
+          return { getAudioTracks: () => [track], getTracks: () => [track] }
+        }),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
+    })
     Object.defineProperty(window, 'speechSynthesis', {
       configurable: true,
       value: { cancel, speak },
@@ -146,6 +193,51 @@ describe('assistant reply audio coordination', () => {
 
     expect(speak).toHaveBeenCalledTimes(1)
     expect(speak.mock.calls[0]?.[0]).toMatchObject({ text: reply, lang: 'zh-CN' })
+
+    wrapper.unmount()
+  })
+
+  it('waits for the server ASR model and submits only captured PCM audio', async () => {
+    const wrapper = mount(App)
+    await flushPromises()
+
+    const audioSocket = FakeWebSocket.instances.find((socket) => socket.url.includes('/ws/audio/'))
+    const startButton = wrapper.get('[aria-label="开始录音"]')
+    await startButton.trigger('click')
+    await flushPromises()
+
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledWith({
+      audio: expect.objectContaining({ deviceId: { exact: 'mic-realtek' } }),
+    })
+
+    const startMessage = JSON.parse(String(audioSocket?.send.mock.calls[0]?.[0])) as {
+      type: string
+      turnId: string
+    }
+    expect(startMessage.type).toBe('audio.start')
+    expect(wrapper.text()).toContain('正在连接 ASR 模型')
+
+    audioSocket?.emitJson({ type: 'asr.started', turnId: startMessage.turnId, payload: {} })
+    await flushPromises()
+    expect(wrapper.get('[aria-label="停止录音"]')).toBeTruthy()
+
+    FakeAudioContext.processor?.onaudioprocess?.({
+      inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.1) },
+    })
+    await wrapper.get('[aria-label="停止录音"]').trigger('click')
+
+    const sentValues = audioSocket?.send.mock.calls.map((call) => call[0]) ?? []
+    expect(sentValues.some((value) => value instanceof ArrayBuffer)).toBe(true)
+    const commitMessage = sentValues
+      .filter((value): value is string => typeof value === 'string')
+      .map((value) => JSON.parse(value) as Record<string, unknown>)
+      .find((value) => value.type === 'audio.commit')
+    expect(commitMessage).toMatchObject({
+      type: 'audio.commit',
+      turnId: startMessage.turnId,
+      clientMetrics: { capturedBytes: expect.any(Number), peak: 0.1, durationMs: expect.any(Number) },
+    })
+    expect(wrapper.text()).toContain('ASR 正在转写')
 
     wrapper.unmount()
   })

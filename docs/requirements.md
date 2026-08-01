@@ -39,10 +39,12 @@ CHAT                    UNSUPPORTED_REQUEST
 
 用户发起推荐时必须说明要购买的商品品类。意图识别 Agent 输出标准化 `productCategory` 后，需求澄清 Agent：
 
-1. 查询该品类的 `requiredSlots` 配置。
+1. 查询该二级品类的 3~5 个 `attributes` Key；同一品类的商品必须使用完全一致的 Key 集合，这组 Key 同时就是 `requiredSlots`。
 2. 从用户当前话语和后续回答中抽取并合并槽位。
 3. 存在缺失项时返回 `ASK`，每轮只追问一个槽位。
 4. 所有必填槽位填写完成后返回 `READY`，进入商品推荐 Agent。
+
+`budgetMax` 是跨品类通用的可选过滤条件，不计入品类必填 Key。商品不适用某个 Key 时仍保留该 Key，值可以为 `null`。
 
 ### 3.2 合规检查
 

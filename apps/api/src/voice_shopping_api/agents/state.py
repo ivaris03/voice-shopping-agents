@@ -63,6 +63,7 @@ class ShoppingState(TypedDict, total=False):
     intents: list[Intent]
     action_queue: list[str]
     product_category: str
+    category_changed: bool
     required_slots: list[str]
     slots: dict[str, Any]
     clarification_status: Literal["ASK", "READY"]

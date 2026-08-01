@@ -18,31 +18,47 @@ from voice_shopping_api.agents.state import (
     ProductRecommendationResult,
     ShoppingState,
 )
+from voice_shopping_api.core.taxonomy import REQUIRED_ATTRIBUTE_KEYS_BY_CATEGORY
 
 logger = logging.getLogger(__name__)
 
 REQUIRED_SLOTS: dict[str, list[str]] = {
-    "HEADPHONES": ["budgetMax", "useCase"],
-    "COFFEE_MACHINE": ["budgetMax", "useCase"],
-    "RUNNING_SHOES": ["budgetMax", "useCase"],
-    "WATCHES": ["budgetMax", "style"],
-    "LIPSTICK": ["budgetMax", "colorPreference"],
+    category: list(keys) for category, keys in REQUIRED_ATTRIBUTE_KEYS_BY_CATEGORY.items()
 }
 
 CATEGORY_ALIASES: dict[str, tuple[str, ...]] = {
     "HEADPHONES": ("耳机", "蓝牙耳机", "降噪耳机"),
     "COFFEE_MACHINE": ("咖啡机", "胶囊机"),
-    "RUNNING_SHOES": ("跑鞋", "跑步鞋", "运动鞋"),
+    "ELECTRIC_KETTLE": ("电水壶", "热水壶", "恒温水壶", "水壶"),
+    "RUNNING_SHOES": ("跑鞋", "跑步鞋", "运动鞋", "鞋子", "鞋"),
     "WATCHES": ("手表", "腕表", "表"),
     "LIPSTICK": ("口红", "唇膏"),
 }
 
 QUESTIONS = {
     "productCategory": "你想购买哪一类商品？",
-    "budgetMax": "你的预算上限是多少？",
-    "useCase": "主要用于什么场景？",
-    "style": "你更偏好什么风格？",
-    "colorPreference": "你更喜欢什么颜色或妆效？",
+    "noiseCancellation": "你需要主动降噪吗？",
+    "form": "你想要入耳式还是头戴式？",
+    "connectivity": "你希望使用蓝牙还是有线连接？",
+    "batteryHours": "你希望续航至少多少小时？",
+    "type": "你想要胶囊式还是半自动咖啡机？",
+    "steamWand": "你需要蒸汽棒打奶泡吗？",
+    "pressureBar": "你希望萃取压力至少多少 Bar？",
+    "waterTankMl": "你希望水箱容量至少多少毫升？",
+    "capacityL": "你希望水壶容量至少多少升？",
+    "temperatureControl": "你需要多档温控吗？",
+    "keepWarm": "你需要保温功能吗？",
+    "gender": "你需要男款、女款还是中性款？",
+    "size": "你需要多大尺码？",
+    "terrain": "主要用于公路还是越野路面？",
+    "cushion": "你偏好高缓震还是适中缓震？",
+    "footType": "你的足型是正常足、扁平足还是过度内旋？",
+    "movement": "你偏好机械、石英还是光动能机芯？",
+    "material": "你偏好钢、钛金属还是树脂材质？",
+    "waterResistance": "你希望至少达到多少米防水？",
+    "shade": "你偏好什么色调？",
+    "finish": "你偏好哑光、缎光还是水光妆效？",
+    "skinType": "你的肤质是干性、油性还是中性？",
 }
 
 COMPLIANCE_PATTERNS = tuple(
@@ -59,6 +75,26 @@ def _category(utterance: str) -> str | None:
     return None
 
 
+def _normalize_category(value: str | None) -> str | None:
+    if not value:
+        return None
+    normalized = value.strip()
+    canonical = normalized.upper()
+    if canonical in CATEGORY_ALIASES:
+        return canonical
+    return _category(normalized)
+
+
+def _has_order_target(state: ShoppingState, utterance: str) -> bool:
+    if any(
+        marker in utterance
+        for marker in ("下单", "第一", "第二", "第三", "这款", "那款", "就要", "就买")
+    ):
+        return True
+    cards = state.get("previous_product_cards") or state.get("product_cards") or []
+    return any(card.get("name") and str(card["name"]) in utterance for card in cards)
+
+
 def _order_action(utterance: str) -> str:
     if any(word in utterance for word in ("取消", "不要了", "不买了")):
         return "CANCEL"
@@ -69,8 +105,14 @@ def _order_action(utterance: str) -> str:
 
 async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
     utterance = state.get("utterance", "").strip()
-    category = _category(utterance) or state.get("product_category")
-    if state.get("model_enabled") and not state.get("pending_question"):
+    previous_category = _normalize_category(state.get("product_category"))
+    explicit_category = _category(utterance)
+    category_switched_by_rule = bool(
+        explicit_category and explicit_category != previous_category
+    )
+    if state.get("model_enabled") and (
+        not state.get("pending_question") or category_switched_by_rule
+    ):
         try:
             model_results = await recognize_with_model(
                 utterance, state.get("conversation_history", [])
@@ -78,30 +120,47 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
             if model_results:
                 normalized_results: list[IntentResult] = []
                 for item in model_results:
-                    normalized_category = item.product_category
-                    if normalized_category:
-                        normalized_category = normalized_category.upper()
-                        for canonical, aliases in CATEGORY_ALIASES.items():
-                            if item.product_category in aliases:
-                                normalized_category = canonical
-                                break
+                    normalized_category = _normalize_category(item.product_category)
                     normalized_results.append(
                         item.model_copy(update={"product_category": normalized_category})
                     )
                 model_results = normalized_results
                 model_category = next(
                     (item.product_category for item in model_results if item.product_category),
-                    category,
+                    None,
                 )
-                model_category = category or model_category
+                category = explicit_category or model_category or previous_category
+                category_changed = bool(category and category != previous_category)
+                if (
+                    category_changed
+                    and model_results[0].type == "PRODUCT_ORDER"
+                    and model_results[0].action == "CREATE"
+                    and not _has_order_target(state, utterance)
+                ):
+                    model_results[0] = IntentResult(
+                        type="PRODUCT_RECOMMENDATION",
+                        confidence=model_results[0].confidence,
+                        product_category=category,
+                    )
+                model_results = [
+                    item.model_copy(update={"product_category": category})
+                    if category
+                    and item.type
+                    in ("PRODUCT_RECOMMENDATION", "PRODUCT_COMPARE", "PRODUCT_QUERY")
+                    else item
+                    for item in model_results
+                ]
                 return {
                     "intents": [item.model_dump(exclude_none=True) for item in model_results],
                     "action_queue": [item.type for item in model_results],
-                    "product_category": model_category,
+                    "product_category": category,
+                    "category_changed": category_changed,
                 }
         except Exception as exc:
             logger.warning("Intent model failed; using deterministic fallback: %s", exc)
-    if state.get("pending_question"):
+    category = explicit_category or previous_category
+    category_changed = bool(category and category != previous_category)
+    if state.get("pending_question") and not category_changed:
         results = [
             IntentResult(type="PRODUCT_RECOMMENDATION", confidence=0.99, product_category=category)
         ]
@@ -146,6 +205,7 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
         "intents": data,
         "action_queue": [result.type for result in results],
         "product_category": category,
+        "category_changed": category_changed,
     }
 
 
@@ -163,7 +223,17 @@ def _chinese_amount(value: str) -> int | None:
     return next((amount for text, amount in simple.items() if text in value), None)
 
 
-def _extract_slots(utterance: str, slots: dict[str, Any]) -> dict[str, Any]:
+def _boolean_answer(utterance: str) -> bool | None:
+    if any(word in utterance for word in ("不需要", "不要", "不用", "否", "没有")):
+        return False
+    if any(word in utterance for word in ("需要", "要", "是", "可以", "有")):
+        return True
+    return None
+
+
+def _extract_slots(
+    utterance: str, slots: dict[str, Any], pending_slot: str | None = None
+) -> dict[str, Any]:
     updated = dict(slots)
     number = re.search(r"(?<!\d)(\d{2,6})(?:\s*元)?(?:以内|以下|左右|预算)?", utterance)
     amount = int(number.group(1)) if number else _chinese_amount(utterance)
@@ -171,31 +241,134 @@ def _extract_slots(utterance: str, slots: dict[str, Any]) -> dict[str, Any]:
         word in utterance for word in ("预算", "以内", "以下", "元", "百", "千", "万")
     ):
         updated["budgetMax"] = amount
-    use_cases = {
-        "commute": ("通勤", "地铁", "上班"),
-        "daily-road-running": ("路跑", "日常跑", "跑步训练", "慢跑"),
-        "trail-running": ("越野", "山路"),
-        "home": ("家用", "在家", "家庭"),
-        "office": ("办公室", "办公"),
+    boolean_slots = {
+        "noiseCancellation",
+        "steamWand",
+        "temperatureControl",
+        "keepWarm",
     }
-    for canonical, aliases in use_cases.items():
-        if any(alias in utterance for alias in aliases):
-            updated["useCase"] = canonical
-            break
+    if pending_slot in boolean_slots:
+        answer = _boolean_answer(utterance)
+        if answer is not None:
+            updated[pending_slot] = answer
+
     if "降噪" in utterance:
-        updated["noiseCancellation"] = True
-    for style in ("商务", "运动", "复古", "简约", "休闲"):
-        if style in utterance:
-            updated["style"] = style
-    for color in ("红色", "粉色", "豆沙", "橘色", "哑光", "水光"):
-        if color in utterance:
-            updated["colorPreference"] = color
+        updated["noiseCancellation"] = not any(
+            word in utterance for word in ("不要降噪", "不需要降噪", "无需降噪")
+        )
+    if any(word in utterance for word in ("入耳", "耳塞")):
+        updated["form"] = "in-ear"
+    elif "头戴" in utterance:
+        updated["form"] = "over-ear"
+    if any(word in utterance.lower() for word in ("蓝牙", "bluetooth", "无线")):
+        updated["connectivity"] = "bluetooth"
+    elif "有线" in utterance:
+        updated["connectivity"] = "wired"
+    battery = re.search(r"(?:续航(?:至少|要)?|至少)\s*(\d{1,3})\s*小时", utterance)
+    if battery:
+        updated["batteryHours"] = int(battery.group(1))
+
+    if "胶囊" in utterance:
+        updated["type"] = "capsule"
+    elif any(word in utterance for word in ("半自动", "半自助")):
+        updated["type"] = "semi-automatic"
+    if any(word in utterance for word in ("蒸汽棒", "奶泡")):
+        updated["steamWand"] = not any(
+            word in utterance for word in ("不要蒸汽棒", "不需要奶泡", "不打奶泡")
+        )
+    pressure = re.search(r"(\d{1,2})\s*(?:Bar|bar|巴)", utterance)
+    if pressure:
+        updated["pressureBar"] = int(pressure.group(1))
+    milliliters = re.search(r"(\d{3,4})\s*(?:毫升|ml|ML)", utterance)
+    if milliliters:
+        updated["waterTankMl"] = int(milliliters.group(1))
+    liters = re.search(r"(\d(?:\.\d+)?)\s*(?:升|L|l)", utterance)
+    if liters:
+        liters_value = float(liters.group(1))
+        if pending_slot == "waterTankMl":
+            updated["waterTankMl"] = int(liters_value * 1000)
+        else:
+            updated["capacityL"] = liters_value
+    if any(word in utterance for word in ("温控", "恒温", "多档温度")):
+        updated["temperatureControl"] = True
+    if "保温" in utterance:
+        updated["keepWarm"] = not any(
+            word in utterance for word in ("不要保温", "不需要保温", "无需保温")
+        )
+
+    if any(word in utterance for word in ("女款", "女士", "女性")):
+        updated["gender"] = "female"
+    elif any(word in utterance for word in ("男款", "男士", "男性")):
+        updated["gender"] = "male"
+    elif any(word in utterance for word in ("中性", "男女都可以", "不限性别")):
+        updated["gender"] = "unisex"
+    shoe_size = re.search(r"(3[5-9]|4[0-6])(?:\.5)?\s*(?:码|号)", utterance)
+    if shoe_size:
+        updated["size"] = float(shoe_size.group(0).split()[0].rstrip("码号"))
+    if any(word in utterance for word in ("越野", "山路")):
+        updated["terrain"] = "trail"
+    elif any(word in utterance for word in ("公路", "路跑", "日常跑", "慢跑")):
+        updated["terrain"] = "road"
+    if any(word in utterance for word in ("高缓震", "强缓震", "缓震好")):
+        updated["cushion"] = "high"
+    elif any(word in utterance for word in ("适中缓震", "中等缓震")):
+        updated["cushion"] = "medium"
+    if "扁平足" in utterance:
+        updated["footType"] = "flat"
+    elif any(word in utterance for word in ("过度内旋", "内旋")):
+        updated["footType"] = "overpronation"
+    elif any(word in utterance for word in ("正常足", "中性足", "正常足型")):
+        updated["footType"] = "neutral"
+
+    if any(word in utterance for word in ("光动能", "光能")):
+        updated["movement"] = "eco-drive"
+    elif "机械" in utterance:
+        updated["movement"] = "automatic"
+    elif "石英" in utterance:
+        updated["movement"] = "quartz"
+    if any(word in utterance for word in ("钛金属", "钛合金", "钛")):
+        updated["material"] = "titanium"
+    elif any(word in utterance for word in ("不锈钢", "钢制", "钢")):
+        updated["material"] = "steel"
+    elif "树脂" in utterance:
+        updated["material"] = "resin"
+    resistance = re.search(r"(\d{2,3})\s*米防水", utterance)
+    if resistance:
+        updated["waterResistance"] = int(resistance.group(1))
+
+    shades = {
+        "milk-tea": ("奶茶",),
+        "tomato-red": ("番茄红",),
+        "coral": ("珊瑚", "橘色"),
+        "rose": ("豆沙", "玫瑰"),
+        "ruby-red": ("正红", "红色"),
+    }
+    for canonical, aliases in shades.items():
+        if any(alias in utterance for alias in aliases):
+            updated["shade"] = canonical
+            break
+    if any(word in utterance for word in ("哑光", "雾面", "丝绒")):
+        updated["finish"] = "matte"
+    elif "缎光" in utterance:
+        updated["finish"] = "satin"
+    elif any(word in utterance for word in ("水光", "亮泽")):
+        updated["finish"] = "glossy"
+    if any(word in utterance for word in ("干性", "干皮")):
+        updated["skinType"] = "dry"
+    elif any(word in utterance for word in ("油性", "油皮")):
+        updated["skinType"] = "oily"
+    elif any(word in utterance for word in ("中性", "正常肤质")):
+        updated["skinType"] = "normal"
     return updated
 
 
 async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
     category = state.get("product_category")
-    slots = _extract_slots(state.get("utterance", ""), state.get("slots", {}))
+    existing_slots = {} if state.get("category_changed") else state.get("slots", {})
+    pending_slot = None
+    if not state.get("category_changed"):
+        pending_slot = (state.get("pending_question") or {}).get("slot")
+    slots = _extract_slots(state.get("utterance", ""), existing_slots, pending_slot)
     if not category:
         result = ClarificationResult(
             status="ASK",
@@ -206,8 +379,8 @@ async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
         required_slots: list[str] = []
         question_slot = "productCategory"
     else:
-        required_slots = REQUIRED_SLOTS.get(category, ["budgetMax", "useCase"])
-        missing = [slot for slot in required_slots if slot not in slots]
+        required_slots = REQUIRED_SLOTS.get(category, [])
+        missing = [slot for slot in required_slots if slots.get(slot) in (None, "")]
         result = ClarificationResult(
             status="ASK" if missing else "READY",
             slots=slots,
@@ -267,6 +440,23 @@ def _score_product(
     }
 
 
+def _attribute_matches(key: str, product_value: Any, requested_value: Any) -> bool:
+    if product_value is None:
+        return False
+    if key == "gender" and product_value == "unisex":
+        return requested_value in {"male", "female", "unisex"}
+    if key == "size" and isinstance(product_value, list) and len(product_value) == 2:
+        return float(product_value[0]) <= float(requested_value) <= float(product_value[1])
+    if key in {"batteryHours", "pressureBar", "waterTankMl", "capacityL"}:
+        return float(product_value) >= float(requested_value)
+    if key == "waterResistance":
+        matched = re.search(r"\d+", str(product_value))
+        return bool(matched and int(matched.group()) >= int(requested_value))
+    if isinstance(product_value, list):
+        return requested_value in product_value
+    return product_value == requested_value
+
+
 async def recommend_products(state: ShoppingState) -> dict[str, Any]:
     intent = (state.get("intents") or [{}])[0].get("type")
     previous_cards = state.get("previous_product_cards", [])
@@ -285,7 +475,9 @@ async def recommend_products(state: ShoppingState) -> dict[str, Any]:
         )
         return result.model_dump()
     category = state.get("product_category")
-    budget = state.get("slots", {}).get("budgetMax")
+    slots = state.get("slots", {})
+    budget = slots.get("budgetMax")
+    required_slots = REQUIRED_SLOTS.get(category or "", [])
     products = []
     for product in state.get("catalog_products", []):
         if category and product.get("category_l2") != category:
@@ -293,8 +485,10 @@ async def recommend_products(state: ShoppingState) -> dict[str, Any]:
         if budget is not None and Decimal(str(product.get("price", 0))) > Decimal(str(budget)):
             continue
         attributes = product.get("attributes", {})
-        if state.get("slots", {}).get("noiseCancellation") and not attributes.get(
-            "noiseCancellation"
+        if any(
+            not _attribute_matches(slot, attributes.get(slot), slots.get(slot))
+            for slot in required_slots
+            if slots.get(slot) is not None
         ):
             continue
         products.append(product)

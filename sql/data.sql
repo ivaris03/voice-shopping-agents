@@ -164,7 +164,7 @@ WITH product_seed (
             '10000000-0000-4000-8000-000000000003'::uuid,
             'KETTLE-X1', '清泉恒温水壶', 'HOME_APPLIANCES', 'ELECTRIC_KETTLE', '清泉',
             '来自已禁用店铺的商品，用户端不应展示。', 239.00::numeric, 20,
-            '{"capacityL":1.5,"temperatureControl":true}'::jsonb,
+            '{"capacityL":1.5,"temperatureControl":true,"keepWarm":true}'::jsonb,
             ARRAY['多档温度可调', '1.5 升容量', '支持保温'],
             ARRAY['https://example.com/images/products/kettle-x1-1.png'], 'on_sale', 21
         ),
@@ -449,7 +449,9 @@ INSERT INTO products (
 )
 SELECT
     ps.id, ps.merchant_id, ps.sku, ps.name, ps.category_l1, ps.category_l2, ps.brand, ps.description,
-    ps.price, ps.stock, ps.attributes, ps.selling_points, ps.image_urls, ps.status,
+    ps.price, ps.stock,
+    normalize_product_attributes(ps.category_l2, ps.attributes),
+    ps.selling_points, ps.image_urls, ps.status,
     (
         SELECT array_agg(
             CASE WHEN dimension_no = ps.embedding_axis THEN 1.0::real ELSE 0.0::real END
@@ -474,6 +476,13 @@ ON CONFLICT (id) DO UPDATE SET
     status = EXCLUDED.status,
     embedding = EXCLUDED.embedding,
     deleted_at = NULL;
+
+-- 同步规范化非种子商品，确保同一二级品类只有一套 3~5 个 attributes Key。
+UPDATE products
+SET attributes = normalize_product_attributes(category_l2, attributes)
+WHERE deleted_at IS NULL;
+
+ALTER TABLE products VALIDATE CONSTRAINT products_attributes_category_check;
 
 INSERT INTO user_static_profiles (
     user_id, category_scores, brand_scores, attribute_preferences,

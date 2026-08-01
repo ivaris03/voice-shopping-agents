@@ -31,17 +31,17 @@ interface ChatMessage {
   text: string
 }
 
-interface SpeechResultEvent {
-  results: { [index: number]: { [index: number]: { transcript: string } } }
+interface PendingAsrStart {
+  turnId: string
+  resolve: () => void
+  reject: (reason: Error) => void
+  timer: number
 }
 
-interface SpeechRecognitionLike {
-  lang: string
-  interimResults: boolean
-  onresult: ((event: SpeechResultEvent) => void) | null
-  onerror: (() => void) | null
-  start: () => void
-  stop: () => void
+interface AudioInputOption {
+  deviceId: string
+  label: string
+  labelKnown: boolean
 }
 
 const navItems = [
@@ -58,7 +58,10 @@ const products = ref<Product[]>([])
 const orders = ref<Order[]>([])
 const recommendations = ref<RecommendationCard[]>([])
 const selectedCategory = ref('')
-const utterance = ref('我想买一副通勤用的降噪耳机，预算一千元以内')
+const audioInputs = ref<AudioInputOption[]>([])
+const selectedAudioInputId = ref(localStorage.getItem('voice-shopping-audio-input') ?? '')
+const activeAudioInputLabel = ref('')
+const utterance = ref('')
 const loading = ref(true)
 const error = ref('')
 const flowStatus = ref('正在连接导购…')
@@ -68,14 +71,24 @@ const messages = ref<ChatMessage[]>([
 const isRecording = ref(false)
 let textSocket: WebSocket | null = null
 let audioSocket: WebSocket | null = null
-let recognition: SpeechRecognitionLike | null = null
+let textConnectPromise: Promise<void> | null = null
+let audioConnectPromise: Promise<void> | null = null
 let mediaStream: MediaStream | null = null
 let audioContext: AudioContext | null = null
 let audioSource: MediaStreamAudioSourceNode | null = null
 let audioProcessor: ScriptProcessorNode | null = null
+let audioGain: GainNode | null = null
 let audioChunks: Blob[] = []
 let audioFallbackActive = false
-let locallySubmittedTranscript = ''
+let capturedAudioBytes = 0
+let capturedAudioPeak = 0
+let recordingStartedAt = 0
+let lastAudioLevelUpdateAt = 0
+let recordingTurnId = ''
+let asrReady = false
+let stopRequested = false
+let pendingPcmFrames: ArrayBuffer[] = []
+let pendingAsrStart: PendingAsrStart | null = null
 const pendingSpeechByTurn = new Map<string, string>()
 
 const categories = computed(() => [...new Set(products.value.map((item) => item.categoryL2))])
@@ -103,6 +116,57 @@ async function loadData() {
   } finally {
     loading.value = false
   }
+}
+
+async function refreshAudioInputs(requestPermission = false) {
+  error.value = ''
+  try {
+    if (requestPermission) {
+      const permissionStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      permissionStream.getTracks().forEach((track) => track.stop())
+    }
+    if (!navigator.mediaDevices?.enumerateDevices) return
+    const devices = await navigator.mediaDevices.enumerateDevices()
+    audioInputs.value = devices
+      .filter(
+        (device) =>
+          device.kind === 'audioinput' &&
+          device.deviceId !== 'default' &&
+          device.deviceId !== 'communications',
+      )
+      .map((device, index) => ({
+        deviceId: device.deviceId,
+        label: device.label || `麦克风 ${index + 1}`,
+        labelKnown: Boolean(device.label),
+      }))
+    if (
+      selectedAudioInputId.value &&
+      !audioInputs.value.some((device) => device.deviceId === selectedAudioInputId.value)
+    ) {
+      selectedAudioInputId.value = ''
+      localStorage.removeItem('voice-shopping-audio-input')
+    }
+    const isVirtualInput = (device: AudioInputOption) =>
+      /(todesk|virtual|stereo mix|立体声混音|vb-audio|voicemeeter|loopback|cable)/i.test(
+        device.label,
+      )
+    const selectedInput = audioInputs.value.find(
+      (device) => device.deviceId === selectedAudioInputId.value,
+    )
+    const preferredInput = audioInputs.value.find(
+      (device) => device.labelKnown && !isVirtualInput(device),
+    )
+    if (preferredInput && (!selectedInput || isVirtualInput(selectedInput))) {
+      selectedAudioInputId.value = preferredInput.deviceId
+      localStorage.setItem('voice-shopping-audio-input', preferredInput.deviceId)
+    }
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '无法读取麦克风列表'
+  }
+}
+
+function handleAudioDeviceChange() {
+  void refreshAudioInputs()
 }
 
 function speak(text: string) {
@@ -135,42 +199,74 @@ function handleEvent(event: ApiEvent<Record<string, unknown>>) {
       speak(text)
     }
   }
+  if (event.type === 'flow.error') {
+    error.value = String(event.payload.message ?? 'Agent 处理失败')
+    flowStatus.value = '处理失败，请重试'
+  }
   if (event.type === 'order.updated') void loadData()
 }
 
 function connectText(): Promise<void> {
   if (textSocket?.readyState === WebSocket.OPEN) return Promise.resolve()
-  return new Promise((resolve, reject) => {
-    textSocket = new WebSocket(`${textWsBaseUrl}/${sessionId}?userId=${customerId}`)
-    textSocket.onopen = () => {
+  if (textSocket?.readyState === WebSocket.CONNECTING && textConnectPromise) return textConnectPromise
+  const socket = new WebSocket(`${textWsBaseUrl}/${sessionId}?userId=${customerId}`)
+  textSocket = socket
+  textConnectPromise = new Promise((resolve, reject) => {
+    socket.onopen = () => {
+      textConnectPromise = null
       flowStatus.value = '导购已就绪'
       resolve()
     }
-    textSocket.onerror = () => reject(new Error('文本连接失败'))
-    textSocket.onclose = () => {
-      flowStatus.value = '连接已断开，发送时会自动重连'
+    socket.onerror = () => {
+      textConnectPromise = null
+      reject(new Error('文本连接失败'))
     }
-    textSocket.onmessage = (message) => {
+    socket.onclose = () => {
+      if (textSocket === socket) textSocket = null
+      textConnectPromise = null
+      flowStatus.value = '连接已断开，发送或录音时会自动重连'
+    }
+    socket.onmessage = (message) => {
       const event = JSON.parse(String(message.data)) as ApiEvent<Record<string, unknown>>
       if (event.type !== 'session.connected') handleEvent(event)
     }
   })
+  return textConnectPromise
 }
 
 function connectAudio(): Promise<void> {
   if (audioSocket?.readyState === WebSocket.OPEN) return Promise.resolve()
-  return new Promise((resolve, reject) => {
-    audioSocket = new WebSocket(`${audioWsBaseUrl}/${sessionId}?userId=${customerId}`)
-    audioSocket.binaryType = 'blob'
-    audioSocket.onopen = () => resolve()
-    audioSocket.onerror = () => reject(new Error('音频连接失败'))
-    audioSocket.onclose = () => {
+  if (audioSocket?.readyState === WebSocket.CONNECTING && audioConnectPromise) return audioConnectPromise
+  const socket = new WebSocket(`${audioWsBaseUrl}/${sessionId}?userId=${customerId}`)
+  audioSocket = socket
+  socket.binaryType = 'blob'
+  audioConnectPromise = new Promise((resolve, reject) => {
+    socket.onopen = () => {
+      audioConnectPromise = null
+      resolve()
+    }
+    socket.onerror = () => {
+      audioConnectPromise = null
+      reject(new Error('音频连接失败'))
+    }
+    socket.onclose = () => {
+      if (audioSocket === socket) audioSocket = null
+      audioConnectPromise = null
+      if (pendingAsrStart) {
+        window.clearTimeout(pendingAsrStart.timer)
+        pendingAsrStart.reject(new Error('ASR 连接已断开'))
+        pendingAsrStart = null
+      }
+      if (isRecording.value) cleanupRecording()
       for (const text of pendingSpeechByTurn.values()) speak(text)
       pendingSpeechByTurn.clear()
       audioChunks = []
       audioFallbackActive = false
+      pendingPcmFrames = []
+      asrReady = false
+      stopRequested = false
     }
-    audioSocket.onmessage = (message) => {
+    socket.onmessage = (message) => {
       if (message.data instanceof Blob) {
         if (!audioFallbackActive) audioChunks.push(message.data)
         return
@@ -182,7 +278,37 @@ function connectAudio(): Promise<void> {
       }
       if (event.type === 'asr.completed') {
         const transcript = String(event.payload?.transcript ?? '')
-        if (transcript && transcript !== locallySubmittedTranscript) messages.value.push({ role: 'user', text: transcript })
+        if (transcript) {
+          messages.value.push({ role: 'user', text: transcript })
+          flowStatus.value = 'Agent 正在理解与筛选…'
+          error.value = ''
+        }
+      }
+      if (event.type === 'asr.started') {
+        const pending = pendingAsrStart
+        if (pending && event.turnId === pending.turnId) {
+          window.clearTimeout(pending.timer)
+          pending.resolve()
+          pendingAsrStart = null
+        }
+      }
+      if (event.type === 'audio.error') {
+        const metrics = (event.payload?.clientMetrics ?? {}) as Record<string, unknown>
+        const receivedBytes = Number(event.payload?.receivedBytes ?? 0)
+        const peak = Number(metrics.peak ?? 0)
+        const durationMs = Number(metrics.durationMs ?? 0)
+        let messageText = String(event.payload?.message ?? '语音识别失败')
+        if (!receivedBytes) messageText = '后端没有收到麦克风音频，请检查 Chrome 麦克风权限'
+        else if (peak < 0.003) messageText = 'Chrome 麦克风输入接近静音，请检查当前输入设备或系统音量'
+        else if (durationMs && durationMs < 800) messageText = '录音时间太短，请说完后再点击停止录音'
+        const pending = pendingAsrStart
+        if (pending && event.turnId === pending.turnId) {
+          window.clearTimeout(pending.timer)
+          pending.reject(new Error(messageText))
+          pendingAsrStart = null
+        }
+        error.value = messageText
+        flowStatus.value = '语音识别失败，请重试'
       }
       if (event.type === 'audio.start') {
         audioChunks = []
@@ -207,6 +333,77 @@ function connectAudio(): Promise<void> {
       }
     }
   })
+  return audioConnectPromise
+}
+
+function startServerAsr(turnId: string): Promise<void> {
+  if (audioSocket?.readyState !== WebSocket.OPEN) return Promise.reject(new Error('音频连接未就绪'))
+  flowStatus.value = '正在连接 ASR 模型…'
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      if (pendingAsrStart?.turnId !== turnId) return
+      pendingAsrStart = null
+      reject(new Error('ASR 模型启动超时'))
+    }, 8_000)
+    pendingAsrStart = { turnId, resolve, reject, timer }
+    audioSocket?.send(JSON.stringify({ type: 'audio.start', turnId }))
+  })
+}
+
+function cleanupRecording(cancelServer = false) {
+  if (cancelServer && recordingTurnId && audioSocket?.readyState === WebSocket.OPEN) {
+    audioSocket.send(JSON.stringify({ type: 'audio.cancel', turnId: recordingTurnId }))
+  }
+  audioProcessor?.disconnect()
+  audioSource?.disconnect()
+  audioGain?.disconnect()
+  void audioContext?.close()
+  audioProcessor = null
+  audioSource = null
+  audioGain = null
+  audioContext = null
+  mediaStream?.getTracks().forEach((track) => track.stop())
+  mediaStream = null
+  isRecording.value = false
+}
+
+function flushPendingPcmFrames() {
+  if (audioSocket?.readyState !== WebSocket.OPEN) return
+  for (const frame of pendingPcmFrames) audioSocket.send(frame)
+  pendingPcmFrames = []
+}
+
+function commitVoiceTurn(turnId: string) {
+  if (audioSocket?.readyState !== WebSocket.OPEN) {
+    error.value = '音频连接已断开，请重新录音'
+    flowStatus.value = '语音识别失败，请重试'
+    recordingTurnId = ''
+    return
+  }
+  flushPendingPcmFrames()
+  const durationMs = Math.max(0, Math.round(performance.now() - recordingStartedAt))
+  flowStatus.value = 'ASR 正在转写…'
+  if (!capturedAudioBytes) {
+    error.value = '未采集到麦克风音频，请检查 Chrome 的麦克风权限'
+  } else if (capturedAudioPeak < 0.003) {
+    error.value = 'Chrome 麦克风输入接近静音，请检查当前输入设备或系统音量'
+  }
+  audioSocket.send(
+    JSON.stringify({
+      type: 'audio.commit',
+      turnId,
+      clientMetrics: {
+        capturedBytes: capturedAudioBytes,
+        peak: Number(capturedAudioPeak.toFixed(6)),
+        durationMs,
+        inputLabel: activeAudioInputLabel.value,
+        selectionMode: selectedAudioInputId.value ? 'explicit' : 'default',
+      },
+    }),
+  )
+  recordingTurnId = ''
+  asrReady = false
+  stopRequested = false
 }
 
 function encodePcm16(input: Float32Array, sourceRate: number): ArrayBuffer {
@@ -240,60 +437,79 @@ async function sendUtterance() {
 async function startVoice() {
   error.value = ''
   try {
-    await connectAudio()
-    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    await Promise.all([connectText(), connectAudio()])
+    const audioConstraints: MediaTrackConstraints = {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    }
+    if (selectedAudioInputId.value) audioConstraints.deviceId = { exact: selectedAudioInputId.value }
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints })
+    activeAudioInputLabel.value = mediaStream.getAudioTracks()[0]?.label || '系统默认麦克风'
+    void refreshAudioInputs()
     audioContext = new AudioContext()
+    if (audioContext.state === 'suspended') await audioContext.resume()
     audioSource = audioContext.createMediaStreamSource(mediaStream)
     audioProcessor = audioContext.createScriptProcessor(4096, 1, 1)
+    audioGain = audioContext.createGain()
+    audioGain.gain.value = 0
+    capturedAudioBytes = 0
+    capturedAudioPeak = 0
+    recordingStartedAt = performance.now()
+    lastAudioLevelUpdateAt = 0
+    pendingPcmFrames = []
+    asrReady = false
+    stopRequested = false
+    const turnId = crypto.randomUUID()
+    recordingTurnId = turnId
     audioProcessor.onaudioprocess = (event) => {
-      if (audioSocket?.readyState !== WebSocket.OPEN || !audioContext) return
-      audioSocket.send(encodePcm16(event.inputBuffer.getChannelData(0), audioContext.sampleRate))
+      if (!audioContext || recordingTurnId !== turnId) return
+      const input = event.inputBuffer.getChannelData(0)
+      let chunkPeak = 0
+      for (const sample of input) chunkPeak = Math.max(chunkPeak, Math.abs(sample))
+      capturedAudioPeak = Math.max(capturedAudioPeak, chunkPeak)
+      const now = performance.now()
+      if (asrReady && now - lastAudioLevelUpdateAt >= 250) {
+        const levelText = chunkPeak >= 0.003 ? '有声音' : '输入较低'
+        flowStatus.value = `正在聆听 · ${activeAudioInputLabel.value} · ${levelText}`
+        lastAudioLevelUpdateAt = now
+      }
+      const pcm = encodePcm16(input, audioContext.sampleRate)
+      capturedAudioBytes += pcm.byteLength
+      if (asrReady && audioSocket?.readyState === WebSocket.OPEN) audioSocket.send(pcm)
+      else pendingPcmFrames.push(pcm)
     }
     audioSource.connect(audioProcessor)
-    audioProcessor.connect(audioContext.destination)
-    const recognitionConstructor = (
-      window as Window & { webkitSpeechRecognition?: new () => SpeechRecognitionLike }
-    ).webkitSpeechRecognition
-    if (recognitionConstructor) {
-      recognition = new recognitionConstructor()
-      recognition.lang = 'zh-CN'
-      recognition.interimResults = false
-      recognition.onresult = (event) => {
-        utterance.value = event.results[0][0].transcript
-      }
-      recognition.onerror = () => {
-        flowStatus.value = '云端语音识别仍在继续…'
-      }
-      recognition.start()
-    }
-    audioSocket?.send(JSON.stringify({ type: 'audio.start', turnId: 'capturing' }))
+    audioProcessor.connect(audioGain)
+    audioGain.connect(audioContext.destination)
     isRecording.value = true
-    flowStatus.value = '正在聆听…'
+    flowStatus.value = '正在聆听，ASR 模型连接中…'
+    await startServerAsr(turnId)
+    if (recordingTurnId !== turnId) return
+    asrReady = true
+    flushPendingPcmFrames()
+    if (stopRequested) commitVoiceTurn(turnId)
+    else flowStatus.value = '正在聆听…'
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '无法使用麦克风'
-    mediaStream?.getTracks().forEach((track) => track.stop())
+    flowStatus.value = '语音通道未就绪'
+    cleanupRecording(true)
+    recordingTurnId = ''
   }
 }
 
 function stopVoice() {
-  recognition?.stop()
-  audioProcessor?.disconnect()
-  audioSource?.disconnect()
-  void audioContext?.close()
-  audioProcessor = null
-  audioSource = null
-  audioContext = null
-  mediaStream?.getTracks().forEach((track) => track.stop())
-  isRecording.value = false
-  window.setTimeout(() => {
-    const transcript = utterance.value.trim()
-    if (audioSocket?.readyState !== WebSocket.OPEN) return
-    const turnId = crypto.randomUUID()
-    locallySubmittedTranscript = transcript
-    if (transcript) messages.value.push({ role: 'user', text: transcript })
-    audioSocket.send(JSON.stringify({ type: 'audio.commit', turnId, transcript }))
-    utterance.value = ''
-  }, 450)
+  const turnId = recordingTurnId
+  cleanupRecording()
+  if (!turnId) {
+    error.value = '音频连接已断开，请重新录音'
+    flowStatus.value = '语音识别失败，请重试'
+    recordingTurnId = ''
+    return
+  }
+  stopRequested = true
+  flowStatus.value = asrReady ? 'ASR 正在转写…' : '正在提交已缓存的语音…'
+  if (asrReady) commitVoiceTurn(turnId)
 }
 
 async function reportClick(productId: string) {
@@ -336,12 +552,14 @@ async function updateOrder(order: Order, action: 'confirm' | 'cancel') {
 }
 
 onMounted(() => {
-  void Promise.all([loadData(), connectText(), connectAudio()]).catch(() => undefined)
+  void Promise.all([loadData(), connectText(), connectAudio(), refreshAudioInputs()]).catch(() => undefined)
+  navigator.mediaDevices?.addEventListener?.('devicechange', handleAudioDeviceChange)
 })
 onBeforeUnmount(() => {
   textSocket?.close()
   audioSocket?.close()
   mediaStream?.getTracks().forEach((track) => track.stop())
+  navigator.mediaDevices?.removeEventListener?.('devicechange', handleAudioDeviceChange)
 })
 </script>
 
@@ -384,7 +602,7 @@ onBeforeUnmount(() => {
           >{{ isRecording ? '■' : '●' }}</button>
           <div class="voice-status"><span class="status-dot"></span>{{ flowStatus }}</div>
           <div class="voice-input-row">
-            <input v-model="utterance" class="input" aria-label="导购消息" @keyup.enter="sendUtterance" />
+            <input v-model="utterance" class="input" aria-label="导购消息" placeholder="例如：我想买一双通勤穿的鞋" @keyup.enter="sendUtterance" />
             <button class="primary-button" type="button" @click="sendUtterance">发送</button>
           </div>
         </div>

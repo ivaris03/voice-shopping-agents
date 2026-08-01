@@ -81,8 +81,115 @@ FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- ============================================================================
 -- 二、商品域：商品
--- 品类的合法组合和 requiredSlots 配置由 FastAPI 应用配置维护。
+-- requiredSlots 由 FastAPI 应用配置维护；attributes 的 Key 集合按二级品类固定。
 -- ============================================================================
+
+CREATE OR REPLACE FUNCTION product_attribute_defaults(category_l2_value text)
+RETURNS jsonb
+LANGUAGE sql
+IMMUTABLE
+AS $$
+    SELECT CASE category_l2_value
+        WHEN 'HEADPHONES' THEN
+            '{"batteryHours":null,"connectivity":null,"form":null,"noiseCancellation":null}'::jsonb
+        WHEN 'COFFEE_MACHINE' THEN
+            '{"pressureBar":null,"steamWand":null,"type":null,"waterTankMl":null}'::jsonb
+        WHEN 'ELECTRIC_KETTLE' THEN
+            '{"capacityL":null,"keepWarm":null,"temperatureControl":null}'::jsonb
+        WHEN 'RUNNING_SHOES' THEN
+            '{"cushion":null,"footType":null,"gender":null,"size":null,"terrain":null}'::jsonb
+        WHEN 'WATCHES' THEN
+            '{"gender":null,"material":null,"movement":null,"waterResistance":null}'::jsonb
+        WHEN 'LIPSTICK' THEN
+            '{"finish":null,"shade":null,"skinType":null}'::jsonb
+        ELSE '{}'::jsonb
+    END;
+$$;
+
+CREATE OR REPLACE FUNCTION normalize_product_attributes(
+    category_l2_value text,
+    attributes_value jsonb
+)
+RETURNS jsonb
+LANGUAGE sql
+IMMUTABLE
+AS $$
+    SELECT CASE category_l2_value
+        WHEN 'HEADPHONES' THEN jsonb_build_object(
+            'batteryHours', attributes_value -> 'batteryHours',
+            'connectivity', COALESCE(attributes_value -> 'connectivity', '"bluetooth"'::jsonb),
+            'form', attributes_value -> 'form',
+            'noiseCancellation', attributes_value -> 'noiseCancellation'
+        )
+        WHEN 'COFFEE_MACHINE' THEN jsonb_build_object(
+            'pressureBar', attributes_value -> 'pressureBar',
+            'steamWand', COALESCE(attributes_value -> 'steamWand', 'false'::jsonb),
+            'type', attributes_value -> 'type',
+            'waterTankMl', attributes_value -> 'waterTankMl'
+        )
+        WHEN 'ELECTRIC_KETTLE' THEN jsonb_build_object(
+            'capacityL', attributes_value -> 'capacityL',
+            'keepWarm', COALESCE(attributes_value -> 'keepWarm', 'false'::jsonb),
+            'temperatureControl', attributes_value -> 'temperatureControl'
+        )
+        WHEN 'RUNNING_SHOES' THEN jsonb_build_object(
+            'cushion', attributes_value -> 'cushion',
+            'footType', COALESCE(attributes_value -> 'footType', '["neutral"]'::jsonb),
+            'gender', attributes_value -> 'gender',
+            'size', COALESCE(attributes_value -> 'size', attributes_value -> 'sizeRange'),
+            'terrain', attributes_value -> 'terrain'
+        )
+        WHEN 'WATCHES' THEN jsonb_build_object(
+            'gender', attributes_value -> 'gender',
+            'material', attributes_value -> 'material',
+            'movement', attributes_value -> 'movement',
+            'waterResistance', attributes_value -> 'waterResistance'
+        )
+        WHEN 'LIPSTICK' THEN jsonb_build_object(
+            'finish', attributes_value -> 'finish',
+            'shade', attributes_value -> 'shade',
+            'skinType', attributes_value -> 'skinType'
+        )
+        ELSE '{}'::jsonb
+    END;
+$$;
+
+CREATE OR REPLACE FUNCTION product_attributes_match_category(
+    category_l2_value text,
+    attributes_value jsonb
+)
+RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+AS $$
+    SELECT CASE category_l2_value
+        WHEN 'HEADPHONES' THEN attribute_keys = ARRAY[
+            'batteryHours', 'connectivity', 'form', 'noiseCancellation'
+        ]::text[]
+        WHEN 'COFFEE_MACHINE' THEN attribute_keys = ARRAY[
+            'pressureBar', 'steamWand', 'type', 'waterTankMl'
+        ]::text[]
+        WHEN 'ELECTRIC_KETTLE' THEN attribute_keys = ARRAY[
+            'capacityL', 'keepWarm', 'temperatureControl'
+        ]::text[]
+        WHEN 'RUNNING_SHOES' THEN attribute_keys = ARRAY[
+            'cushion', 'footType', 'gender', 'size', 'terrain'
+        ]::text[]
+        WHEN 'WATCHES' THEN attribute_keys = ARRAY[
+            'gender', 'material', 'movement', 'waterResistance'
+        ]::text[]
+        WHEN 'LIPSTICK' THEN attribute_keys = ARRAY[
+            'finish', 'shade', 'skinType'
+        ]::text[]
+        ELSE false
+    END
+    FROM (
+        SELECT COALESCE(
+            array_agg(attribute_key ORDER BY attribute_key), ARRAY[]::text[]
+        ) AS attribute_keys
+        FROM jsonb_object_keys(attributes_value) AS keys(attribute_key)
+    ) AS normalized_keys;
+$$;
 
 CREATE TABLE IF NOT EXISTS products (
     id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -111,9 +218,18 @@ CREATE TABLE IF NOT EXISTS products (
     CONSTRAINT products_price_check CHECK (price >= 0),
     CONSTRAINT products_stock_check CHECK (stock >= 0),
     CONSTRAINT products_attributes_object_check CHECK (jsonb_typeof(attributes) = 'object'),
+    CONSTRAINT products_attributes_category_check CHECK (
+        product_attributes_match_category(category_l2, attributes)
+    ),
     CONSTRAINT products_status_check CHECK (status IN ('draft', 'on_sale', 'off_sale')),
     CONSTRAINT products_id_merchant_uq UNIQUE (id, merchant_id)
 );
+
+-- 兼容属性 Schema 的迭代：重建约束，存量数据规范化后由 data.sql VALIDATE。
+ALTER TABLE products DROP CONSTRAINT IF EXISTS products_attributes_category_check;
+ALTER TABLE products
+    ADD CONSTRAINT products_attributes_category_check
+    CHECK (product_attributes_match_category(category_l2, attributes)) NOT VALID;
 
 CREATE UNIQUE INDEX IF NOT EXISTS products_active_sku_uq
     ON products (merchant_id, sku) WHERE deleted_at IS NULL;
