@@ -4,6 +4,7 @@ from voice_shopping_api.agents import workflow as workflow_module
 from voice_shopping_api.agents.state import IntentResult
 from voice_shopping_api.agents.workflow import (
     COMPLIANCE_FALLBACK,
+    clarify_requirements,
     compliance_check,
     recognize_intent,
     shopping_workflow,
@@ -196,9 +197,13 @@ async def test_model_category_switch_overrides_history_and_does_not_create_order
             )
         ]
 
+    async def fake_clarify_with_model(*args: object) -> dict[str, object]:
+        return {}
+
     monkeypatch.setattr(
         workflow_module, "recognize_with_model", fake_recognize_with_model
     )
+    monkeypatch.setattr(workflow_module, "clarify_with_model", fake_clarify_with_model)
     result = await shopping_workflow.ainvoke(
         {
             "utterance": "我想买一双鞋",
@@ -218,6 +223,80 @@ async def test_model_category_switch_overrides_history_and_does_not_create_order
     assert result["intents"][0]["product_category"] == "RUNNING_SHOES"
     assert result["product_category"] == "RUNNING_SHOES"
     assert result["pending_question"]["slot"] == "gender"
+
+
+@pytest.mark.asyncio
+async def test_clarification_agent_resolves_contextual_asr_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_clarify_with_model(
+        utterance: str,
+        product_category: str,
+        required_slots: list[str],
+        current_slots: dict[str, object],
+        pending_question: dict[str, str] | None,
+        slot_definitions: dict[str, dict[str, object]],
+        conversation_history: list[str],
+    ) -> dict[str, object]:
+        captured.update(
+            utterance=utterance,
+            product_category=product_category,
+            pending_question=pending_question,
+            slot_definitions=slot_definitions,
+        )
+        return {"form": "in-ear"}
+
+    monkeypatch.setattr(workflow_module, "clarify_with_model", fake_clarify_with_model)
+    result = await clarify_requirements(
+        {
+            "utterance": "想要热辣死的。",
+            "model_enabled": True,
+            "product_category": "HEADPHONES",
+            "category_changed": False,
+            "slots": {"noiseCancellation": True},
+            "pending_question": {
+                "slot": "form",
+                "question": "你想要入耳式还是头戴式？",
+            },
+            "conversation_history": ["assistant: 你想要入耳式还是头戴式？"],
+        }
+    )
+
+    assert captured["utterance"] == "想要热辣死的。"
+    assert captured["pending_question"] == {
+        "slot": "form",
+        "question": "你想要入耳式还是头戴式？",
+    }
+    assert result["slots"] == {"noiseCancellation": True, "form": "in-ear"}
+    assert result["pending_question"]["slot"] == "connectivity"
+
+
+@pytest.mark.asyncio
+async def test_clarification_agent_rejects_unknown_or_invalid_slot_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_clarify_with_model(*args: object) -> dict[str, object]:
+        return {"form": "speaker", "inventedSlot": True}
+
+    monkeypatch.setattr(workflow_module, "clarify_with_model", fake_clarify_with_model)
+    result = await clarify_requirements(
+        {
+            "utterance": "随便吧",
+            "model_enabled": True,
+            "product_category": "HEADPHONES",
+            "category_changed": False,
+            "slots": {"noiseCancellation": True},
+            "pending_question": {
+                "slot": "form",
+                "question": "你想要入耳式还是头戴式？",
+            },
+        }
+    )
+
+    assert result["slots"] == {"noiseCancellation": True}
+    assert result["pending_question"]["slot"] == "form"
 
 
 @pytest.mark.asyncio

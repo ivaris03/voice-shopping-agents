@@ -6,6 +6,7 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from voice_shopping_api.agents.model import (
+    clarify_with_model,
     recognize_with_model,
     rerank_products,
     respond_with_model,
@@ -59,6 +60,86 @@ QUESTIONS = {
     "shade": "你偏好什么色调？",
     "finish": "你偏好哑光、缎光还是水光妆效？",
     "skinType": "你的肤质是干性、油性还是中性？",
+}
+
+SLOT_DEFINITIONS: dict[str, dict[str, Any]] = {
+    "noiseCancellation": {"type": "boolean", "meaning": "是否需要主动降噪"},
+    "form": {
+        "type": "enum",
+        "meaning": "耳机佩戴形式",
+        "values": {"in-ear": "入耳式", "over-ear": "头戴式"},
+    },
+    "connectivity": {
+        "type": "enum",
+        "meaning": "连接方式",
+        "values": {"bluetooth": "蓝牙或无线", "wired": "有线"},
+    },
+    "batteryHours": {"type": "number", "meaning": "最低续航小时数", "minimum": 1},
+    "type": {
+        "type": "enum",
+        "meaning": "咖啡机类型",
+        "values": {"capsule": "胶囊式", "semi-automatic": "半自动"},
+    },
+    "steamWand": {"type": "boolean", "meaning": "是否需要蒸汽棒"},
+    "pressureBar": {"type": "number", "meaning": "最低萃取压力 Bar", "minimum": 1},
+    "waterTankMl": {"type": "number", "meaning": "最低水箱容量毫升", "minimum": 1},
+    "capacityL": {"type": "number", "meaning": "最低容量升数", "minimum": 0.1},
+    "temperatureControl": {"type": "boolean", "meaning": "是否需要多档温控"},
+    "keepWarm": {"type": "boolean", "meaning": "是否需要保温"},
+    "gender": {
+        "type": "enum",
+        "meaning": "适用性别",
+        "values": {"male": "男款", "female": "女款", "unisex": "中性款"},
+    },
+    "size": {"type": "number", "meaning": "鞋码", "minimum": 1},
+    "terrain": {
+        "type": "enum",
+        "meaning": "跑步路面",
+        "values": {"road": "公路", "trail": "越野"},
+    },
+    "cushion": {
+        "type": "enum",
+        "meaning": "缓震偏好",
+        "values": {"high": "高缓震", "medium": "适中缓震"},
+    },
+    "footType": {
+        "type": "enum",
+        "meaning": "足型",
+        "values": {"neutral": "正常足", "flat": "扁平足", "overpronation": "过度内旋"},
+    },
+    "movement": {
+        "type": "enum",
+        "meaning": "手表机芯",
+        "values": {"automatic": "机械", "quartz": "石英", "eco-drive": "光动能"},
+    },
+    "material": {
+        "type": "enum",
+        "meaning": "手表材质",
+        "values": {"steel": "钢", "titanium": "钛金属", "resin": "树脂"},
+    },
+    "waterResistance": {"type": "number", "meaning": "最低防水米数", "minimum": 1},
+    "shade": {
+        "type": "enum",
+        "meaning": "口红色调",
+        "values": {
+            "milk-tea": "奶茶色",
+            "tomato-red": "番茄红",
+            "coral": "珊瑚色",
+            "rose": "豆沙或玫瑰色",
+            "ruby-red": "正红色",
+        },
+    },
+    "finish": {
+        "type": "enum",
+        "meaning": "口红妆效",
+        "values": {"matte": "哑光", "satin": "缎光", "glossy": "水光"},
+    },
+    "skinType": {
+        "type": "enum",
+        "meaning": "肤质",
+        "values": {"dry": "干性", "oily": "油性", "normal": "中性"},
+    },
+    "budgetMax": {"type": "number", "meaning": "最高预算元数", "minimum": 1},
 }
 
 COMPLIANCE_PATTERNS = tuple(
@@ -362,6 +443,37 @@ def _extract_slots(
     return updated
 
 
+def _validated_agent_slots(
+    candidate_slots: dict[str, Any], required_slots: list[str]
+) -> dict[str, Any]:
+    allowed_slots = {*required_slots, "budgetMax"}
+    validated: dict[str, Any] = {}
+    for slot, value in candidate_slots.items():
+        if slot not in allowed_slots:
+            continue
+        definition = SLOT_DEFINITIONS.get(slot)
+        if not definition:
+            continue
+        value_type = definition["type"]
+        if value_type == "boolean":
+            if type(value) is bool:
+                validated[slot] = value
+            continue
+        if value_type == "enum":
+            if value in definition.get("values", {}):
+                validated[slot] = value
+            continue
+        if (
+            value_type == "number"
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+        ):
+            minimum = float(definition.get("minimum", 0))
+            if float(value) >= minimum:
+                validated[slot] = value
+    return validated
+
+
 async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
     category = state.get("product_category")
     existing_slots = {} if state.get("category_changed") else state.get("slots", {})
@@ -369,6 +481,26 @@ async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
     if not state.get("category_changed"):
         pending_slot = (state.get("pending_question") or {}).get("slot")
     slots = _extract_slots(state.get("utterance", ""), existing_slots, pending_slot)
+    required_slots = REQUIRED_SLOTS.get(category or "", [])
+    if state.get("model_enabled") and category:
+        try:
+            relevant_definitions = {
+                slot: SLOT_DEFINITIONS[slot]
+                for slot in [*required_slots, "budgetMax"]
+                if slot in SLOT_DEFINITIONS
+            }
+            agent_slots = await clarify_with_model(
+                state.get("utterance", ""),
+                category,
+                required_slots,
+                slots,
+                state.get("pending_question") if not state.get("category_changed") else None,
+                relevant_definitions,
+                state.get("conversation_history", []),
+            )
+            slots.update(_validated_agent_slots(agent_slots, required_slots))
+        except Exception as exc:
+            logger.warning("Clarification model failed; using deterministic fallback: %s", exc)
     if not category:
         result = ClarificationResult(
             status="ASK",
@@ -379,7 +511,6 @@ async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
         required_slots: list[str] = []
         question_slot = "productCategory"
     else:
-        required_slots = REQUIRED_SLOTS.get(category, [])
         missing = [slot for slot in required_slots if slots.get(slot) in (None, "")]
         result = ClarificationResult(
             status="ASK" if missing else "READY",

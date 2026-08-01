@@ -10,6 +10,7 @@ from voice_shopping_api.agents.state import (
     EmotionalResponseResult,
     IntentResult,
     ProductReason,
+    SlotExtractionResult,
 )
 from voice_shopping_api.core.config import get_settings
 
@@ -112,6 +113,44 @@ action=CREATE/CONFIRM/CANCEL。推荐相关意图尽量输出标准化 product_c
         {"utterance": utterance, "recentConversation": conversation_history[-6:]},
     )
     return [IntentResult.model_validate(item) for item in result.get("intents", [])]
+
+
+async def clarify_with_model(
+    utterance: str,
+    product_category: str,
+    required_slots: list[str],
+    current_slots: dict[str, Any],
+    pending_question: dict[str, str] | None,
+    slot_definitions: dict[str, dict[str, Any]],
+    conversation_history: list[str],
+) -> dict[str, Any]:
+    prompt = """
+你是电商导购的需求澄清 Agent，负责从用户本轮话语中抽取结构化槽位。
+只返回 JSON 对象 {"slots": {...}}，slots 只包含本轮能够确定的新值或用户明确修正的值。
+
+规则：
+1. 优先结合 pendingQuestion 理解简短回答；不要因为回答没有重复问题中的关键词而忽略它。
+2. 语音识别文本可能有同音字、近音字或断句错误。若本轮文本与待填槽位某个候选值在
+   读音和语境上高度吻合且没有歧义，应纠正并输出该候选值。例如，询问入耳式还是头戴式时，
+   “热辣死的”可按近音和上下文理解为“入耳式的”，输出 {"form":"in-ear"}。
+3. 输出必须使用 slotDefinitions 中的标准值和类型；不得创造槽位或候选值。
+4. 不要猜测用户没有表达的需求。无法可靠判断时返回空 slots。
+5. 已有槽位保持不变，除非用户本轮明确改变答案。
+不要输出解释、置信度、纠正后的句子或 Markdown。
+""".strip()
+    result = await _chat_json(
+        prompt,
+        {
+            "utterance": utterance,
+            "productCategory": product_category,
+            "requiredSlots": required_slots,
+            "currentSlots": current_slots,
+            "pendingQuestion": pending_question,
+            "slotDefinitions": slot_definitions,
+            "recentConversation": conversation_history[-6:],
+        },
+    )
+    return SlotExtractionResult.model_validate(result).slots
 
 
 async def respond_with_model(

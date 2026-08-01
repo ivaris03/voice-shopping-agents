@@ -31,6 +31,10 @@ class ClarificationResult(AgentModel):
     question: str | None = None
 
 
+class SlotExtractionResult(AgentModel):
+    slots: dict[str, Any]
+
+
 class ProductRecommendationResult(AgentModel):
     product_cards: list[dict[str, Any]]
     emotion_style: str
