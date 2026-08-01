@@ -2,12 +2,13 @@
 import {
   AppShell,
   requestJson,
+  type Category,
   type ItemsResponse,
   type Merchant,
   type Order,
   type Product,
 } from '@voice-shopping/web-ui'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 
 const navItems = [
   { label: '经营概览', href: '#overview' },
@@ -18,6 +19,7 @@ const navItems = [
 const stores = ref<Merchant[]>([])
 const products = ref<Product[]>([])
 const orders = ref<Order[]>([])
+const categories = ref<Category[]>([])
 const loading = ref(true)
 const saving = ref(false)
 const error = ref('')
@@ -26,8 +28,8 @@ const productForm = reactive({
   merchantId: '',
   sku: '',
   name: '',
-  categoryL1: 'ELECTRONICS',
-  categoryL2: 'HEADPHONES',
+  categoryL1: '',
+  categoryL2: '',
   brand: '',
   description: '',
   price: 0,
@@ -35,6 +37,15 @@ const productForm = reactive({
   sellingPoints: '',
   status: 'draft' as Product['status'],
 })
+const productAttributes = reactive<Record<string, string | number | boolean | null>>({})
+const selectedCategory = computed<Category | undefined>(() =>
+  categories.value.find((item) => item.categoryL2 === productForm.categoryL2),
+)
+const selectedSlots = computed(() => [
+  ...(selectedCategory.value?.requiredSlots ?? []).map((key) => ({ key, isRequired: true })),
+  ...(selectedCategory.value?.optionalSlots ?? []).map((key) => ({ key, isRequired: false })),
+]
+)
 
 const pendingOrders = computed(() => orders.value.filter((item) => item.status === 'pending').length)
 const revenue = computed(() =>
@@ -45,15 +56,20 @@ async function loadData() {
   loading.value = true
   error.value = ''
   try {
-    const [storeData, productData, orderData] = await Promise.all([
+    const [storeData, productData, orderData, categoryData] = await Promise.all([
       requestJson<ItemsResponse<Merchant>>('/merchant/stores'),
       requestJson<ItemsResponse<Product>>('/merchant/products'),
       requestJson<ItemsResponse<Order>>('/merchant/orders'),
+      requestJson<ItemsResponse<Category>>('/merchant/categories'),
     ])
     stores.value = storeData.items
     products.value = productData.items
     orders.value = orderData.items
+    categories.value = categoryData.items
     if (!productForm.merchantId && stores.value[0]) productForm.merchantId = stores.value[0].id
+    if (!productForm.categoryL2 && categories.value[0]) {
+      productForm.categoryL2 = categories.value[0].categoryL2
+    }
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '数据加载失败'
   } finally {
@@ -92,7 +108,9 @@ async function createProduct() {
       method: 'POST',
       body: JSON.stringify({
         ...productForm,
-        attributes: {},
+        attributes: Object.fromEntries(
+          Object.entries(productAttributes).filter(([, value]) => value !== '' && value !== null),
+        ),
         sellingPoints: productForm.sellingPoints.split('，').map((item) => item.trim()).filter(Boolean),
         imageUrls: [],
       }),
@@ -107,6 +125,18 @@ async function createProduct() {
     saving.value = false
   }
 }
+
+function resetProductAttributes() {
+  for (const key of Object.keys(productAttributes)) delete productAttributes[key]
+  const category = selectedCategory.value
+  if (!category) return
+  productForm.categoryL1 = category.categoryL1
+  for (const slot of [...category.requiredSlots, ...category.optionalSlots]) {
+    productAttributes[slot] = null
+  }
+}
+
+watch(() => productForm.categoryL2, resetProductAttributes)
 
 async function toggleSale(product: Product) {
   const status: Product['status'] = product.status === 'on_sale' ? 'off_sale' : 'on_sale'
@@ -184,14 +214,23 @@ onMounted(() => void loadData())
           <label class="form-field">所属店铺<select v-model="productForm.merchantId" class="select" required><option v-for="store in stores" :key="store.id" :value="store.id">{{ store.name }}</option></select></label>
           <label class="form-field">SKU<input v-model="productForm.sku" class="input" required /></label>
           <label class="form-field form-field--wide">商品名<input v-model="productForm.name" class="input" required /></label>
-          <label class="form-field">一级品类<input v-model="productForm.categoryL1" class="input" required /></label>
-          <label class="form-field">标准品类<input v-model="productForm.categoryL2" class="input" required /></label>
+          <label class="form-field">一级分类<input :value="selectedCategory?.categoryL1 || ''" class="input" disabled /></label>
+          <label class="form-field">二级分类<select v-model="productForm.categoryL2" class="select" required><option v-for="category in categories" :key="category.id" :value="category.categoryL2">{{ category.categoryL1 }} / {{ category.categoryL2 }}</option></select></label>
           <label class="form-field">品牌<input v-model="productForm.brand" class="input" /></label>
           <label class="form-field">状态<select v-model="productForm.status" class="select"><option value="draft">草稿</option><option value="on_sale">上架</option><option value="off_sale">下架</option></select></label>
           <label class="form-field">价格<input v-model.number="productForm.price" class="input" min="0" step="0.01" type="number" required /></label>
           <label class="form-field">库存<input v-model.number="productForm.stock" class="input" min="0" type="number" required /></label>
           <label class="form-field form-field--wide">卖点（逗号分隔）<input v-model="productForm.sellingPoints" class="input" /></label>
           <label class="form-field form-field--wide">描述<input v-model="productForm.description" class="input" /></label>
+          <div v-if="selectedSlots.length" class="slot-fields form-field--full">
+            <div class="slot-fields__heading"><strong>{{ selectedCategory?.categoryL2 }} 商品槽位</strong><span class="muted">标注“必填”的槽位必须填写</span></div>
+            <div class="form-grid">
+              <label v-for="slot in selectedSlots" :key="slot.key" class="form-field">
+                <span>{{ slot.key }} <b v-if="slot.isRequired" class="required-mark">必填</b><span v-else class="muted">选填</span></span>
+                <input v-model="productAttributes[slot.key]" class="input" :required="slot.isRequired" />
+              </label>
+            </div>
+          </div>
           <button class="primary-button" type="submit" :disabled="saving || !stores.length">新增商品</button>
         </form>
         <p v-if="loading" class="empty-state">正在加载…</p>

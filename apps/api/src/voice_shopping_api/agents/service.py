@@ -13,6 +13,7 @@ from voice_shopping_api.agents.state import ShoppingState
 from voice_shopping_api.agents.workflow import is_compliant, shopping_workflow
 from voice_shopping_api.core.config import get_settings
 from voice_shopping_api.core.queries import PRODUCT_COLUMNS, rows
+from voice_shopping_api.core.taxonomy import list_categories
 from voice_shopping_api.modules.catalog.profile import profile_snapshot
 from voice_shopping_api.modules.orders.service import (
     cancel_order,
@@ -74,6 +75,27 @@ async def _catalog(
         {"embedding": embedding},
     )
     return rows(result)
+
+
+async def _taxonomy_context(session: AsyncSession) -> dict[str, Any]:
+    categories = await list_categories(session)
+    required: dict[str, list[str]] = {}
+    definitions: dict[str, dict[str, Any]] = {}
+    questions: dict[str, str] = {}
+    names: dict[str, str] = {}
+    for category in categories:
+        code = str(category["category_l2"])
+        names[code] = code
+        required[code] = list(category["required_slots"])
+        for key in [*category["required_slots"], *category["optional_slots"]]:
+            definitions[key] = {"type": "text"}
+            questions[key] = f"请告诉我{key}？"
+    return {
+        "required_slots_by_category": required,
+        "taxonomy_slot_definitions": definitions,
+        "taxonomy_slot_questions": questions,
+        "taxonomy_category_names": names,
+    }
 
 
 async def _conversation_history(session: AsyncSession, session_id: UUID) -> list[str]:
@@ -318,8 +340,10 @@ async def process_turn(
     turn_id = stable_uuid(f"{session_key}:{turn_key}")
     previous = await _load_previous(session, session_id)
     model_enabled = bool(get_settings().dashscope_api_key)
+    taxonomy_context = await _taxonomy_context(session)
     state_input: ShoppingState = {
         **previous,
+        **taxonomy_context,
         "session_id": session_key,
         "turn_id": turn_key,
         "user_id": str(user_id),

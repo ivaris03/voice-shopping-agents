@@ -1,11 +1,9 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-from voice_shopping_api.core.taxonomy import normalize_attributes
 
 
 def to_camel(value: str) -> str:
@@ -59,6 +57,42 @@ class MerchantStatusUpdate(ApiModel):
         return self
 
 
+SlotKey = Annotated[str, Field(pattern=r"^[a-z][A-Za-z0-9]*$", max_length=100)]
+
+
+class CategoryOut(ApiModel):
+    id: UUID
+    category_l1: str
+    category_l2: str
+    required_slots: list[str]
+    optional_slots: list[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+class CategoryCreate(ApiModel):
+    category_l1: str = Field(min_length=1, max_length=100)
+    category_l2: str = Field(min_length=1, max_length=100)
+    required_slots: list[SlotKey] = Field(default_factory=list)
+    optional_slots: list[SlotKey] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_slots(self) -> "CategoryCreate":
+        self.required_slots = list(dict.fromkeys(self.required_slots))
+        self.optional_slots = list(dict.fromkeys(self.optional_slots))
+        duplicated = set(self.required_slots) & set(self.optional_slots)
+        if duplicated:
+            raise ValueError(f"槽位不能同时为必填和选填：{'、'.join(sorted(duplicated))}")
+        return self
+
+
+class CategoryUpdate(ApiModel):
+    category_l1: str | None = Field(default=None, min_length=1, max_length=100)
+    category_l2: str | None = Field(default=None, min_length=1, max_length=100)
+    required_slots: list[SlotKey] | None = None
+    optional_slots: list[SlotKey] | None = None
+
+
 class ProductOut(ApiModel):
     id: UUID
     merchant_id: UUID
@@ -93,11 +127,6 @@ class ProductCreate(ApiModel):
     selling_points: list[str] = Field(default_factory=list)
     image_urls: list[str] = Field(default_factory=list)
     status: Literal["draft", "on_sale", "off_sale"] = "draft"
-
-    @model_validator(mode="after")
-    def normalize_category_attributes(self) -> "ProductCreate":
-        self.attributes = normalize_attributes(self.category_l2, self.attributes)
-        return self
 
 
 class ProductUpdate(ApiModel):

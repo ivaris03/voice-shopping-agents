@@ -2,17 +2,18 @@ from decimal import Decimal
 from uuid import UUID
 
 import pytest
-from pydantic import ValidationError
 
 from voice_shopping_api.agents.workflow import REQUIRED_SLOTS
-from voice_shopping_api.core.taxonomy import ATTRIBUTE_KEYS_BY_CATEGORY, normalize_attributes
-from voice_shopping_api.schemas.domain import ProductCreate
+from voice_shopping_api.core.taxonomy import (
+    ATTRIBUTE_KEYS_BY_CATEGORY,
+    normalize_attributes,
+    validate_attributes,
+)
+from voice_shopping_api.schemas.domain import CategoryCreate, ProductCreate
 
 
 def test_normalize_attributes_fills_every_category_key_with_null() -> None:
-    attributes = normalize_attributes(
-        "RUNNING_SHOES", {"terrain": "road", "cushion": "high"}
-    )
+    attributes = normalize_attributes("RUNNING_SHOES", {"terrain": "road", "cushion": "high"})
 
     assert set(attributes) == ATTRIBUTE_KEYS_BY_CATEGORY["RUNNING_SHOES"]
     assert attributes["terrain"] == "road"
@@ -31,32 +32,50 @@ def test_normalize_attributes_rejects_undefined_keys() -> None:
         normalize_attributes("RUNNING_SHOES", {"unknownKey": True})
 
 
-def test_product_create_persists_the_complete_category_key_set() -> None:
+def test_product_create_accepts_database_driven_category_without_static_normalization() -> None:
     product = ProductCreate(
         merchant_id=UUID("10000000-0000-4000-8000-000000000004"),
         sku="TEST-RUN-001",
         name="测试跑鞋",
-        category_l1="SPORTS",
-        category_l2="RUNNING_SHOES",
+        category_l1="PETS",
+        category_l2="CAT_FOOD",
         price=Decimal("599.00"),
         stock=10,
-        attributes={"terrain": "road"},
+        attributes={"flavor": "chicken"},
     )
 
-    assert set(product.attributes) == ATTRIBUTE_KEYS_BY_CATEGORY["RUNNING_SHOES"]
-    assert product.attributes["terrain"] == "road"
-    assert product.attributes["footType"] is None
+    assert product.category_l2 == "CAT_FOOD"
+    assert product.attributes == {"flavor": "chicken"}
 
 
-def test_product_create_rejects_unknown_category() -> None:
-    with pytest.raises(ValidationError, match="不支持的二级品类"):
-        ProductCreate(
-            merchant_id=UUID("10000000-0000-4000-8000-000000000004"),
-            sku="TEST-UNKNOWN-001",
-            name="未知商品",
-            category_l1="UNKNOWN",
-            category_l2="UNKNOWN",
-            price=Decimal("1.00"),
-            stock=1,
-            attributes={},
+def test_validate_attributes_requires_required_slots_and_allows_optional_slots() -> None:
+    with pytest.raises(ValueError, match="flavor"):
+        validate_attributes("CAT_FOOD", {"weightKg": 2}, ["flavor"], ["weightKg"])
+
+    assert validate_attributes(
+        "CAT_FOOD", {"flavor": "鸡肉", "weightKg": None}, ["flavor"], ["weightKg"]
+    ) == {"flavor": "鸡肉"}
+
+
+def test_validate_attributes_rejects_undefined_slots() -> None:
+    with pytest.raises(ValueError, match="未定义"):
+        validate_attributes("CAT_FOOD", {"weightKg": 2, "unknown": True}, ["weightKg"], [])
+
+
+def test_required_false_and_zero_are_valid_values() -> None:
+    assert validate_attributes(
+        "DRINK", {"sugarFree": False, "minimumAge": 0}, ["sugarFree", "minimumAge"], []
+    ) == {
+        "sugarFree": False,
+        "minimumAge": 0,
+    }
+
+
+def test_category_rejects_slot_in_both_columns() -> None:
+    with pytest.raises(ValueError, match="同时为必填和选填"):
+        CategoryCreate(
+            category_l1="FOOD",
+            category_l2="DRINK",
+            required_slots=["flavor"],
+            optional_slots=["flavor"],
         )

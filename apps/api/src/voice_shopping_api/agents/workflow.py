@@ -187,10 +187,12 @@ def _order_action(utterance: str) -> str:
 async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
     utterance = state.get("utterance", "").strip()
     previous_category = _normalize_category(state.get("product_category"))
-    explicit_category = _category(utterance)
-    category_switched_by_rule = bool(
-        explicit_category and explicit_category != previous_category
-    )
+    dynamic_category_names = state.get("taxonomy_category_names", {})
+    explicit_category = next(
+        (code for code, name in dynamic_category_names.items() if name and name in utterance),
+        None,
+    ) or _category(utterance)
+    category_switched_by_rule = bool(explicit_category and explicit_category != previous_category)
     if state.get("model_enabled") and (
         not state.get("pending_question") or category_switched_by_rule
     ):
@@ -201,7 +203,11 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
             if model_results:
                 normalized_results: list[IntentResult] = []
                 for item in model_results:
-                    normalized_category = _normalize_category(item.product_category)
+                    normalized_category = (
+                        item.product_category
+                        if item.product_category in dynamic_category_names
+                        else _normalize_category(item.product_category)
+                    )
                     normalized_results.append(
                         item.model_copy(update={"product_category": normalized_category})
                     )
@@ -226,8 +232,7 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
                 model_results = [
                     item.model_copy(update={"product_category": category})
                     if category
-                    and item.type
-                    in ("PRODUCT_RECOMMENDATION", "PRODUCT_COMPARE", "PRODUCT_QUERY")
+                    and item.type in ("PRODUCT_RECOMMENDATION", "PRODUCT_COMPARE", "PRODUCT_QUERY")
                     else item
                     for item in model_results
                 ]
@@ -256,6 +261,8 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
         recommendation_words = ("推荐", "想买", "帮我选", "需要一") + CATEGORY_ALIASES.get(
             category or "", ()
         )
+        if category in dynamic_category_names:
+            recommendation_words += (dynamic_category_names[category],)
         detect(
             recommendation_words,
             IntentResult(type="PRODUCT_RECOMMENDATION", confidence=0.95, product_category=category),
@@ -444,14 +451,16 @@ def _extract_slots(
 
 
 def _validated_agent_slots(
-    candidate_slots: dict[str, Any], required_slots: list[str]
+    candidate_slots: dict[str, Any],
+    required_slots: list[str],
+    definitions: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     allowed_slots = {*required_slots, "budgetMax"}
     validated: dict[str, Any] = {}
     for slot, value in candidate_slots.items():
         if slot not in allowed_slots:
             continue
-        definition = SLOT_DEFINITIONS.get(slot)
+        definition = SLOT_DEFINITIONS.get(slot) or (definitions or {}).get(slot)
         if not definition:
             continue
         value_type = definition["type"]
@@ -462,6 +471,10 @@ def _validated_agent_slots(
         if value_type == "enum":
             if value in definition.get("values", {}):
                 validated[slot] = value
+            continue
+        if value_type == "text":
+            if isinstance(value, str) and value.strip():
+                validated[slot] = value.strip()
             continue
         if (
             value_type == "number"
@@ -474,8 +487,10 @@ def _validated_agent_slots(
     return validated
 
 
-def _question_for_slots(slots: list[str]) -> str:
-    questions = [QUESTIONS[slot] for slot in slots if slot in QUESTIONS]
+def _question_for_slots(slots: list[str], taxonomy_questions: dict[str, str]) -> str:
+    questions = [
+        QUESTIONS.get(slot) or taxonomy_questions.get(slot) or f"请告诉我{slot}？" for slot in slots
+    ]
     if len(questions) < 2:
         return questions[0] if questions else QUESTIONS["productCategory"]
     return f"{questions[0]}另外，{questions[1]}"
@@ -488,13 +503,26 @@ async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
     if not state.get("category_changed"):
         pending_slot = (state.get("pending_question") or {}).get("slot")
     slots = _extract_slots(state.get("utterance", ""), existing_slots, pending_slot)
-    required_slots = REQUIRED_SLOTS.get(category or "", [])
+    required_slots = state.get("required_slots_by_category", REQUIRED_SLOTS).get(category or "", [])
+    taxonomy_definitions = state.get("taxonomy_slot_definitions", {})
+    if pending_slot in taxonomy_definitions and slots.get(pending_slot) in (None, ""):
+        value_type = taxonomy_definitions[pending_slot]["type"]
+        if value_type == "boolean":
+            answer = _boolean_answer(state.get("utterance", ""))
+            if answer is not None:
+                slots[pending_slot] = answer
+        elif value_type == "number":
+            number = re.search(r"(?<!\d)(\d+(?:\.\d+)?)", state.get("utterance", ""))
+            if number:
+                slots[pending_slot] = float(number.group(1))
+        elif value_type == "text" and state.get("utterance", "").strip():
+            slots[pending_slot] = state["utterance"].strip()
     if state.get("model_enabled") and category:
         try:
             relevant_definitions = {
-                slot: SLOT_DEFINITIONS[slot]
+                slot: SLOT_DEFINITIONS.get(slot) or taxonomy_definitions[slot]
                 for slot in [*required_slots, "budgetMax"]
-                if slot in SLOT_DEFINITIONS
+                if slot in taxonomy_definitions or slot in SLOT_DEFINITIONS
             }
             agent_slots = await clarify_with_model(
                 state.get("utterance", ""),
@@ -505,7 +533,7 @@ async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
                 relevant_definitions,
                 state.get("conversation_history", []),
             )
-            slots.update(_validated_agent_slots(agent_slots, required_slots))
+            slots.update(_validated_agent_slots(agent_slots, required_slots, taxonomy_definitions))
         except Exception as exc:
             logger.warning("Clarification model failed; using deterministic fallback: %s", exc)
     if not category:
@@ -524,7 +552,11 @@ async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
             status="ASK" if missing else "READY",
             slots=slots,
             missing_slots=missing,
-            question=_question_for_slots(question_slots) if missing else None,
+            question=(
+                _question_for_slots(question_slots, state.get("taxonomy_slot_questions", {}))
+                if missing
+                else None
+            ),
         )
     return {
         "required_slots": required_slots,
@@ -619,7 +651,7 @@ async def recommend_products(state: ShoppingState) -> dict[str, Any]:
     category = state.get("product_category")
     slots = state.get("slots", {})
     budget = slots.get("budgetMax")
-    required_slots = REQUIRED_SLOTS.get(category or "", [])
+    required_slots = state.get("required_slots_by_category", REQUIRED_SLOTS).get(category or "", [])
     products = []
     for product in state.get("catalog_products", []):
         if category and product.get("category_l2") != category:

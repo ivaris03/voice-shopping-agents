@@ -2,15 +2,17 @@
 import {
   AppShell,
   requestJson,
+  type Category,
   type ItemsResponse,
   type Merchant,
   type Order,
   type Product,
 } from '@voice-shopping/web-ui'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 
 const navItems = [
   { label: '平台概览', href: '#overview' },
+  { label: '品类管理', href: '#categories' },
   { label: '商家治理', href: '#merchants' },
   { label: '商品总览', href: '#products' },
   { label: '全量订单', href: '#orders' },
@@ -18,6 +20,9 @@ const navItems = [
 const merchants = ref<Merchant[]>([])
 const products = ref<Product[]>([])
 const orders = ref<Order[]>([])
+const categories = ref<Category[]>([])
+const categorySaving = ref(false)
+const categoryForm = reactive({ categoryL1: '', categoryL2: '', requiredSlots: '', optionalSlots: '' })
 const error = ref('')
 const productQuery = ref('')
 const orderStatus = ref('')
@@ -32,21 +37,64 @@ const visibleProducts = computed(() => {
 const visibleOrders = computed(() =>
   orderStatus.value ? orders.value.filter((item) => item.status === orderStatus.value) : orders.value,
 )
-
 async function loadData() {
   error.value = ''
   try {
-    const [merchantData, productData, orderData] = await Promise.all([
+    const [merchantData, productData, orderData, categoryData] = await Promise.all([
       requestJson<ItemsResponse<Merchant>>('/platform/merchants'),
       requestJson<ItemsResponse<Product>>('/platform/products'),
       requestJson<ItemsResponse<Order>>('/platform/orders'),
+      requestJson<ItemsResponse<Category>>('/platform/categories'),
     ])
     merchants.value = merchantData.items
     products.value = productData.items
     orders.value = orderData.items
+    categories.value = categoryData.items
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '平台数据加载失败'
   }
+}
+
+function parseSlots(value: string) {
+  return [...new Set(value.split(/[,，\s]+/).map((item) => item.trim()).filter(Boolean))]
+}
+
+async function createCategory() {
+  if (!categoryForm.categoryL1 || !categoryForm.categoryL2) return
+  categorySaving.value = true
+  try {
+    await requestJson('/platform/categories', {
+      method: 'POST',
+      body: JSON.stringify({
+        categoryL1: categoryForm.categoryL1,
+        categoryL2: categoryForm.categoryL2,
+        requiredSlots: parseSlots(categoryForm.requiredSlots),
+        optionalSlots: parseSlots(categoryForm.optionalSlots),
+      }),
+    })
+    Object.assign(categoryForm, { categoryL1: '', categoryL2: '', requiredSlots: '', optionalSlots: '' })
+    await loadData()
+  } catch (failure) {
+    error.value = failure instanceof Error ? failure.message : '分类创建失败'
+  } finally { categorySaving.value = false }
+}
+
+async function editCategory(category: Category) {
+  const required = window.prompt('必填槽位（逗号分隔）', category.requiredSlots.join(', '))
+  if (required === null) return
+  const optional = window.prompt('选填槽位（逗号分隔）', category.optionalSlots.join(', '))
+  if (optional === null) return
+  await requestJson(`/platform/categories/${category.id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ requiredSlots: parseSlots(required), optionalSlots: parseSlots(optional) }),
+  })
+  await loadData()
+}
+
+async function deleteCategory(category: Category) {
+  if (!window.confirm(`确认删除二级分类“${category.categoryL2}”吗？`)) return
+  await requestJson(`/platform/categories/${category.id}`, { method: 'DELETE' })
+  await loadData()
 }
 
 async function toggleMerchant(merchant: Merchant) {
@@ -89,6 +137,30 @@ onMounted(() => void loadData())
         <article class="stat-card"><span class="stat-label">全部商品</span><span class="stat-value">{{ products.length }}</span></article>
         <article class="stat-card"><span class="stat-label">成功订单</span><span class="stat-value">{{ successfulOrders.length }}</span></article>
         <article class="stat-card"><span class="stat-label">平台成交额</span><span class="stat-value">¥{{ grossMerchandiseValue }}</span></article>
+      </section>
+
+      <section id="categories" class="section-panel">
+        <div class="section-heading"><div><h2>品类与槽位</h2><p>维护一级、二级品类，以及商家创建商品时必须填写或可以选填的槽位。</p></div></div>
+        <form class="form-grid" @submit.prevent="createCategory">
+          <label class="form-field">一级分类<input v-model="categoryForm.categoryL1" class="input" placeholder="ELECTRONICS" required /></label>
+          <label class="form-field">二级分类<input v-model="categoryForm.categoryL2" class="input" placeholder="HEADPHONES" required /></label>
+          <label class="form-field form-field--wide">必填槽位（逗号分隔）<input v-model="categoryForm.requiredSlots" class="input" placeholder="form, connectivity" /></label>
+          <label class="form-field form-field--wide">选填槽位（逗号分隔）<input v-model="categoryForm.optionalSlots" class="input" placeholder="noiseCancellation, batteryHours" /></label>
+          <button class="primary-button" type="submit" :disabled="categorySaving">新增分类</button>
+        </form>
+        <div class="taxonomy-list">
+          <article v-for="category in categories" :key="category.id" class="taxonomy-group">
+            <div class="taxonomy-heading">
+              <div><span class="badge">一级 · {{ category.categoryL1 }}</span><h3>{{ category.categoryL2 }}</h3></div>
+              <div class="section-actions"><button class="ghost-button small-button" @click="editCategory(category)">编辑槽位</button><button class="danger-button small-button" @click="deleteCategory(category)">删除</button></div>
+            </div>
+            <div class="slot-list">
+              <span v-for="slot in category.requiredSlots" :key="`required-${slot}`" class="slot-chip">{{ slot }} · 必填</span>
+              <span v-for="slot in category.optionalSlots" :key="`optional-${slot}`" class="slot-chip slot-chip--optional">{{ slot }} · 选填</span>
+              <span v-if="!category.requiredSlots.length && !category.optionalSlots.length" class="muted">暂未配置槽位</span>
+            </div>
+          </article>
+        </div>
       </section>
 
       <section id="merchants" class="section-panel">

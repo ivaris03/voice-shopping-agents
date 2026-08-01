@@ -30,6 +30,16 @@ export interface Merchant {
   updatedAt: string
 }
 
+export interface Category {
+  id: string
+  categoryL1: string
+  categoryL2: string
+  requiredSlots: string[]
+  optionalSlots: string[]
+  createdAt: string
+  updatedAt: string
+}
+
 export interface Product {
   id: string
   merchantId: string

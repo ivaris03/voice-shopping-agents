@@ -56,6 +56,20 @@ ON CONFLICT (id) DO UPDATE SET
     role = EXCLUDED.role,
     status = EXCLUDED.status;
 
+-- 每一行对应一个二级分类，并直接保存它的必填和选填槽位。
+INSERT INTO categories (category_l1, category_l2, required_slots, optional_slots)
+VALUES
+    ('ELECTRONICS', 'HEADPHONES', ARRAY['form', 'connectivity'], ARRAY['noiseCancellation', 'batteryHours']),
+    ('HOME_APPLIANCES', 'COFFEE_MACHINE', ARRAY['type'], ARRAY['steamWand', 'pressureBar', 'waterTankMl']),
+    ('HOME_APPLIANCES', 'ELECTRIC_KETTLE', ARRAY['capacityL'], ARRAY['temperatureControl', 'keepWarm']),
+    ('SPORTS', 'RUNNING_SHOES', ARRAY['gender', 'size', 'terrain'], ARRAY['cushion', 'footType']),
+    ('FASHION', 'WATCHES', ARRAY['movement'], ARRAY['gender', 'material', 'waterResistance']),
+    ('BEAUTY', 'LIPSTICK', ARRAY['shade', 'finish'], ARRAY['skinType'])
+ON CONFLICT (category_l2) DO UPDATE SET
+    category_l1 = EXCLUDED.category_l1,
+    required_slots = EXCLUDED.required_slots,
+    optional_slots = EXCLUDED.optional_slots;
+
 INSERT INTO merchants (
     id, owner_user_id, name, slug, description, logo_url, contact_phone,
     is_enabled, disabled_reason
@@ -450,7 +464,7 @@ INSERT INTO products (
 SELECT
     ps.id, ps.merchant_id, ps.sku, ps.name, ps.category_l1, ps.category_l2, ps.brand, ps.description,
     ps.price, ps.stock,
-    normalize_product_attributes(ps.category_l2, ps.attributes),
+    ps.attributes,
     ps.selling_points, ps.image_urls, ps.status,
     (
         SELECT array_agg(
@@ -476,13 +490,6 @@ ON CONFLICT (id) DO UPDATE SET
     status = EXCLUDED.status,
     embedding = EXCLUDED.embedding,
     deleted_at = NULL;
-
--- 同步规范化非种子商品，确保同一二级品类只有一套 3~5 个 attributes Key。
-UPDATE products
-SET attributes = normalize_product_attributes(category_l2, attributes)
-WHERE deleted_at IS NULL;
-
-ALTER TABLE products VALIDATE CONSTRAINT products_attributes_category_check;
 
 INSERT INTO user_static_profiles (
     user_id, category_scores, brand_scores, attribute_preferences,

@@ -69,6 +69,10 @@ class ShoppingState(TypedDict, total=False):
     product_category: str
     category_changed: bool
     required_slots: list[str]
+    required_slots_by_category: dict[str, list[str]]
+    taxonomy_slot_definitions: dict[str, dict[str, Any]]
+    taxonomy_slot_questions: dict[str, str]
+    taxonomy_category_names: dict[str, str]
     slots: dict[str, Any]
     clarification_status: Literal["ASK", "READY"]
     missing_slots: list[str]

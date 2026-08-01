@@ -129,6 +129,21 @@ h1 { max-width: 720px; margin: 0; font-family: Georgia, "Songti SC", serif; font
 .form-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; align-items: end; }
 .form-field { display: grid; gap: 7px; color: #59645c; font-size: 13px; }
 .form-field--wide { grid-column: span 2; }
+.form-field--full { grid-column: 1 / -1; }
+.slot-fields { padding: 16px; border: 1px solid rgba(24, 34, 28, 0.11); border-radius: 15px; background: #f8f5ed; }
+.slot-fields__heading { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 13px; }
+.required-mark { margin-left: 5px; color: #a6442c; font-size: 11px; }
+.form-stack { display: grid; gap: 14px; }
+.check-field { display: flex; align-items: center; gap: 8px; min-height: 42px; color: #59645c; font-size: 13px; }
+.taxonomy-list { display: grid; gap: 14px; margin-top: 22px; }
+.taxonomy-group { padding: 18px; border: 1px solid rgba(24, 34, 28, 0.11); border-radius: 17px; background: #fffdfa; }
+.taxonomy-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.taxonomy-heading h3 { margin: 8px 0 0; }
+.taxonomy-child { margin-top: 14px; padding: 14px; border-radius: 13px; background: #f4f1e9; }
+.slot-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.slot-chip { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; border-radius: 999px; color: #24583a; background: #dfeee3; font-size: 12px; }
+.slot-chip--optional { color: #785422; background: #f3e7cb; }
+.slot-chip button { width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; color: inherit; background: rgba(255, 255, 255, 0.55); cursor: pointer; }
 
 .secondary-button, .danger-button, .ghost-button {
   border: 1px solid rgba(24, 34, 28, 0.16);
