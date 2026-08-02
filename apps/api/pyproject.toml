@@ -36,6 +36,10 @@ packages = ["src/voice_shopping_api"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+# 数据库集成测试：模块级 fixture 与用例共享同一个事件循环，
+# 避免 asyncpg 连接跨循环使用报 "another operation is in progress"。
+asyncio_default_fixture_loop_scope = "module"
+asyncio_default_test_loop_scope = "module"
 
 [tool.ruff]
 line-length = 100

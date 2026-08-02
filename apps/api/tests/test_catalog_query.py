@@ -72,9 +72,7 @@ def test_numeric_slot_ge_comparison() -> None:
 
 
 def test_water_resistance_digits_extraction() -> None:
-    sql, params = build(
-        {"slots": {"waterResistance": 100}, "required_slots": ["waterResistance"]}
-    )
+    sql, params = build({"slots": {"waterResistance": 100}, "required_slots": ["waterResistance"]})
     assert "regexp_replace(p.attributes->>'waterResistance'" in sql
     assert params["slots_waterResistance"] == 100.0
 
@@ -85,13 +83,34 @@ def test_enum_uses_jsonb_containment() -> None:
     assert params["slots_form_json"] == json.dumps("over-ear")
 
 
-def test_unfilled_and_optional_slots_are_ignored() -> None:
+def test_boolean_slot_serializes_as_json_boolean() -> None:
+    # 布尔槽位必须序列化为 JSON true/false，而非 "True"/"False" 字符串，
+    # 否则 JSONB @> 与商品属性的布尔值永远不匹配，召回恒为空。
     sql, params = build(
-        {"slots": {"form": None, "color": "red"}, "required_slots": ["form"]}
+        {"slots": {"noiseCancellation": True}, "required_slots": ["noiseCancellation"]}
     )
-    assert "color" not in sql
+    assert params["slots_noiseCancellation_json"] == "true"
+    assert (
+        "p.attributes->'noiseCancellation' @> CAST(:slots_noiseCancellation_json AS jsonb)" in sql
+    )
+
+
+def test_unfilled_slots_are_ignored() -> None:
+    sql, params = build({"slots": {"form": None}})
     assert "'form'" not in sql
     assert set(params) == {"embedding"}
+
+
+def test_filled_optional_slots_participate_in_hard_filter() -> None:
+    # 已填槽位（含可选槽位）全部参与召回硬过滤。
+    sql, params = build({"slots": {"noiseCancellation": True, "color": "red"}})
+    assert (
+        "p.attributes->'noiseCancellation' @> CAST(:slots_noiseCancellation_json AS jsonb)"
+        in sql
+    )
+    assert "p.attributes->'color' @> CAST(:slots_color_json AS jsonb)" in sql
+    assert params["slots_noiseCancellation_json"] == "true"
+    assert params["slots_color_json"] == json.dumps("red")
 
 
 def test_multiple_filled_slots_stack_conditions() -> None:

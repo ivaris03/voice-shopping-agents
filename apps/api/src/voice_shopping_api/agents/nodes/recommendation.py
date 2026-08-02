@@ -100,13 +100,14 @@ async def recommend_products(state: ShoppingState) -> dict[str, Any]:
         reverse=True,
     )[:3]
     # 第二阶段：画像快照规则（品牌偏好 / 平均客单价 / 最近购买）二次排序。
+    # 规则分相同（parts 必相同）时保持第一阶段顺序，即稳定排序。
     profile = state.get("user_profile_snapshot", {})
     ranked = sorted(
         (
             (*_rule_adjustments(product, profile), reranker, product)
             for product, reranker in rerank_ranked
         ),
-        key=lambda item: (item[0], item[1]),
+        key=lambda item: item[0],
         reverse=True,
     )
     cards = [
@@ -121,7 +122,7 @@ async def recommend_products(state: ShoppingState) -> dict[str, Any]:
             "imageUrl": (product.get("image_urls") or [None])[0],
             "sellingPoints": product.get("selling_points", []),
             "attributes": product.get("attributes", {}),
-            "matchScore": round(rule_score, 4),
+            "matchScore": round(rule_score + reranker, 4),
             "scoreBreakdown": {"reranker": round(reranker, 4), **rule_parts},
         }
         for rule_score, rule_parts, reranker, product in ranked

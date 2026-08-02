@@ -129,7 +129,9 @@ def _attribute_condition(slot: str, value: object, params: dict[str, str]) -> st
         params[param] = float(value)
         return f"(p.attributes->>'{slot}')::float8 >= :{param}"
     # 默认：枚举标量等值、列表包含统一用 @>（可命中 attributes GIN 索引）。
-    params[f"{param}_json"] = json.dumps(str(value))
+    # 布尔槽位必须序列化为 JSON true/false，而非 str() 后的 "True"/"False"
+    # 字符串，否则与属性中的 JSON 布尔做包含比较永远不命中。
+    params[f"{param}_json"] = json.dumps(value)
     return f"p.attributes->'{slot}' @> CAST(:{param}_json AS jsonb)"
 
 
@@ -159,9 +161,11 @@ def _build_catalog_query(
     if budget is not None:
         params["budget"] = str(budget)
         conditions.append("p.price <= CAST(:budget AS numeric)")
-    for slot in filters.get("required_slots", []):
-        value = slots.get(slot)
-        if value is None:
+    # 已填槽位（含可选槽位）全部参与硬过滤。澄清节点保证槽位键来自品类
+    # 允许集合（required ∪ optional + budgetMax）且值已校验，可直接拼条件；
+    # 未填的槽位值为 None，自然跳过。
+    for slot, value in slots.items():
+        if slot == "budgetMax" or value is None:
             continue
         conditions.append(_attribute_condition(slot, value, params))
     if embedding is not None:
