@@ -28,7 +28,7 @@ class _AsrCallback(RecognitionCallback):
             return
         self.owner.latest = transcript
         if RecognitionResult.is_sentence_end(sentence):
-            self.owner.completed.append(transcript)
+            self.owner.add_completed_sentence(transcript)
 
 
 class StreamingAsr:
@@ -38,12 +38,30 @@ class StreamingAsr:
         self.latest = ""
         self.completed: list[str] = []
         self.error = ""
+        self._loop = asyncio.get_running_loop()
+        self._completed_sentences: asyncio.Queue[str | None] = asyncio.Queue()
+        self._sentences_closed = False
         self.recognition = Recognition(
             model=settings.asr_model,
             format="pcm",
             sample_rate=16000,
             callback=_AsrCallback(self),
         )
+
+    def add_completed_sentence(self, transcript: str) -> None:
+        """Receive a sentence-final ASR result from DashScope's worker thread."""
+        self.completed.append(transcript)
+        self._loop.call_soon_threadsafe(self._completed_sentences.put_nowait, transcript)
+
+    async def next_completed_sentence(self) -> str | None:
+        """Wait for the next sentence-final result, or ``None`` once ASR stops."""
+        return await self._completed_sentences.get()
+
+    def _close_completed_sentences(self) -> None:
+        if self._sentences_closed:
+            return
+        self._sentences_closed = True
+        self._loop.call_soon_threadsafe(self._completed_sentences.put_nowait, None)
 
     async def start(self) -> None:
         await asyncio.to_thread(self.recognition.start)
@@ -52,10 +70,13 @@ class StreamingAsr:
         await asyncio.to_thread(self.recognition.send_audio_frame, audio)
 
     async def stop(self) -> str:
-        await asyncio.to_thread(self.recognition.stop)
-        if self.error:
-            raise RuntimeError(self.error)
-        return "".join(self.completed) or self.latest
+        try:
+            await asyncio.to_thread(self.recognition.stop)
+            if self.error:
+                raise RuntimeError(self.error)
+            return "".join(self.completed) or self.latest
+        finally:
+            self._close_completed_sentences()
 
 
 async def synthesize_chunks(text_value: str) -> AsyncIterator[bytes]:

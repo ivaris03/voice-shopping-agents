@@ -241,4 +241,29 @@ describe('assistant reply audio coordination', () => {
 
     wrapper.unmount()
   })
+
+  it('shows sentence-final ASR results while recording and merges them into the final transcript', async () => {
+    const wrapper = mount(App)
+    await flushPromises()
+
+    const audioSocket = FakeWebSocket.instances.find((socket) => socket.url.includes('/ws/audio/'))
+    audioSocket?.emitJson({
+      type: 'asr.sentence',
+      turnId: 'voice-turn',
+      payload: { transcript: '我想买一双通勤鞋。' },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('我想买一双通勤鞋。')
+
+    audioSocket?.emitJson({
+      type: 'asr.completed',
+      turnId: 'voice-turn',
+      payload: { transcript: '我想买一双通勤鞋。预算五百元。' },
+    })
+    await flushPromises()
+
+    expect(wrapper.findAll('.message--user')).toHaveLength(1)
+    expect(wrapper.text()).toContain('我想买一双通勤鞋。预算五百元。')
+    wrapper.unmount()
+  })
 })

@@ -29,6 +29,8 @@ interface RecommendationCard {
 interface ChatMessage {
   role: 'user' | 'assistant'
   text: string
+  turnId?: string
+  streaming?: boolean
 }
 
 interface PendingAsrStart {
@@ -279,10 +281,31 @@ function connectAudio(): Promise<void> {
       if (event.type === 'asr.completed') {
         const transcript = String(event.payload?.transcript ?? '')
         if (transcript) {
-          messages.value.push({ role: 'user', text: transcript })
+          const liveMessage = messages.value.find(
+            (item) => item.role === 'user' && item.turnId === event.turnId && item.streaming,
+          )
+          if (liveMessage) {
+            liveMessage.text = transcript
+            liveMessage.streaming = false
+          } else {
+            messages.value.push({ role: 'user', text: transcript, turnId: event.turnId })
+          }
           flowStatus.value = 'Agent 正在理解与筛选…'
           error.value = ''
         }
+      }
+      if (event.type === 'asr.sentence') {
+        const sentence = String(event.payload?.transcript ?? '')
+        if (!sentence) return
+        const liveMessage = messages.value.find(
+          (item) => item.role === 'user' && item.turnId === event.turnId && item.streaming,
+        )
+        if (liveMessage) {
+          liveMessage.text += sentence
+        } else {
+          messages.value.push({ role: 'user', text: sentence, turnId: event.turnId, streaming: true })
+        }
+        flowStatus.value = '正在聆听，已实时转写…'
       }
       if (event.type === 'asr.started') {
         const pending = pendingAsrStart
