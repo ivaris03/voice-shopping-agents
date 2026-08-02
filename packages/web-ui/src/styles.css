@@ -182,10 +182,13 @@ button:disabled { opacity: 0.48; cursor: not-allowed; }
 .voice-console { display: grid; grid-template-columns: 0.85fr 1.15fr; overflow: hidden; padding: 0; background: #173f2b; color: #f7f4eb; }
 .voice-controls { padding: 28px; }
 .voice-controls h2 { margin: 0; font-family: Georgia, "Songti SC", serif; font-size: 31px; }
+.voice-action-row { display: flex; align-items: center; gap: 18px; margin-top: 22px; }
 .voice-input-row { display: flex; gap: 10px; margin-top: 22px; }
 .voice-input-row .input { color: #18221c; }
 .mic-button { width: 74px; height: 74px; border: 0; border-radius: 50%; color: white; background: #c66e38; cursor: pointer; font-size: 24px; box-shadow: 0 0 0 9px rgba(198, 110, 56, 0.16); }
 .mic-button--active { animation: pulse 1.2s infinite; background: #d1462d; }
+.voice-pause-button { min-width: 96px; padding: 10px 14px; border: 1px solid rgba(255,255,255,.44); border-radius: 999px; color: #f7f4eb; background: transparent; cursor: pointer; font: inherit; font-size: 14px; }
+.voice-pause-button:disabled { cursor: not-allowed; opacity: .45; }
 .voice-status { display: flex; align-items: center; gap: 9px; margin-top: 18px; color: rgba(255,255,255,.68); font-size: 13px; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #75c992; }
 .conversation { min-height: 270px; max-height: 420px; overflow: auto; padding: 28px; background: rgba(255,255,255,.08); }

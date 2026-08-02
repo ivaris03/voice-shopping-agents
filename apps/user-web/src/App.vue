@@ -71,6 +71,8 @@ const messages = ref<ChatMessage[]>([
   { role: 'assistant', text: '你好，我是声选导购。告诉我想买什么，我每次会问一到两个必要问题。' },
 ])
 const isRecording = ref(false)
+const isAssistantSpeaking = ref(false)
+const isAssistantSpeechPaused = ref(false)
 let textSocket: WebSocket | null = null
 let audioSocket: WebSocket | null = null
 let textConnectPromise: Promise<void> | null = null
@@ -84,6 +86,7 @@ let audioChunks: Blob[] = []
 let audioFallbackActive = false
 let activeAssistantAudio: HTMLAudioElement | null = null
 let activeAssistantAudioUrl: string | null = null
+let activeAssistantSpeech: SpeechSynthesisUtterance | null = null
 let incomingAudioTurnId = ''
 let suppressIncomingAudio = false
 let capturedAudioBytes = 0
@@ -183,11 +186,25 @@ function speak(text: string) {
   window.speechSynthesis.cancel()
   const speech = new SpeechSynthesisUtterance(text)
   speech.lang = 'zh-CN'
+  activeAssistantSpeech = speech
+  isAssistantSpeaking.value = true
+  isAssistantSpeechPaused.value = false
+  const clearSpeech = () => {
+    if (activeAssistantSpeech !== speech) return
+    activeAssistantSpeech = null
+    isAssistantSpeaking.value = false
+    isAssistantSpeechPaused.value = false
+  }
+  speech.onend = clearSpeech
+  speech.onerror = clearSpeech
   window.speechSynthesis.speak(speech)
 }
 
 function stopAssistantSpeech() {
   if ('speechSynthesis' in window) window.speechSynthesis.cancel()
+  activeAssistantSpeech = null
+  isAssistantSpeaking.value = false
+  isAssistantSpeechPaused.value = false
   if (incomingAudioTurnId) mutedSpeechTurnIds.add(incomingAudioTurnId)
   for (const turnId of pendingSpeechByTurn.keys()) mutedSpeechTurnIds.add(turnId)
   pendingSpeechByTurn.clear()
@@ -201,6 +218,24 @@ function stopAssistantSpeech() {
   activeAssistantAudio = null
   if (activeAssistantAudioUrl) URL.revokeObjectURL(activeAssistantAudioUrl)
   activeAssistantAudioUrl = null
+}
+
+function toggleAssistantSpeechPause() {
+  if (!isAssistantSpeaking.value) return
+  if (isAssistantSpeechPaused.value) {
+    if (activeAssistantAudio) {
+      void activeAssistantAudio.play().catch(() => {
+        if (activeAssistantAudio) stopAssistantSpeech()
+      })
+    } else if ('speechSynthesis' in window) {
+      window.speechSynthesis.resume()
+    }
+    isAssistantSpeechPaused.value = false
+    return
+  }
+  if (activeAssistantAudio) activeAssistantAudio.pause()
+  else if ('speechSynthesis' in window) window.speechSynthesis.pause()
+  isAssistantSpeechPaused.value = true
 }
 
 function handleEvent(event: ApiEvent<Record<string, unknown>>) {
@@ -372,6 +407,9 @@ function connectAudio(): Promise<void> {
           speak(String(event.payload?.text ?? pendingText ?? ''))
         } else if ('speechSynthesis' in window) {
           window.speechSynthesis.cancel()
+          activeAssistantSpeech = null
+          isAssistantSpeaking.value = false
+          isAssistantSpeechPaused.value = false
         }
       }
       if (event.type === 'audio.end') {
@@ -380,10 +418,14 @@ function connectAudio(): Promise<void> {
           const audio = new Audio(url)
           activeAssistantAudio = audio
           activeAssistantAudioUrl = url
+          isAssistantSpeaking.value = true
+          isAssistantSpeechPaused.value = false
           audio.onended = () => {
             if (activeAssistantAudio === audio) {
               activeAssistantAudio = null
               activeAssistantAudioUrl = null
+              isAssistantSpeaking.value = false
+              isAssistantSpeechPaused.value = false
             }
             URL.revokeObjectURL(url)
           }
@@ -391,6 +433,8 @@ function connectAudio(): Promise<void> {
             if (activeAssistantAudio === audio) {
               activeAssistantAudio = null
               activeAssistantAudioUrl = null
+              isAssistantSpeaking.value = false
+              isAssistantSpeechPaused.value = false
             }
             URL.revokeObjectURL(url)
           })
@@ -668,13 +712,22 @@ onBeforeUnmount(() => {
           <p class="eyebrow">LIVE SHOPPING AGENT</p>
           <h2>把需求说给我听</h2>
           <p style="color: rgba(255,255,255,.68); line-height: 1.7">支持推荐、对比、查询和二次确认下单；每次追问一到两个缺失条件。</p>
-          <button
-            class="mic-button"
-            :class="{ 'mic-button--active': isRecording }"
-            type="button"
-            :aria-label="isRecording ? '停止录音' : '开始录音'"
-            @click="isRecording ? stopVoice() : startVoice()"
-          >{{ isRecording ? '■' : '●' }}</button>
+          <div class="voice-action-row">
+            <button
+              class="mic-button"
+              :class="{ 'mic-button--active': isRecording }"
+              type="button"
+              :aria-label="isRecording ? '停止录音' : '开始录音'"
+              @click="isRecording ? stopVoice() : startVoice()"
+            >{{ isRecording ? '■' : '●' }}</button>
+            <button
+              class="voice-pause-button"
+              type="button"
+              :disabled="!isAssistantSpeaking"
+              :aria-label="isAssistantSpeechPaused ? '继续朗读' : '暂停朗读'"
+              @click="toggleAssistantSpeechPause"
+            >{{ isAssistantSpeechPaused ? '继续朗读' : '暂停朗读' }}</button>
+          </div>
           <div class="voice-status"><span class="status-dot"></span>{{ flowStatus }}</div>
           <div class="voice-input-row">
             <input v-model="utterance" class="input" aria-label="导购消息" placeholder="例如：我想买一双通勤穿的鞋" @keyup.enter="sendUtterance" />

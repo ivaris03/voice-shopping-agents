@@ -75,12 +75,16 @@ class FakeAudioContext {
 describe('assistant reply audio coordination', () => {
   const speak = vi.fn()
   const cancel = vi.fn()
+  const pause = vi.fn()
+  const resume = vi.fn()
 
   beforeEach(() => {
     FakeWebSocket.instances = []
     localStorage.clear()
     speak.mockClear()
     cancel.mockClear()
+    pause.mockClear()
+    resume.mockClear()
 
     vi.stubGlobal('WebSocket', FakeWebSocket)
     vi.stubGlobal('SpeechSynthesisUtterance', FakeSpeechSynthesisUtterance)
@@ -102,7 +106,7 @@ describe('assistant reply audio coordination', () => {
     })
     Object.defineProperty(window, 'speechSynthesis', {
       configurable: true,
-      value: { cancel, speak },
+      value: { cancel, speak, pause, resume },
     })
     vi.stubGlobal(
       'fetch',
@@ -200,6 +204,29 @@ describe('assistant reply audio coordination', () => {
     })
     await flushPromises()
     expect(speak).toHaveBeenCalledTimes(1)
+
+    wrapper.unmount()
+  })
+
+  it('pauses and resumes an active browser-speech reply', async () => {
+    const wrapper = mount(App)
+    await flushPromises()
+    const audioSocket = FakeWebSocket.instances.find((socket) => socket.url.includes('/ws/audio/'))
+
+    const pauseButton = wrapper.get('[aria-label="暂停朗读"]')
+    expect((pauseButton.element as HTMLButtonElement).disabled).toBe(true)
+
+    audioSocket?.emitJson({
+      type: 'audio.start',
+      turnId: 'turn-pause',
+      payload: { fallback: true, text: '这段语音可以暂停。' },
+    })
+    await flushPromises()
+
+    await wrapper.get('[aria-label="暂停朗读"]').trigger('click')
+    expect(pause).toHaveBeenCalledTimes(1)
+    await wrapper.get('[aria-label="继续朗读"]').trigger('click')
+    expect(resume).toHaveBeenCalledTimes(1)
 
     wrapper.unmount()
   })
