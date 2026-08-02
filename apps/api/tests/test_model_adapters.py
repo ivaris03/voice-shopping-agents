@@ -129,13 +129,27 @@ async def test_embedding_uses_dashscope_embeddings(monkeypatch: pytest.MonkeyPat
 
 @pytest.mark.asyncio
 async def test_embedding_preserves_dashscope_usage(monkeypatch: pytest.MonkeyPatch) -> None:
+    started: list[tuple[str, dict[str, Any]]] = []
+    finished: list[dict[str, Any]] = []
     monkeypatch.setattr(embeddings_module, "DashScopeEmbeddings", _FakeEmbeddingsWithUsage)
     monkeypatch.setattr(embeddings_module.dashscope, "TextEmbedding", _FakeTextEmbedding)
+    monkeypatch.setattr(
+        embeddings_module,
+        "start_trace",
+        lambda name, **kwargs: started.append((name, kwargs)) or object(),
+    )
+    monkeypatch.setattr(
+        embeddings_module,
+        "finish_trace",
+        lambda handle, **kwargs: finished.append(kwargs),
+    )
 
     vector, usage = await embeddings_module.embed_text("通勤耳机")
 
     assert vector == [3.0, 4.0]
     assert usage == {"input_tokens": 7, "total_tokens": 7}
+    assert started[0][1]["inputs"]["text"] == "通勤耳机"
+    assert finished[0]["outputs"]["vector"] == [3.0, 4.0]
 
 
 def test_usage_normalization_preserves_provider_costs() -> None:
@@ -152,7 +166,19 @@ def test_usage_normalization_preserves_provider_costs() -> None:
 
 @pytest.mark.asyncio
 async def test_rerank_uses_dashscope_rerank(monkeypatch: pytest.MonkeyPatch) -> None:
+    started: list[tuple[str, dict[str, Any]]] = []
+    finished: list[dict[str, Any]] = []
     monkeypatch.setattr(model_module, "DashScopeRerank", _FakeReranker)
+    monkeypatch.setattr(
+        model_module,
+        "start_trace",
+        lambda name, **kwargs: started.append((name, kwargs)) or object(),
+    )
+    monkeypatch.setattr(
+        model_module,
+        "finish_trace",
+        lambda handle, **kwargs: finished.append(kwargs),
+    )
     products = [
         {"id": "product-1", "name": "商品一"},
         {"id": "product-2", "name": "商品二"},
@@ -164,3 +190,6 @@ async def test_rerank_uses_dashscope_rerank(monkeypatch: pytest.MonkeyPatch) -> 
     assert _FakeReranker.init_kwargs["model"] == "qwen3-rerank"
     assert _FakeReranker.init_kwargs["dashscope_api_key"]
     assert isinstance(_FakeReranker.init_kwargs["client"], model_module._InstructionalRerankClient)
+    assert started[0][1]["inputs"]["query"] == "通勤耳机"
+    assert len(started[0][1]["inputs"]["documents"]) == 2
+    assert finished[0]["outputs"]["scores"] == result

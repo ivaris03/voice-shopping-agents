@@ -42,7 +42,7 @@ async def embed_text(text: str) -> tuple[list[float], dict[str, Any] | None]:
     span = start_trace(
         "dashscope-embedding",
         run_type="embedding",
-        inputs={"text_length": len(text)},
+        inputs={"text": text},
         metadata={
             "ls_provider": "dashscope",
             "ls_model_name": settings.embedding_model,
@@ -68,7 +68,7 @@ async def embed_text(text: str) -> tuple[list[float], dict[str, Any] | None]:
         usage = response_usage(recorder.response)
         finish_trace(
             span,
-            outputs={"vector_dimensions": len(vector)},
+            outputs={"vector": vector, "vector_dimensions": len(vector)},
             metadata={
                 "status": "ok",
                 "duration_ms": round((perf_counter() - started) * 1000, 2),

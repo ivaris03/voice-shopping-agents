@@ -68,7 +68,12 @@ class StreamingAsr:
         self._trace = start_trace(
             "dashscope-asr",
             run_type="llm",
-            inputs={"format": "pcm", "sample_rate": 16000},
+            inputs={
+                "format": "pcm",
+                "sample_rate": 16000,
+                "session_id": session_id,
+                "turn_id": turn_id,
+            },
             metadata=trace_metadata,
             tags=["dashscope", "asr", "audio"],
             project_name=settings.langsmith_project,
@@ -104,6 +109,7 @@ class StreamingAsr:
         finish_trace(
             self._trace,
             outputs=None if error is not None else {
+                "transcript": transcript,
                 "transcript_length": len(transcript),
                 "sentence_count": len(self.completed),
             },
@@ -193,7 +199,13 @@ async def synthesize_chunks(
     span = start_trace(
         "dashscope-tts",
         run_type="llm",
-        inputs={"text_length": len(text_value), "audio_format": "wav", "sample_rate": 24000},
+        inputs={
+            "text": text_value,
+            "audio_format": "wav",
+            "sample_rate": 24000,
+            "session_id": session_id,
+            "turn_id": turn_id,
+        },
         metadata=trace_metadata,
         tags=["dashscope", "tts", "audio"],
         project_name=settings.langsmith_project,

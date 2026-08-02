@@ -144,12 +144,13 @@ async def rerank_products(query: str, products: list[dict[str, Any]]) -> dict[st
     span = start_trace(
         "dashscope-rerank",
         run_type="retriever",
-        inputs={"query_length": len(query), "document_count": len(documents)},
+        inputs={"query": query, "documents": documents},
         metadata={
             "ls_provider": "dashscope",
             "ls_model_name": settings.reranker_model,
             "operation": "rerank",
             "document_count": len(documents),
+            "instruction": RECOMMENDATION_RERANK_INSTRUCTION,
         },
         tags=["dashscope", "rerank"],
         project_name=settings.langsmith_project,
@@ -177,7 +178,7 @@ async def rerank_products(query: str, products: list[dict[str, Any]]) -> dict[st
             scores[str(product["id"])] = float(item["relevance_score"])
         finish_trace(
             span,
-            outputs={"result_count": len(scores)},
+            outputs={"scores": scores, "result_count": len(scores)},
             metadata={
                 "status": "ok",
                 "duration_ms": round((perf_counter() - started) * 1000, 2),

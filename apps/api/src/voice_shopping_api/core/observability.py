@@ -55,7 +55,7 @@ def finish_trace(
     usage: Any = None,
     error: BaseException | None = None,
 ) -> None:
-    """Finish a span with sanitized summaries and a type-only error."""
+    """Finish a span with debugging payloads and normalized usage metadata."""
     if handle is None:
         return
     try:
@@ -65,16 +65,13 @@ def finish_trace(
         if normalized_usage:
             handle.run.set(usage_metadata=normalized_usage)
         if error is not None:
-            handle.run.end(error=type(error).__name__)
+            handle.run.end(error=str(error) or type(error).__name__)
         else:
             handle.run.end(outputs=dict(outputs or {}))
     except Exception:  # noqa: BLE001 - tracing must never break the request path
         logger.debug("Unable to finish LangSmith span", exc_info=True)
     finally:
         try:
-            # The original exception is handled by the business caller. Passing
-            # None here avoids uploading a provider error message that may contain
-            # request text or other sensitive data.
             handle.context.__exit__(None, None, None)
         except Exception:  # noqa: BLE001 - tracing must never break the request path
             logger.debug("Unable to flush LangSmith span", exc_info=True)
