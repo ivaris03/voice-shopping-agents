@@ -82,6 +82,10 @@ let audioProcessor: ScriptProcessorNode | null = null
 let audioGain: GainNode | null = null
 let audioChunks: Blob[] = []
 let audioFallbackActive = false
+let activeAssistantAudio: HTMLAudioElement | null = null
+let activeAssistantAudioUrl: string | null = null
+let incomingAudioTurnId = ''
+let suppressIncomingAudio = false
 let capturedAudioBytes = 0
 let capturedAudioPeak = 0
 let recordingStartedAt = 0
@@ -92,6 +96,9 @@ let stopRequested = false
 let pendingPcmFrames: ArrayBuffer[] = []
 let pendingAsrStart: PendingAsrStart | null = null
 const pendingSpeechByTurn = new Map<string, string>()
+const mutedSpeechTurnIds = new Set<string>()
+let isBargingIn = false
+let latestVoiceTurnId = ''
 
 const categories = computed(() => [...new Set(products.value.map((item) => item.categoryL2))])
 const visibleProducts = computed(() =>
@@ -179,6 +186,23 @@ function speak(text: string) {
   window.speechSynthesis.speak(speech)
 }
 
+function stopAssistantSpeech() {
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel()
+  if (incomingAudioTurnId) mutedSpeechTurnIds.add(incomingAudioTurnId)
+  for (const turnId of pendingSpeechByTurn.keys()) mutedSpeechTurnIds.add(turnId)
+  pendingSpeechByTurn.clear()
+  audioChunks = []
+  audioFallbackActive = false
+  suppressIncomingAudio = true
+  if (!activeAssistantAudio) return
+  activeAssistantAudio.pause()
+  activeAssistantAudio.removeAttribute('src')
+  activeAssistantAudio.load()
+  activeAssistantAudio = null
+  if (activeAssistantAudioUrl) URL.revokeObjectURL(activeAssistantAudioUrl)
+  activeAssistantAudioUrl = null
+}
+
 function handleEvent(event: ApiEvent<Record<string, unknown>>) {
   if (event.type === 'flow.status') {
     const status = String(event.payload.status ?? '')
@@ -195,9 +219,11 @@ function handleEvent(event: ApiEvent<Record<string, unknown>>) {
   if (event.type === 'text.completed') {
     const text = String(event.payload.text ?? '')
     messages.value.push({ role: 'assistant', text })
-    if (audioSocket?.readyState === WebSocket.OPEN) {
+    const suppressSpeech = isBargingIn && event.turnId !== latestVoiceTurnId
+    if (suppressSpeech) mutedSpeechTurnIds.add(event.turnId)
+    if (!suppressSpeech && audioSocket?.readyState === WebSocket.OPEN) {
       pendingSpeechByTurn.set(event.turnId, text)
-    } else {
+    } else if (!suppressSpeech) {
       speak(text)
     }
   }
@@ -293,6 +319,7 @@ function connectAudio(): Promise<void> {
           flowStatus.value = 'Agent 正在理解与筛选…'
           error.value = ''
         }
+        if (event.turnId === latestVoiceTurnId) isBargingIn = false
       }
       if (event.type === 'asr.sentence') {
         const sentence = String(event.payload?.transcript ?? '')
@@ -335,9 +362,12 @@ function connectAudio(): Promise<void> {
       }
       if (event.type === 'audio.start') {
         audioChunks = []
+        incomingAudioTurnId = event.turnId ?? ''
+        suppressIncomingAudio = Boolean(event.turnId && mutedSpeechTurnIds.has(event.turnId))
         audioFallbackActive = event.payload?.fallback === true
         const pendingText = event.turnId ? pendingSpeechByTurn.get(event.turnId) : undefined
         if (event.turnId) pendingSpeechByTurn.delete(event.turnId)
+        if (suppressIncomingAudio) return
         if (audioFallbackActive) {
           speak(String(event.payload?.text ?? pendingText ?? ''))
         } else if ('speechSynthesis' in window) {
@@ -345,14 +375,30 @@ function connectAudio(): Promise<void> {
         }
       }
       if (event.type === 'audio.end') {
-        if (!audioFallbackActive && audioChunks.length) {
+        if (!suppressIncomingAudio && !audioFallbackActive && audioChunks.length) {
           const url = URL.createObjectURL(new Blob(audioChunks, { type: 'audio/wav' }))
           const audio = new Audio(url)
-          audio.onended = () => URL.revokeObjectURL(url)
-          void audio.play().catch(() => URL.revokeObjectURL(url))
+          activeAssistantAudio = audio
+          activeAssistantAudioUrl = url
+          audio.onended = () => {
+            if (activeAssistantAudio === audio) {
+              activeAssistantAudio = null
+              activeAssistantAudioUrl = null
+            }
+            URL.revokeObjectURL(url)
+          }
+          void audio.play().catch(() => {
+            if (activeAssistantAudio === audio) {
+              activeAssistantAudio = null
+              activeAssistantAudioUrl = null
+            }
+            URL.revokeObjectURL(url)
+          })
         }
         audioChunks = []
         audioFallbackActive = false
+        incomingAudioTurnId = ''
+        suppressIncomingAudio = false
       }
     }
   })
@@ -459,6 +505,9 @@ async function sendUtterance() {
 
 async function startVoice() {
   error.value = ''
+  isBargingIn = true
+  latestVoiceTurnId = ''
+  stopAssistantSpeech()
   try {
     await Promise.all([connectText(), connectAudio()])
     const audioConstraints: MediaTrackConstraints = {
@@ -485,6 +534,7 @@ async function startVoice() {
     stopRequested = false
     const turnId = crypto.randomUUID()
     recordingTurnId = turnId
+    latestVoiceTurnId = turnId
     audioProcessor.onaudioprocess = (event) => {
       if (!audioContext || recordingTurnId !== turnId) return
       const input = event.inputBuffer.getChannelData(0)
@@ -518,6 +568,7 @@ async function startVoice() {
     flowStatus.value = '语音通道未就绪'
     cleanupRecording(true)
     recordingTurnId = ''
+    isBargingIn = false
   }
 }
 
@@ -579,6 +630,7 @@ onMounted(() => {
   navigator.mediaDevices?.addEventListener?.('devicechange', handleAudioDeviceChange)
 })
 onBeforeUnmount(() => {
+  stopAssistantSpeech()
   textSocket?.close()
   audioSocket?.close()
   mediaStream?.getTracks().forEach((track) => track.stop())

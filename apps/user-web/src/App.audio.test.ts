@@ -175,6 +175,35 @@ describe('assistant reply audio coordination', () => {
     wrapper.unmount()
   })
 
+  it('interrupts the current reply as soon as the user starts recording', async () => {
+    const wrapper = mount(App)
+    await flushPromises()
+
+    const audioSocket = FakeWebSocket.instances.find((socket) => socket.url.includes('/ws/audio/'))
+    const reply = '这段回复会在用户开始说话时被打断。'
+    audioSocket?.emitJson({
+      type: 'audio.start',
+      turnId: 'turn-interrupted',
+      payload: { fallback: true, text: reply },
+    })
+    await flushPromises()
+    expect(speak).toHaveBeenCalledTimes(1)
+
+    await wrapper.get('[aria-label="开始录音"]').trigger('click')
+    await flushPromises()
+    expect(cancel).toHaveBeenCalled()
+
+    audioSocket?.emitJson({
+      type: 'audio.start',
+      turnId: 'turn-interrupted',
+      payload: { fallback: true, text: reply },
+    })
+    await flushPromises()
+    expect(speak).toHaveBeenCalledTimes(1)
+
+    wrapper.unmount()
+  })
+
   it('falls back to browser speech when the audio channel is disconnected', async () => {
     const wrapper = mount(App)
     await flushPromises()
