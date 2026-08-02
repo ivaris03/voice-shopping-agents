@@ -2,20 +2,18 @@ import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 
 from voice_shopping_api.agents import model as model_module
-from voice_shopping_api.agents import workflow as workflow_module
+from voice_shopping_api.agents.graph import build_workflow, shopping_workflow
+from voice_shopping_api.agents.nodes import clarification as clarification_module
+from voice_shopping_api.agents.nodes import intent as intent_module
+from voice_shopping_api.agents.nodes.clarification import clarify_requirements
+from voice_shopping_api.agents.nodes.constants import COMPLIANCE_FALLBACK
+from voice_shopping_api.agents.nodes.intent import recognize_intent
+from voice_shopping_api.agents.nodes.response import compliance_check
 from voice_shopping_api.agents.state import (
     IntentResult,
     ShoppingWorkflowContext,
     carry_forward_state,
     state_for_persistence,
-)
-from voice_shopping_api.agents.workflow import (
-    COMPLIANCE_FALLBACK,
-    build_workflow,
-    clarify_requirements,
-    compliance_check,
-    recognize_intent,
-    shopping_workflow,
 )
 
 
@@ -331,8 +329,8 @@ async def test_model_category_switch_overrides_history_and_does_not_create_order
     async def fake_clarify_with_model(*args: object) -> dict[str, object]:
         return {}
 
-    monkeypatch.setattr(workflow_module, "recognize_with_model", fake_recognize_with_model)
-    monkeypatch.setattr(workflow_module, "clarify_with_model", fake_clarify_with_model)
+    monkeypatch.setattr(intent_module, "recognize_with_model", fake_recognize_with_model)
+    monkeypatch.setattr(clarification_module, "clarify_with_model", fake_clarify_with_model)
     result = await shopping_workflow.ainvoke(
         {
             "utterance": "我想买一双鞋",
@@ -452,7 +450,7 @@ async def test_clarification_agent_resolves_contextual_asr_error(
         )
         return {"form": "in-ear"}
 
-    monkeypatch.setattr(workflow_module, "clarify_with_model", fake_clarify_with_model)
+    monkeypatch.setattr(clarification_module, "clarify_with_model", fake_clarify_with_model)
     result = await clarify_requirements(
         {
             "utterance": "想要热辣死的。",
@@ -496,7 +494,7 @@ async def test_clarification_agent_receives_numeric_shoe_size_definition(
         captured["slot_definitions"] = slot_definitions
         return {"size": 42}
 
-    monkeypatch.setattr(workflow_module, "clarify_with_model", fake_clarify_with_model)
+    monkeypatch.setattr(clarification_module, "clarify_with_model", fake_clarify_with_model)
     result = await clarify_requirements(
         {
             "utterance": "四十二码",
@@ -526,7 +524,7 @@ async def test_clarification_agent_rejects_unknown_or_invalid_slot_values(
     async def fake_clarify_with_model(*args: object) -> dict[str, object]:
         return {"form": "speaker", "inventedSlot": True}
 
-    monkeypatch.setattr(workflow_module, "clarify_with_model", fake_clarify_with_model)
+    monkeypatch.setattr(clarification_module, "clarify_with_model", fake_clarify_with_model)
     result = await clarify_requirements(
         {
             "utterance": "随便吧",

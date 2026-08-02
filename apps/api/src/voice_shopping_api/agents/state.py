@@ -171,11 +171,7 @@ def carry_forward_state(previous: ShoppingState) -> ShoppingState:
     including the removed ``intents`` and ``action_queue`` fields, are dropped.
     """
 
-    return {
-        key: value
-        for key, value in previous.items()
-        if key in PERSISTED_STATE_KEYS
-    }
+    return {key: value for key, value in previous.items() if key in PERSISTED_STATE_KEYS}
 
 
 def state_for_persistence(state: ShoppingState) -> ShoppingState:

@@ -29,6 +29,8 @@ flowchart LR
 | LangChain | 封装模型调用、Prompt 和结构化输出 |
 | LangSmith | 追踪、调试、评估和监控 Agent 工作流 |
 
+应用代码按 LangGraph 的图装配与节点职责拆分：`agents/graph.py` 只声明节点、边和条件路由；`agents/nodes/intent.py`、`clarification.py`、`recommendation.py`、`response.py` 分别实现业务节点；`agents/nodes/constants.py` 集中维护共享规则；`agents/state.py` 定义图状态和运行时依赖。`workflow.py` 仅保留旧导入路径的兼容导出，新的应用代码直接依赖 `graph.py` 和对应节点模块。
+
 ## 2. 业务架构
 
 ### 2.1 三端业务能力

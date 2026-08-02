@@ -10,14 +10,15 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from voice_shopping_api.agents.checkpointer import get_checkpointer
+from voice_shopping_api.agents.graph import build_workflow, shopping_workflow
 from voice_shopping_api.agents.model import embed_query
+from voice_shopping_api.agents.nodes.response import is_compliant
 from voice_shopping_api.agents.state import (
     ShoppingState,
     ShoppingWorkflowContext,
     carry_forward_state,
     state_for_persistence,
 )
-from voice_shopping_api.agents.workflow import build_workflow, is_compliant, shopping_workflow
 from voice_shopping_api.core.config import get_settings
 from voice_shopping_api.core.queries import PRODUCT_COLUMNS, rows
 from voice_shopping_api.core.taxonomy import list_categories

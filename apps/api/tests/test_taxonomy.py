@@ -3,7 +3,7 @@ from uuid import UUID
 
 import pytest
 
-from voice_shopping_api.agents.workflow import REQUIRED_SLOTS
+from voice_shopping_api.agents.nodes.constants import REQUIRED_SLOTS
 from voice_shopping_api.core.taxonomy import (
     ATTRIBUTE_KEYS_BY_CATEGORY,
     normalize_attributes,
