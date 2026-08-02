@@ -251,12 +251,39 @@ async def test_intent_system_prompt_contains_all_category_slot_configuration(
             "categoryL2": "HEADPHONES",
             "requiredSlots": ["form", "connectivity"],
             "optionalSlots": ["noiseCancellation", "batteryHours"],
+            "slots": [
+                {"key": "form", "isRequired": True, "enumValues": ["in-ear", "over-ear"]},
+                {
+                    "key": "connectivity",
+                    "isRequired": True,
+                    "enumValues": ["bluetooth", "wired"],
+                },
+                {
+                    "key": "noiseCancellation",
+                    "isRequired": False,
+                    "enumValues": [True, False],
+                },
+                {
+                    "key": "batteryHours",
+                    "isRequired": False,
+                    "enumValues": [8, 24, 60],
+                },
+            ],
         },
         {
             "categoryL1": "SPORTS",
             "categoryL2": "RUNNING_SHOES",
             "requiredSlots": ["gender", "size", "terrain"],
             "optionalSlots": ["cushion", "footType"],
+            "slots": [
+                {
+                    "key": "gender",
+                    "isRequired": True,
+                    "enumValues": ["male", "female", "unisex"],
+                },
+                {"key": "size", "isRequired": True, "enumValues": [40, 41, 42]},
+                {"key": "terrain", "isRequired": True, "enumValues": ["road", "trail"]},
+            ],
         },
     ]
 
@@ -266,6 +293,10 @@ async def test_intent_system_prompt_contains_all_category_slot_configuration(
     assert '"categoryL2":"HEADPHONES"' in prompt
     assert '"requiredSlots":["form","connectivity"]' in prompt
     assert '"optionalSlots":["noiseCancellation","batteryHours"]' in prompt
+    assert '"key":"form","isRequired":true,"enumValues":["in-ear","over-ear"]' in prompt
+    assert '"key":"connectivity","isRequired":true,"enumValues":["bluetooth","wired"]' in prompt
+    assert '"key":"noiseCancellation","isRequired":false,"enumValues":[true,false]' in prompt
+    assert '"key":"batteryHours","isRequired":false,"enumValues":[8,24,60]' in prompt
     assert '"categoryL2":"RUNNING_SHOES"' in prompt
     assert categories not in captured["payload"].values()
 
@@ -344,6 +375,60 @@ async def test_clarification_agent_rejects_unknown_or_invalid_slot_values(
     assert result["slots"] == {"noiseCancellation": True}
     assert result["pending_question"]["slot"] == "form"
     assert result["pending_question"]["slots"] == ["form", "connectivity"]
+
+
+@pytest.mark.asyncio
+async def test_answering_second_question_does_not_pollute_first_slot() -> None:
+    result = await clarify_requirements(
+        {
+            "utterance": "想要一个蓝牙的。",
+            "model_enabled": False,
+            "product_category": "HEADPHONES",
+            "category_changed": False,
+            "required_slots_by_category": {"HEADPHONES": ["form", "connectivity"]},
+            "allowed_slots_by_category": {"HEADPHONES": ["form", "connectivity"]},
+            "taxonomy_slot_definitions": {
+                "form": {"type": "enum", "values": ["in-ear", "over-ear"]},
+                "connectivity": {"type": "enum", "values": ["bluetooth", "wired"]},
+            },
+            "slots": {"form": "想要一个蓝牙的。", "connectivity": "bluetooth"},
+            "pending_question": {
+                "slot": "form",
+                "slots": ["form", "connectivity"],
+                "question": "你想要入耳式还是头戴式？另外，你希望使用蓝牙还是有线连接？",
+            },
+        }
+    )
+
+    assert result["slots"] == {"connectivity": "bluetooth"}
+    assert result["clarification_status"] == "ASK"
+    assert result["pending_question"]["slots"] == ["form"]
+
+
+@pytest.mark.asyncio
+async def test_dynamic_enum_slot_can_be_answered_without_model() -> None:
+    result = await clarify_requirements(
+        {
+            "utterance": "blue",
+            "model_enabled": False,
+            "product_category": "CUSTOM_ITEM",
+            "category_changed": False,
+            "required_slots_by_category": {"CUSTOM_ITEM": ["color"]},
+            "allowed_slots_by_category": {"CUSTOM_ITEM": ["color"]},
+            "taxonomy_slot_definitions_by_category": {
+                "CUSTOM_ITEM": {"color": {"type": "enum", "values": ["red", "blue"]}}
+            },
+            "slots": {},
+            "pending_question": {
+                "slot": "color",
+                "slots": ["color"],
+                "question": "请告诉我color？",
+            },
+        }
+    )
+
+    assert result["slots"] == {"color": "blue"}
+    assert result["clarification_status"] == "READY"
 
 
 @pytest.mark.asyncio

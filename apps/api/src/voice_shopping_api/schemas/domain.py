@@ -58,39 +58,90 @@ class MerchantStatusUpdate(ApiModel):
 
 
 SlotKey = Annotated[str, Field(pattern=r"^[a-z][A-Za-z0-9]*$", max_length=100)]
+SlotEnumValue = str | int | float | bool
+
+
+class CategoryL1Out(ApiModel):
+    id: UUID
+    code: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class CategoryL1Create(ApiModel):
+    code: str = Field(min_length=1, max_length=100)
+
+
+class CategorySlotOut(ApiModel):
+    id: UUID
+    key: str
+    is_required: bool
+    enum_values: list[SlotEnumValue]
+
+
+class CategorySlotCreate(ApiModel):
+    key: SlotKey
+    is_required: bool
+    enum_values: list[SlotEnumValue] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_enum_values(self) -> "CategorySlotCreate":
+        normalized: list[SlotEnumValue] = []
+        for value in self.enum_values:
+            if isinstance(value, str):
+                value = value.strip()
+                if not value:
+                    raise ValueError("枚举值不能为空")
+            if value not in normalized:
+                normalized.append(value)
+        if not normalized:
+            raise ValueError("创建槽位时必须同时提供枚举值")
+        self.enum_values = normalized
+        return self
+
+
+class CategorySlotUpdate(ApiModel):
+    is_required: bool | None = None
+    enum_values: list[SlotEnumValue] | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def validate_enum_values(self) -> "CategorySlotUpdate":
+        if self.enum_values is None:
+            return self
+        normalized: list[SlotEnumValue] = []
+        for value in self.enum_values:
+            if isinstance(value, str):
+                value = value.strip()
+                if not value:
+                    raise ValueError("枚举值不能为空")
+            if value not in normalized:
+                normalized.append(value)
+        if not normalized:
+            raise ValueError("槽位必须至少保留一个枚举值")
+        self.enum_values = normalized
+        return self
 
 
 class CategoryOut(ApiModel):
     id: UUID
+    category_l1_id: UUID
     category_l1: str
     category_l2: str
     required_slots: list[str]
     optional_slots: list[str]
+    slots: list[CategorySlotOut]
     created_at: datetime
     updated_at: datetime
 
 
 class CategoryCreate(ApiModel):
-    category_l1: str = Field(min_length=1, max_length=100)
+    category_l1_id: UUID
     category_l2: str = Field(min_length=1, max_length=100)
-    required_slots: list[SlotKey] = Field(default_factory=list)
-    optional_slots: list[SlotKey] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def validate_slots(self) -> "CategoryCreate":
-        self.required_slots = list(dict.fromkeys(self.required_slots))
-        self.optional_slots = list(dict.fromkeys(self.optional_slots))
-        duplicated = set(self.required_slots) & set(self.optional_slots)
-        if duplicated:
-            raise ValueError(f"槽位不能同时为必填和选填：{'、'.join(sorted(duplicated))}")
-        return self
 
 
 class CategoryUpdate(ApiModel):
-    category_l1: str | None = Field(default=None, min_length=1, max_length=100)
+    category_l1_id: UUID | None = None
     category_l2: str | None = Field(default=None, min_length=1, max_length=100)
-    required_slots: list[SlotKey] | None = None
-    optional_slots: list[SlotKey] | None = None
 
 
 class ProductOut(ApiModel):

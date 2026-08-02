@@ -41,11 +41,7 @@ const productAttributes = reactive<Record<string, string | number | boolean | nu
 const selectedCategory = computed<Category | undefined>(() =>
   categories.value.find((item) => item.categoryL2 === productForm.categoryL2),
 )
-const selectedSlots = computed(() => [
-  ...(selectedCategory.value?.requiredSlots ?? []).map((key) => ({ key, isRequired: true })),
-  ...(selectedCategory.value?.optionalSlots ?? []).map((key) => ({ key, isRequired: false })),
-]
-)
+const selectedSlots = computed(() => selectedCategory.value?.slots ?? [])
 
 const pendingOrders = computed(() => orders.value.filter((item) => item.status === 'pending').length)
 const revenue = computed(() =>
@@ -131,8 +127,8 @@ function resetProductAttributes() {
   const category = selectedCategory.value
   if (!category) return
   productForm.categoryL1 = category.categoryL1
-  for (const slot of [...category.requiredSlots, ...category.optionalSlots]) {
-    productAttributes[slot] = null
+  for (const slot of category.slots) {
+    productAttributes[slot.key] = null
   }
 }
 
@@ -227,7 +223,10 @@ onMounted(() => void loadData())
             <div class="form-grid">
               <label v-for="slot in selectedSlots" :key="slot.key" class="form-field">
                 <span>{{ slot.key }} <b v-if="slot.isRequired" class="required-mark">必填</b><span v-else class="muted">选填</span></span>
-                <input v-model="productAttributes[slot.key]" class="input" :required="slot.isRequired" />
+                <select v-model="productAttributes[slot.key]" class="select" :required="slot.isRequired">
+                  <option :value="null">请选择</option>
+                  <option v-for="value in slot.enumValues" :key="String(value)" :value="value">{{ value }}</option>
+                </select>
               </label>
             </div>
           </div>

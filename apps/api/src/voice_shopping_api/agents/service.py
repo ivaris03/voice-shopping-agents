@@ -80,19 +80,29 @@ async def _catalog(
 async def _taxonomy_context(session: AsyncSession) -> dict[str, Any]:
     categories = await list_categories(session)
     required: dict[str, list[str]] = {}
+    allowed: dict[str, list[str]] = {}
     definitions: dict[str, dict[str, Any]] = {}
+    definitions_by_category: dict[str, dict[str, dict[str, Any]]] = {}
     questions: dict[str, str] = {}
     names: dict[str, str] = {}
     for category in categories:
         code = str(category["category_l2"])
         names[code] = code
         required[code] = list(category["required_slots"])
-        for key in [*category["required_slots"], *category["optional_slots"]]:
-            definitions[key] = {"type": "text"}
+        allowed[code] = [*category["required_slots"], *category["optional_slots"]]
+        category_definitions: dict[str, dict[str, Any]] = {}
+        for slot in category["slots"]:
+            key = str(slot["key"])
+            definition = {"type": "enum", "values": list(slot["enum_values"])}
+            definitions[key] = definition
+            category_definitions[key] = definition
             questions[key] = f"请告诉我{key}？"
+        definitions_by_category[code] = category_definitions
     return {
         "required_slots_by_category": required,
+        "allowed_slots_by_category": allowed,
         "taxonomy_slot_definitions": definitions,
+        "taxonomy_slot_definitions_by_category": definitions_by_category,
         "taxonomy_slot_questions": questions,
         "taxonomy_category_names": names,
         "taxonomy_categories": [
@@ -101,6 +111,14 @@ async def _taxonomy_context(session: AsyncSession) -> dict[str, Any]:
                 "categoryL2": category["category_l2"],
                 "requiredSlots": list(category["required_slots"]),
                 "optionalSlots": list(category["optional_slots"]),
+                "slots": [
+                    {
+                        "key": slot["key"],
+                        "isRequired": slot["is_required"],
+                        "enumValues": list(slot["enum_values"]),
+                    }
+                    for slot in category["slots"]
+                ],
             }
             for category in categories
         ],
@@ -235,7 +253,9 @@ async def _persist(
             "conversation_history",
             "previous_product_cards",
             "required_slots_by_category",
+            "allowed_slots_by_category",
             "taxonomy_slot_definitions",
+            "taxonomy_slot_definitions_by_category",
             "taxonomy_slot_questions",
             "taxonomy_category_names",
             "taxonomy_categories",

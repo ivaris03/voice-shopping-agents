@@ -454,15 +454,15 @@ def _extract_slots(
 
 def _validated_agent_slots(
     candidate_slots: dict[str, Any],
-    required_slots: list[str],
+    allowed_slots: list[str],
     definitions: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    allowed_slots = {*required_slots, "budgetMax"}
+    allowed_slot_keys = {*allowed_slots, "budgetMax"}
     validated: dict[str, Any] = {}
     for slot, value in candidate_slots.items():
-        if slot not in allowed_slots:
+        if slot not in allowed_slot_keys:
             continue
-        definition = SLOT_DEFINITIONS.get(slot) or (definitions or {}).get(slot)
+        definition = (definitions or {}).get(slot) or SLOT_DEFINITIONS.get(slot)
         if not definition:
             continue
         value_type = definition["type"]
@@ -471,7 +471,7 @@ def _validated_agent_slots(
                 validated[slot] = value
             continue
         if value_type == "enum":
-            if value in definition.get("values", {}):
+            if value in definition.get("values", []):
                 validated[slot] = value
             continue
         if value_type == "text":
@@ -489,6 +489,31 @@ def _validated_agent_slots(
     return validated
 
 
+def _sanitize_existing_slots(
+    slots: dict[str, Any],
+    allowed_slots: list[str],
+    definitions: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    return _validated_agent_slots(slots, allowed_slots, definitions)
+
+
+def _enum_answer(utterance: str, values: list[Any]) -> Any | None:
+    lowered = utterance.strip().lower()
+    matches: list[Any] = []
+    number = re.search(r"(?<!\d)(\d+(?:\.\d+)?)", utterance)
+    for value in values:
+        matched = False
+        if type(value) is bool:
+            matched = _boolean_answer(utterance) is value
+        elif isinstance(value, (int, float)) and number:
+            matched = float(number.group(1)) == float(value)
+        elif isinstance(value, str):
+            matched = value.lower() in lowered
+        if matched and value not in matches:
+            matches.append(value)
+    return matches[0] if len(matches) == 1 else None
+
+
 def _question_for_slots(slots: list[str], taxonomy_questions: dict[str, str]) -> str:
     questions = [
         QUESTIONS.get(slot) or taxonomy_questions.get(slot) or f"请告诉我{slot}？" for slot in slots
@@ -500,15 +525,27 @@ def _question_for_slots(slots: list[str], taxonomy_questions: dict[str, str]) ->
 
 async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
     category = state.get("product_category")
-    existing_slots = {} if state.get("category_changed") else state.get("slots", {})
+    required_slots = state.get("required_slots_by_category", REQUIRED_SLOTS).get(category or "", [])
+    allowed_slots = state.get("allowed_slots_by_category", REQUIRED_SLOTS).get(
+        category or "", required_slots
+    )
+    taxonomy_definitions = state.get("taxonomy_slot_definitions_by_category", {}).get(
+        category or "", state.get("taxonomy_slot_definitions", {})
+    )
+    existing_slots = (
+        {}
+        if state.get("category_changed")
+        else _sanitize_existing_slots(state.get("slots", {}), allowed_slots, taxonomy_definitions)
+    )
     pending_slot = None
     if not state.get("category_changed"):
         pending_slot = (state.get("pending_question") or {}).get("slot")
     slots = _extract_slots(state.get("utterance", ""), existing_slots, pending_slot)
-    required_slots = state.get("required_slots_by_category", REQUIRED_SLOTS).get(category or "", [])
-    taxonomy_definitions = state.get("taxonomy_slot_definitions", {})
-    if pending_slot in taxonomy_definitions and slots.get(pending_slot) in (None, ""):
-        value_type = taxonomy_definitions[pending_slot]["type"]
+    pending_definition = taxonomy_definitions.get(pending_slot or "") or SLOT_DEFINITIONS.get(
+        pending_slot or ""
+    )
+    if pending_slot and pending_definition and slots.get(pending_slot) in (None, ""):
+        value_type = pending_definition["type"]
         if value_type == "boolean":
             answer = _boolean_answer(state.get("utterance", ""))
             if answer is not None:
@@ -517,13 +554,19 @@ async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
             number = re.search(r"(?<!\d)(\d+(?:\.\d+)?)", state.get("utterance", ""))
             if number:
                 slots[pending_slot] = float(number.group(1))
+        elif value_type == "enum":
+            answer = _enum_answer(
+                state.get("utterance", ""), list(pending_definition.get("values", []))
+            )
+            if answer is not None:
+                slots[pending_slot] = answer
         elif value_type == "text" and state.get("utterance", "").strip():
             slots[pending_slot] = state["utterance"].strip()
     if state.get("model_enabled") and category:
         try:
             relevant_definitions = {
-                slot: SLOT_DEFINITIONS.get(slot) or taxonomy_definitions[slot]
-                for slot in [*required_slots, "budgetMax"]
+                slot: taxonomy_definitions.get(slot) or SLOT_DEFINITIONS[slot]
+                for slot in [*allowed_slots, "budgetMax"]
                 if slot in taxonomy_definitions or slot in SLOT_DEFINITIONS
             }
             agent_slots = await clarify_with_model(
@@ -535,7 +578,7 @@ async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
                 relevant_definitions,
                 state.get("conversation_history", []),
             )
-            slots.update(_validated_agent_slots(agent_slots, required_slots, taxonomy_definitions))
+            slots.update(_validated_agent_slots(agent_slots, allowed_slots, taxonomy_definitions))
         except Exception as exc:
             logger.warning("Clarification model failed; using deterministic fallback: %s", exc)
     if not category:

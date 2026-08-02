@@ -56,19 +56,69 @@ ON CONFLICT (id) DO UPDATE SET
     role = EXCLUDED.role,
     status = EXCLUDED.status;
 
--- 每一行对应一个二级分类，并直接保存它的必填和选填槽位。
-INSERT INTO categories (category_l1, category_l2, required_slots, optional_slots)
+-- 一级分类可以独立存在；二级分类必须引用一个已存在的一级分类。
+INSERT INTO category_groups (code)
 VALUES
-    ('ELECTRONICS', 'HEADPHONES', ARRAY['form', 'connectivity'], ARRAY['noiseCancellation', 'batteryHours']),
-    ('HOME_APPLIANCES', 'COFFEE_MACHINE', ARRAY['type'], ARRAY['steamWand', 'pressureBar', 'waterTankMl']),
-    ('HOME_APPLIANCES', 'ELECTRIC_KETTLE', ARRAY['capacityL'], ARRAY['temperatureControl', 'keepWarm']),
-    ('SPORTS', 'RUNNING_SHOES', ARRAY['gender', 'size', 'terrain'], ARRAY['cushion', 'footType']),
-    ('FASHION', 'WATCHES', ARRAY['movement'], ARRAY['gender', 'material', 'waterResistance']),
-    ('BEAUTY', 'LIPSTICK', ARRAY['shade', 'finish'], ARRAY['skinType'])
+    ('ELECTRONICS'),
+    ('HOME_APPLIANCES'),
+    ('SPORTS'),
+    ('FASHION'),
+    ('BEAUTY')
+ON CONFLICT (code) DO NOTHING;
+
+INSERT INTO categories (
+    category_l1_id, category_l1, category_l2, required_slots, optional_slots
+)
+SELECT g.id, seed.category_l1, seed.category_l2, seed.required_slots, seed.optional_slots
+FROM (
+    VALUES
+        ('ELECTRONICS', 'HEADPHONES', ARRAY['form', 'connectivity'], ARRAY['noiseCancellation', 'batteryHours']),
+        ('HOME_APPLIANCES', 'COFFEE_MACHINE', ARRAY['type'], ARRAY['steamWand', 'pressureBar', 'waterTankMl']),
+        ('HOME_APPLIANCES', 'ELECTRIC_KETTLE', ARRAY['capacityL'], ARRAY['temperatureControl', 'keepWarm']),
+        ('SPORTS', 'RUNNING_SHOES', ARRAY['gender', 'size', 'terrain'], ARRAY['cushion', 'footType']),
+        ('FASHION', 'WATCHES', ARRAY['movement'], ARRAY['gender', 'material', 'waterResistance']),
+        ('BEAUTY', 'LIPSTICK', ARRAY['shade', 'finish'], ARRAY['skinType'])
+) AS seed(category_l1, category_l2, required_slots, optional_slots)
+JOIN category_groups g ON g.code = seed.category_l1
 ON CONFLICT (category_l2) DO UPDATE SET
+    category_l1_id = EXCLUDED.category_l1_id,
     category_l1 = EXCLUDED.category_l1,
     required_slots = EXCLUDED.required_slots,
     optional_slots = EXCLUDED.optional_slots;
+
+-- 每个槽位在创建时必须同时给出非空枚举；必填/选填只影响澄清是否阻塞。
+INSERT INTO category_slots (category_id, key, is_required, enum_values)
+SELECT c.id, seed.key, seed.is_required, seed.enum_values
+FROM (
+    VALUES
+        ('HEADPHONES', 'form', true, '["in-ear","over-ear"]'::jsonb),
+        ('HEADPHONES', 'connectivity', true, '["bluetooth","wired"]'::jsonb),
+        ('HEADPHONES', 'noiseCancellation', false, '[true,false]'::jsonb),
+        ('HEADPHONES', 'batteryHours', false, '[5,6,8,24,30,32,45,60]'::jsonb),
+        ('COFFEE_MACHINE', 'type', true, '["capsule","semi-automatic"]'::jsonb),
+        ('COFFEE_MACHINE', 'steamWand', false, '[true,false]'::jsonb),
+        ('COFFEE_MACHINE', 'pressureBar', false, '[9,15,19,20]'::jsonb),
+        ('COFFEE_MACHINE', 'waterTankMl', false, '[600,800,1000,1500,2000]'::jsonb),
+        ('ELECTRIC_KETTLE', 'capacityL', true, '[1,1.2,1.5,1.7,2]'::jsonb),
+        ('ELECTRIC_KETTLE', 'temperatureControl', false, '[true,false]'::jsonb),
+        ('ELECTRIC_KETTLE', 'keepWarm', false, '[true,false]'::jsonb),
+        ('RUNNING_SHOES', 'gender', true, '["male","female","unisex"]'::jsonb),
+        ('RUNNING_SHOES', 'size', true, '[35,36,37,38,39,40,41,42,43,44,45,46]'::jsonb),
+        ('RUNNING_SHOES', 'terrain', true, '["road","trail"]'::jsonb),
+        ('RUNNING_SHOES', 'cushion', false, '["high","medium"]'::jsonb),
+        ('RUNNING_SHOES', 'footType', false, '["neutral","flat","overpronation"]'::jsonb),
+        ('WATCHES', 'movement', true, '["automatic","quartz","eco-drive"]'::jsonb),
+        ('WATCHES', 'gender', false, '["male","female","unisex"]'::jsonb),
+        ('WATCHES', 'material', false, '["steel","titanium","resin"]'::jsonb),
+        ('WATCHES', 'waterResistance', false, '[30,50,100,200]'::jsonb),
+        ('LIPSTICK', 'shade', true, '["milk-tea","tomato-red","coral","rose","ruby-red"]'::jsonb),
+        ('LIPSTICK', 'finish', true, '["matte","satin","glossy"]'::jsonb),
+        ('LIPSTICK', 'skinType', false, '["dry","oily","normal"]'::jsonb)
+) AS seed(category_l2, key, is_required, enum_values)
+JOIN categories c ON c.category_l2 = seed.category_l2
+ON CONFLICT (category_id, key) DO UPDATE SET
+    is_required = EXCLUDED.is_required,
+    enum_values = EXCLUDED.enum_values;
 
 INSERT INTO merchants (
     id, owner_user_id, name, slug, description, logo_url, contact_phone,

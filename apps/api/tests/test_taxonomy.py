@@ -9,7 +9,11 @@ from voice_shopping_api.core.taxonomy import (
     normalize_attributes,
     validate_attributes,
 )
-from voice_shopping_api.schemas.domain import CategoryCreate, ProductCreate
+from voice_shopping_api.schemas.domain import CategoryCreate, CategorySlotCreate, ProductCreate
+
+
+def _slot(key: str, required: bool, values: list[object]) -> dict[str, object]:
+    return {"key": key, "is_required": required, "enum_values": values}
 
 
 def test_normalize_attributes_fills_every_category_key_with_null() -> None:
@@ -50,32 +54,58 @@ def test_product_create_accepts_database_driven_category_without_static_normaliz
 
 def test_validate_attributes_requires_required_slots_and_allows_optional_slots() -> None:
     with pytest.raises(ValueError, match="flavor"):
-        validate_attributes("CAT_FOOD", {"weightKg": 2}, ["flavor"], ["weightKg"])
+        validate_attributes(
+            "CAT_FOOD",
+            {"weightKg": 2},
+            [_slot("flavor", True, ["鸡肉", "鱼肉"]), _slot("weightKg", False, [1, 2])],
+        )
 
     assert validate_attributes(
-        "CAT_FOOD", {"flavor": "鸡肉", "weightKg": None}, ["flavor"], ["weightKg"]
+        "CAT_FOOD",
+        {"flavor": "鸡肉", "weightKg": None},
+        [_slot("flavor", True, ["鸡肉", "鱼肉"]), _slot("weightKg", False, [1, 2])],
     ) == {"flavor": "鸡肉"}
 
 
 def test_validate_attributes_rejects_undefined_slots() -> None:
     with pytest.raises(ValueError, match="未定义"):
-        validate_attributes("CAT_FOOD", {"weightKg": 2, "unknown": True}, ["weightKg"], [])
+        validate_attributes(
+            "CAT_FOOD", {"weightKg": 2, "unknown": True}, [_slot("weightKg", True, [1, 2])]
+        )
 
 
 def test_required_false_and_zero_are_valid_values() -> None:
     assert validate_attributes(
-        "DRINK", {"sugarFree": False, "minimumAge": 0}, ["sugarFree", "minimumAge"], []
+        "DRINK",
+        {"sugarFree": False, "minimumAge": 0},
+        [_slot("sugarFree", True, [True, False]), _slot("minimumAge", True, [0, 18])],
     ) == {
         "sugarFree": False,
         "minimumAge": 0,
     }
 
 
-def test_category_rejects_slot_in_both_columns() -> None:
-    with pytest.raises(ValueError, match="同时为必填和选填"):
-        CategoryCreate(
-            category_l1="FOOD",
-            category_l2="DRINK",
-            required_slots=["flavor"],
-            optional_slots=["flavor"],
+def test_secondary_category_requires_parent_id() -> None:
+    category = CategoryCreate(
+        category_l1_id=UUID("10000000-0000-4000-8000-000000000001"),
+        category_l2="DRINK",
+    )
+
+    assert category.category_l2 == "DRINK"
+
+
+def test_slot_requires_non_empty_enum_values() -> None:
+    with pytest.raises(ValueError, match="at least 1 item"):
+        CategorySlotCreate(key="flavor", is_required=True, enum_values=[])
+
+    slot = CategorySlotCreate(
+        key="flavor", is_required=False, enum_values=[" chicken ", "chicken", "fish"]
+    )
+    assert slot.enum_values == ["chicken", "fish"]
+
+
+def test_validate_attributes_rejects_value_outside_enum() -> None:
+    with pytest.raises(ValueError, match="枚举范围"):
+        validate_attributes(
+            "CAT_FOOD", {"flavor": "beef"}, [_slot("flavor", True, ["chicken", "fish"])]
         )

@@ -30,12 +30,30 @@ export interface Merchant {
   updatedAt: string
 }
 
+export type SlotEnumValue = string | number | boolean
+
+export interface CategoryLevelOne {
+  id: string
+  code: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CategorySlot {
+  id: string
+  key: string
+  isRequired: boolean
+  enumValues: SlotEnumValue[]
+}
+
 export interface Category {
   id: string
+  categoryL1Id: string
   categoryL1: string
   categoryL2: string
   requiredSlots: string[]
   optionalSlots: string[]
+  slots: CategorySlot[]
   createdAt: string
   updatedAt: string
 }

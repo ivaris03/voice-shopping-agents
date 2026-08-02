@@ -1,3 +1,4 @@
+import json
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -17,7 +18,12 @@ from voice_shopping_api.core.queries import (
 from voice_shopping_api.core.taxonomy import list_categories
 from voice_shopping_api.schemas.domain import (
     CategoryCreate,
+    CategoryL1Create,
+    CategoryL1Out,
     CategoryOut,
+    CategorySlotCreate,
+    CategorySlotOut,
+    CategorySlotUpdate,
     CategoryUpdate,
     ItemsResponse,
     MerchantOut,
@@ -35,17 +41,26 @@ async def get_categories(session: Db) -> dict[str, object]:
     return {"items": await list_categories(session)}
 
 
-@router.post("/categories", response_model=CategoryOut, status_code=201)
-async def create_category(payload: CategoryCreate, session: Db) -> dict[str, Any]:
+async def _category_or_404(session: AsyncSession, category_id: UUID) -> dict[str, Any]:
+    for category in await list_categories(session):
+        if category["id"] == category_id:
+            return category
+    raise HTTPException(status_code=404, detail="二级分类不存在")
+
+
+@router.get("/category-level-ones", response_model=ItemsResponse[CategoryL1Out])
+async def get_category_level_ones(session: Db) -> dict[str, object]:
+    result = await session.execute(text("SELECT * FROM category_groups ORDER BY code, created_at"))
+    return {"items": rows(result)}
+
+
+@router.post("/category-level-ones", response_model=CategoryL1Out, status_code=201)
+async def create_category_level_one(payload: CategoryL1Create, session: Db) -> dict[str, Any]:
     result = await session.execute(
         text(
             """
-            INSERT INTO categories (
-                category_l1, category_l2, required_slots, optional_slots
-            ) VALUES (
-                :category_l1, :category_l2, :required_slots, :optional_slots
-            )
-            ON CONFLICT (category_l2) DO NOTHING
+            INSERT INTO category_groups (code) VALUES (:code)
+            ON CONFLICT (code) DO NOTHING
             RETURNING *
             """
         ),
@@ -53,9 +68,60 @@ async def create_category(payload: CategoryCreate, session: Db) -> dict[str, Any
     )
     created = result.mappings().first()
     if created is None:
-        raise HTTPException(status_code=409, detail="二级分类已存在")
+        raise HTTPException(status_code=409, detail="一级分类已存在")
     await session.commit()
     return dict(created)
+
+
+@router.delete("/category-level-ones/{category_l1_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_category_level_one(category_l1_id: UUID, session: Db) -> Response:
+    result = await session.execute(
+        text(
+            """
+            DELETE FROM category_groups g
+            WHERE g.id = :id
+              AND NOT EXISTS (
+                  SELECT 1 FROM categories c WHERE c.category_l1_id = g.id
+              )
+            RETURNING id
+            """
+        ),
+        {"id": category_l1_id},
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=409, detail="一级分类不存在或仍有关联二级分类")
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/categories", response_model=CategoryOut, status_code=201)
+async def create_category(payload: CategoryCreate, session: Db) -> dict[str, Any]:
+    parent_result = await session.execute(
+        text("SELECT code FROM category_groups WHERE id = :id"),
+        {"id": payload.category_l1_id},
+    )
+    category_l1 = parent_result.scalar_one_or_none()
+    if category_l1 is None:
+        raise HTTPException(status_code=422, detail="二级分类必须关联已存在的一级分类")
+    result = await session.execute(
+        text(
+            """
+            INSERT INTO categories (
+                category_l1_id, category_l1, category_l2
+            ) VALUES (
+                :category_l1_id, :category_l1, :category_l2
+            )
+            ON CONFLICT (category_l2) DO NOTHING
+            RETURNING id
+            """
+        ),
+        {**payload.model_dump(), "category_l1": category_l1},
+    )
+    category_id = result.scalar_one_or_none()
+    if category_id is None:
+        raise HTTPException(status_code=409, detail="二级分类已存在")
+    await session.commit()
+    return await _category_or_404(session, category_id)
 
 
 @router.patch("/categories/{category_id}", response_model=CategoryOut)
@@ -65,28 +131,93 @@ async def update_category(
     current_result = await session.execute(
         text("SELECT * FROM categories WHERE id = :id"), {"id": category_id}
     )
-    current = row_or_404(current_result, "分类不存在")
+    row_or_404(current_result, "二级分类不存在")
     values = payload.model_dump(exclude_unset=True)
-    required_slots = list(dict.fromkeys(values.get("required_slots", current["required_slots"])))
-    optional_slots = list(dict.fromkeys(values.get("optional_slots", current["optional_slots"])))
-    duplicated = set(required_slots) & set(optional_slots)
-    if duplicated:
-        raise HTTPException(
-            status_code=422,
-            detail=f"槽位不能同时为必填和选填：{'、'.join(sorted(duplicated))}",
+    if "category_l1_id" in values:
+        parent_result = await session.execute(
+            text("SELECT code FROM category_groups WHERE id = :id"),
+            {"id": values["category_l1_id"]},
         )
-    values.update(required_slots=required_slots, optional_slots=optional_slots)
-    assignments = []
-    for key in values:
-        expression = f"CAST(:{key} AS text[])" if key.endswith("_slots") else f":{key}"
-        assignments.append(f"{key} = {expression}")
-    result = await session.execute(
-        text(f"UPDATE categories SET {', '.join(assignments)} WHERE id = :id RETURNING *"),
-        {**values, "id": category_id},
+        category_l1 = parent_result.scalar_one_or_none()
+        if category_l1 is None:
+            raise HTTPException(status_code=422, detail="二级分类必须关联已存在的一级分类")
+        values["category_l1"] = category_l1
+    if values:
+        assignments = ", ".join(f"{key} = :{key}" for key in values)
+        await session.execute(
+            text(f"UPDATE categories SET {assignments} WHERE id = :id"),
+            {**values, "id": category_id},
+        )
+        await commit_or_conflict(session, "二级分类已存在")
+    return await _category_or_404(session, category_id)
+
+
+@router.post("/categories/{category_id}/slots", response_model=CategorySlotOut, status_code=201)
+async def create_category_slot(
+    category_id: UUID, payload: CategorySlotCreate, session: Db
+) -> dict[str, Any]:
+    category = await session.execute(
+        text("SELECT id FROM categories WHERE id = :id"), {"id": category_id}
     )
-    updated = row_or_404(result, "分类不存在")
-    await commit_or_conflict(session, "二级分类已存在")
-    return updated
+    if category.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="二级分类不存在")
+    result = await session.execute(
+        text(
+            """
+            INSERT INTO category_slots (category_id, key, is_required, enum_values)
+            VALUES (:category_id, :key, :is_required, CAST(:enum_values AS jsonb))
+            ON CONFLICT (category_id, key) DO NOTHING
+            RETURNING *
+            """
+        ),
+        {
+            "category_id": category_id,
+            "key": payload.key,
+            "is_required": payload.is_required,
+            "enum_values": json.dumps(payload.enum_values, ensure_ascii=False),
+        },
+    )
+    created = result.mappings().first()
+    if created is None:
+        raise HTTPException(status_code=409, detail="该二级分类下的槽位已存在")
+    await session.commit()
+    return dict(created)
+
+
+@router.patch("/category-slots/{slot_id}", response_model=CategorySlotOut)
+async def update_category_slot(
+    slot_id: UUID, payload: CategorySlotUpdate, session: Db
+) -> dict[str, Any]:
+    values = payload.model_dump(exclude_unset=True)
+    if "enum_values" in values:
+        values["enum_values"] = json.dumps(values["enum_values"], ensure_ascii=False)
+    if values:
+        assignments = ", ".join(
+            f"{key} = CAST(:{key} AS jsonb)" if key == "enum_values" else f"{key} = :{key}"
+            for key in values
+        )
+        result = await session.execute(
+            text(f"UPDATE category_slots SET {assignments} WHERE id = :id RETURNING *"),
+            {**values, "id": slot_id},
+        )
+        updated = row_or_404(result, "槽位不存在")
+        await session.commit()
+        return updated
+    result = await session.execute(
+        text("SELECT * FROM category_slots WHERE id = :id"), {"id": slot_id}
+    )
+    return row_or_404(result, "槽位不存在")
+
+
+@router.delete("/category-slots/{slot_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_category_slot(slot_id: UUID, session: Db) -> Response:
+    result = await session.execute(
+        text("DELETE FROM category_slots WHERE id = :id RETURNING id"), {"id": slot_id}
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="槽位不存在")
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete("/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)

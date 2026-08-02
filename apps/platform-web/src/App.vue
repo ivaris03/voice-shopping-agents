@@ -3,6 +3,8 @@ import {
   AppShell,
   requestJson,
   type Category,
+  type CategoryLevelOne,
+  type CategorySlot,
   type ItemsResponse,
   type Merchant,
   type Order,
@@ -21,8 +23,11 @@ const merchants = ref<Merchant[]>([])
 const products = ref<Product[]>([])
 const orders = ref<Order[]>([])
 const categories = ref<Category[]>([])
+const categoryLevelOnes = ref<CategoryLevelOne[]>([])
 const categorySaving = ref(false)
-const categoryForm = reactive({ categoryL1: '', categoryL2: '', requiredSlots: '', optionalSlots: '' })
+const categoryL1Form = reactive({ code: '' })
+const categoryForm = reactive({ categoryL1Id: '', categoryL2: '' })
+const slotForm = reactive({ categoryId: '', key: '', isRequired: true, enumValues: '' })
 const error = ref('')
 const productQuery = ref('')
 const orderStatus = ref('')
@@ -40,54 +45,117 @@ const visibleOrders = computed(() =>
 async function loadData() {
   error.value = ''
   try {
-    const [merchantData, productData, orderData, categoryData] = await Promise.all([
+    const [merchantData, productData, orderData, categoryData, categoryL1Data] = await Promise.all([
       requestJson<ItemsResponse<Merchant>>('/platform/merchants'),
       requestJson<ItemsResponse<Product>>('/platform/products'),
       requestJson<ItemsResponse<Order>>('/platform/orders'),
       requestJson<ItemsResponse<Category>>('/platform/categories'),
+      requestJson<ItemsResponse<CategoryLevelOne>>('/platform/category-level-ones'),
     ])
     merchants.value = merchantData.items
     products.value = productData.items
     orders.value = orderData.items
     categories.value = categoryData.items
+    categoryLevelOnes.value = categoryL1Data.items
+    if (!categoryForm.categoryL1Id && categoryLevelOnes.value[0]) {
+      categoryForm.categoryL1Id = categoryLevelOnes.value[0].id
+    }
+    if (!slotForm.categoryId && categories.value[0]) slotForm.categoryId = categories.value[0].id
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '平台数据加载失败'
   }
 }
 
-function parseSlots(value: string) {
-  return [...new Set(value.split(/[,，\s]+/).map((item) => item.trim()).filter(Boolean))]
+function parseEnumValues(value: string): Array<string | number | boolean> {
+  return [...new Set(value.split(/[,，]+/).map((item) => item.trim()).filter(Boolean))].map((item) => {
+    if (item === 'true') return true
+    if (item === 'false') return false
+    const number = Number(item)
+    return item !== '' && Number.isFinite(number) ? number : item
+  })
+}
+
+async function createCategoryLevelOne() {
+  if (!categoryL1Form.code.trim()) return
+  categorySaving.value = true
+  try {
+    await requestJson('/platform/category-level-ones', {
+      method: 'POST',
+      body: JSON.stringify({ code: categoryL1Form.code.trim() }),
+    })
+    categoryL1Form.code = ''
+    await loadData()
+  } catch (failure) {
+    error.value = failure instanceof Error ? failure.message : '一级分类创建失败'
+  } finally { categorySaving.value = false }
+}
+
+async function deleteCategoryLevelOne(category: CategoryLevelOne) {
+  if (!window.confirm(`确认删除一级分类“${category.code}”吗？`)) return
+  try {
+    await requestJson(`/platform/category-level-ones/${category.id}`, { method: 'DELETE' })
+    await loadData()
+  } catch (failure) {
+    error.value = failure instanceof Error ? failure.message : '一级分类删除失败'
+  }
 }
 
 async function createCategory() {
-  if (!categoryForm.categoryL1 || !categoryForm.categoryL2) return
+  if (!categoryForm.categoryL1Id || !categoryForm.categoryL2.trim()) return
   categorySaving.value = true
   try {
     await requestJson('/platform/categories', {
       method: 'POST',
       body: JSON.stringify({
-        categoryL1: categoryForm.categoryL1,
-        categoryL2: categoryForm.categoryL2,
-        requiredSlots: parseSlots(categoryForm.requiredSlots),
-        optionalSlots: parseSlots(categoryForm.optionalSlots),
+        categoryL1Id: categoryForm.categoryL1Id,
+        categoryL2: categoryForm.categoryL2.trim(),
       }),
     })
-    Object.assign(categoryForm, { categoryL1: '', categoryL2: '', requiredSlots: '', optionalSlots: '' })
+    categoryForm.categoryL2 = ''
     await loadData()
   } catch (failure) {
     error.value = failure instanceof Error ? failure.message : '分类创建失败'
   } finally { categorySaving.value = false }
 }
 
-async function editCategory(category: Category) {
-  const required = window.prompt('必填槽位（逗号分隔）', category.requiredSlots.join(', '))
-  if (required === null) return
-  const optional = window.prompt('选填槽位（逗号分隔）', category.optionalSlots.join(', '))
-  if (optional === null) return
-  await requestJson(`/platform/categories/${category.id}`, {
+async function createSlot() {
+  const enumValues = parseEnumValues(slotForm.enumValues)
+  if (!slotForm.categoryId || !slotForm.key.trim() || !enumValues.length) return
+  categorySaving.value = true
+  try {
+    await requestJson(`/platform/categories/${slotForm.categoryId}/slots`, {
+      method: 'POST',
+      body: JSON.stringify({
+        key: slotForm.key.trim(),
+        isRequired: slotForm.isRequired,
+        enumValues,
+      }),
+    })
+    Object.assign(slotForm, { key: '', isRequired: true, enumValues: '' })
+    await loadData()
+  } catch (failure) {
+    error.value = failure instanceof Error ? failure.message : '槽位创建失败'
+  } finally { categorySaving.value = false }
+}
+
+async function editSlot(slot: CategorySlot) {
+  const values = window.prompt('枚举值（逗号分隔，至少一个）', slot.enumValues.join(', '))
+  if (values === null) return
+  const enumValues = parseEnumValues(values)
+  if (!enumValues.length) {
+    error.value = '槽位必须至少保留一个枚举值'
+    return
+  }
+  await requestJson(`/platform/category-slots/${slot.id}`, {
     method: 'PATCH',
-    body: JSON.stringify({ requiredSlots: parseSlots(required), optionalSlots: parseSlots(optional) }),
+    body: JSON.stringify({ enumValues }),
   })
+  await loadData()
+}
+
+async function deleteSlot(slot: CategorySlot) {
+  if (!window.confirm(`确认删除槽位“${slot.key}”吗？`)) return
+  await requestJson(`/platform/category-slots/${slot.id}`, { method: 'DELETE' })
   await loadData()
 }
 
@@ -140,24 +208,45 @@ onMounted(() => void loadData())
       </section>
 
       <section id="categories" class="section-panel">
-        <div class="section-heading"><div><h2>品类与槽位</h2><p>维护一级、二级品类，以及商家创建商品时必须填写或可以选填的槽位。</p></div></div>
+        <div class="section-heading"><div><h2>品类与槽位</h2><p>先创建一级分类，再创建关联的二级分类；每个槽位都必须配置枚举值。</p></div></div>
+        <h3>1. 创建一级分类</h3>
+        <form class="form-grid" @submit.prevent="createCategoryLevelOne">
+          <label class="form-field form-field--wide">一级分类编码<input v-model="categoryL1Form.code" class="input" placeholder="ELECTRONICS" required /></label>
+          <button class="primary-button" type="submit" :disabled="categorySaving">新增一级分类</button>
+        </form>
+        <div class="slot-list">
+          <span v-for="item in categoryLevelOnes" :key="item.id" class="slot-chip">
+            {{ item.code }}
+            <button class="danger-button small-button" type="button" @click="deleteCategoryLevelOne(item)">删除</button>
+          </span>
+        </div>
+        <h3>2. 创建二级分类</h3>
         <form class="form-grid" @submit.prevent="createCategory">
-          <label class="form-field">一级分类<input v-model="categoryForm.categoryL1" class="input" placeholder="ELECTRONICS" required /></label>
+          <label class="form-field">关联一级分类<select v-model="categoryForm.categoryL1Id" class="select" required><option value="" disabled>请选择一级分类</option><option v-for="item in categoryLevelOnes" :key="item.id" :value="item.id">{{ item.code }}</option></select></label>
           <label class="form-field">二级分类<input v-model="categoryForm.categoryL2" class="input" placeholder="HEADPHONES" required /></label>
-          <label class="form-field form-field--wide">必填槽位（逗号分隔）<input v-model="categoryForm.requiredSlots" class="input" placeholder="form, connectivity" /></label>
-          <label class="form-field form-field--wide">选填槽位（逗号分隔）<input v-model="categoryForm.optionalSlots" class="input" placeholder="noiseCancellation, batteryHours" /></label>
-          <button class="primary-button" type="submit" :disabled="categorySaving">新增分类</button>
+          <button class="primary-button" type="submit" :disabled="categorySaving || !categoryLevelOnes.length">新增二级分类</button>
+        </form>
+        <h3>3. 创建槽位</h3>
+        <form class="form-grid" @submit.prevent="createSlot">
+          <label class="form-field">所属二级分类<select v-model="slotForm.categoryId" class="select" required><option value="" disabled>请选择二级分类</option><option v-for="category in categories" :key="category.id" :value="category.id">{{ category.categoryL1 }} / {{ category.categoryL2 }}</option></select></label>
+          <label class="form-field">槽位 Key<input v-model="slotForm.key" class="input" placeholder="connectivity" required /></label>
+          <label class="form-field">是否必填<select v-model="slotForm.isRequired" class="select"><option :value="true">必填</option><option :value="false">选填</option></select></label>
+          <label class="form-field form-field--wide">枚举值（逗号分隔）<input v-model="slotForm.enumValues" class="input" placeholder="bluetooth, wired" required /></label>
+          <button class="primary-button" type="submit" :disabled="categorySaving || !categories.length">新增槽位</button>
         </form>
         <div class="taxonomy-list">
           <article v-for="category in categories" :key="category.id" class="taxonomy-group">
             <div class="taxonomy-heading">
               <div><span class="badge">一级 · {{ category.categoryL1 }}</span><h3>{{ category.categoryL2 }}</h3></div>
-              <div class="section-actions"><button class="ghost-button small-button" @click="editCategory(category)">编辑槽位</button><button class="danger-button small-button" @click="deleteCategory(category)">删除</button></div>
+              <div class="section-actions"><button class="danger-button small-button" @click="deleteCategory(category)">删除二级分类</button></div>
             </div>
             <div class="slot-list">
-              <span v-for="slot in category.requiredSlots" :key="`required-${slot}`" class="slot-chip">{{ slot }} · 必填</span>
-              <span v-for="slot in category.optionalSlots" :key="`optional-${slot}`" class="slot-chip slot-chip--optional">{{ slot }} · 选填</span>
-              <span v-if="!category.requiredSlots.length && !category.optionalSlots.length" class="muted">暂未配置槽位</span>
+              <span v-for="slot in category.slots" :key="slot.id" class="slot-chip" :class="{ 'slot-chip--optional': !slot.isRequired }">
+                {{ slot.key }} · {{ slot.isRequired ? '必填' : '选填' }} · {{ slot.enumValues.join(' / ') }}
+                <button class="ghost-button small-button" type="button" @click="editSlot(slot)">编辑</button>
+                <button class="danger-button small-button" type="button" @click="deleteSlot(slot)">删除</button>
+              </span>
+              <span v-if="!category.slots.length" class="muted">暂未配置槽位，请先创建带枚举值的槽位</span>
             </div>
           </article>
         </div>
