@@ -34,12 +34,12 @@ docs/              需求、架构和实现说明
 
 ## 本地启动
 
-需要 Node.js、pnpm、Python 3.12+、uv 和 Docker。
+需要 Node.js、pnpm、Python 3.12+、uv，以及本机已有的 PostgreSQL 16 + PGVector 和
+Redis。项目直接连接宿主机的 `5432`、`6379` 端口，不会另外创建基础设施容器。
 
 ```bash
 pnpm install
 uv sync --project apps/api
-pnpm infra:up
 
 # 分别在四个终端启动
 pnpm dev:api
@@ -50,7 +50,9 @@ pnpm dev:platform
 
 API 文档位于 `http://localhost:8000/docs`，三个前端分别位于
 `http://localhost:5173`、`http://localhost:5174` 和 `http://localhost:5175`。
-PostgreSQL 与 Redis 默认使用宿主机 `55432`、`56379` 端口。
+PostgreSQL 与 Redis 默认使用宿主机 `5432`、`6379` 端口。首次使用空数据库时，先创建
+`voice-shopping-agents` 数据库，再依次执行 `sql/schema.sql` 和 `sql/data.sql`；已有数据库
+无需重复导入。
 
 复制 `.env.example` 为 `.env` 后可接入 DashScope 和 LangSmith。无 DashScope Key 时，
 Agent 保持确定性可运行，语音端使用浏览器降级；配置 Key 后启用文档指定的文本、Embedding、
@@ -91,7 +93,6 @@ pnpm typecheck
 pnpm build
 pnpm test:api
 pnpm lint:api
-docker compose config --quiet
 ```
 
 第一版不包含支付、退款、物流、售后和真实电商平台对接。

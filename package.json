@@ -12,8 +12,6 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "test:api": "uv run --project apps/api pytest",
     "lint:api": "uv run --project apps/api ruff check .",
-    "format:api": "uv run --project apps/api ruff format .",
-    "infra:up": "docker compose up -d postgres redis",
-    "infra:down": "docker compose down"
+    "format:api": "uv run --project apps/api ruff format ."
   }
 }

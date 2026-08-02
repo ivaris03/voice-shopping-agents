@@ -18,9 +18,9 @@ class Settings(BaseSettings):
     environment: str = "development"
     api_v1_prefix: str = "/api/v1"
     database_url: str = (
-        "postgresql+asyncpg://postgres:postgres@localhost:55432/voice-shopping-agents"
+        "postgresql+asyncpg://postgres:postgres@localhost:5432/voice-shopping-agents"
     )
-    redis_url: str = "redis://localhost:56379/0"
+    redis_url: str = "redis://localhost:6379/0"
     cors_origins: str = Field(
         default="http://localhost:5173,http://localhost:5174,http://localhost:5175"
     )
