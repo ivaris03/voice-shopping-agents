@@ -91,7 +91,13 @@ SLOT_DEFINITIONS: dict[str, dict[str, Any]] = {
         "meaning": "适用性别",
         "values": {"male": "男款", "female": "女款", "unisex": "中性款"},
     },
-    "size": {"type": "number", "meaning": "鞋码", "minimum": 1},
+    "size": {
+        "type": "number",
+        "meaning": "用户需要的鞋码",
+        "minimum": 1,
+        "productAttribute": "sizeRange",
+        "matchMode": "range_contains",
+    },
     "terrain": {
         "type": "enum",
         "meaning": "跑步路面",
@@ -462,7 +468,7 @@ def _validated_agent_slots(
     for slot, value in candidate_slots.items():
         if slot not in allowed_slot_keys:
             continue
-        definition = (definitions or {}).get(slot) or SLOT_DEFINITIONS.get(slot)
+        definition = _effective_slot_definition(slot, definitions or {})
         if not definition:
             continue
         value_type = definition["type"]
@@ -487,6 +493,26 @@ def _validated_agent_slots(
             if float(value) >= minimum:
                 validated[slot] = value
     return validated
+
+
+def _effective_slot_definition(
+    slot: str, taxonomy_definitions: dict[str, dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Keep platform enums while applying the canonical input type for known slots."""
+    taxonomy_definition = taxonomy_definitions.get(slot)
+    canonical_definition = SLOT_DEFINITIONS.get(slot)
+    if not taxonomy_definition:
+        return canonical_definition
+    if not canonical_definition:
+        return taxonomy_definition
+    return {
+        **taxonomy_definition,
+        **{
+            key: value
+            for key, value in canonical_definition.items()
+            if key in {"type", "meaning", "minimum", "productAttribute", "matchMode"}
+        },
+    }
 
 
 def _sanitize_existing_slots(
@@ -541,9 +567,7 @@ async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
     if not state.get("category_changed"):
         pending_slot = (state.get("pending_question") or {}).get("slot")
     slots = _extract_slots(state.get("utterance", ""), existing_slots, pending_slot)
-    pending_definition = taxonomy_definitions.get(pending_slot or "") or SLOT_DEFINITIONS.get(
-        pending_slot or ""
-    )
+    pending_definition = _effective_slot_definition(pending_slot or "", taxonomy_definitions)
     if pending_slot and pending_definition and slots.get(pending_slot) in (None, ""):
         value_type = pending_definition["type"]
         if value_type == "boolean":
@@ -565,9 +589,10 @@ async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
     if state.get("model_enabled") and category:
         try:
             relevant_definitions = {
-                slot: taxonomy_definitions.get(slot) or SLOT_DEFINITIONS[slot]
+                slot: definition
                 for slot in [*allowed_slots, "budgetMax"]
-                if slot in taxonomy_definitions or slot in SLOT_DEFINITIONS
+                if (definition := _effective_slot_definition(slot, taxonomy_definitions))
+                is not None
             }
             agent_slots = await clarify_with_model(
                 state.get("utterance", ""),
@@ -676,6 +701,13 @@ def _attribute_matches(key: str, product_value: Any, requested_value: Any) -> bo
     return product_value == requested_value
 
 
+def _product_attribute_value(attributes: dict[str, Any], slot: str) -> Any:
+    """Translate catalog-specific attribute names to their taxonomy slot names."""
+    if slot == "size":
+        return attributes.get("size", attributes.get("sizeRange"))
+    return attributes.get(slot)
+
+
 async def recommend_products(state: ShoppingState) -> dict[str, Any]:
     intent = (state.get("intents") or [{}])[0].get("type")
     previous_cards = state.get("previous_product_cards", [])
@@ -705,7 +737,9 @@ async def recommend_products(state: ShoppingState) -> dict[str, Any]:
             continue
         attributes = product.get("attributes", {})
         if any(
-            not _attribute_matches(slot, attributes.get(slot), slots.get(slot))
+            not _attribute_matches(
+                slot, _product_attribute_value(attributes, slot), slots.get(slot)
+            )
             for slot in required_slots
             if slots.get(slot) is not None
         ):

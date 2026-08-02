@@ -65,7 +65,7 @@ async def test_clarification_asks_up_to_two_slots_then_recommends() -> None:
         "stock": 10,
         "attributes": {
             "gender": "unisex",
-            "size": [36, 46],
+            "sizeRange": [36, 46],
             "terrain": "road",
             "cushion": "high",
             "footType": ["neutral"],
@@ -348,6 +348,47 @@ async def test_clarification_agent_resolves_contextual_asr_error(
     assert result["slots"] == {"noiseCancellation": True, "form": "in-ear"}
     assert result["pending_question"]["slot"] == "connectivity"
     assert result["pending_question"]["slots"] == ["connectivity", "batteryHours"]
+
+
+@pytest.mark.asyncio
+async def test_clarification_agent_receives_numeric_shoe_size_definition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_clarify_with_model(
+        utterance: str,
+        product_category: str,
+        required_slots: list[str],
+        current_slots: dict[str, object],
+        pending_question: dict[str, object] | None,
+        slot_definitions: dict[str, dict[str, object]],
+        conversation_history: list[str],
+    ) -> dict[str, object]:
+        captured["slot_definitions"] = slot_definitions
+        return {"size": 42}
+
+    monkeypatch.setattr(workflow_module, "clarify_with_model", fake_clarify_with_model)
+    result = await clarify_requirements(
+        {
+            "utterance": "四十二码",
+            "model_enabled": True,
+            "product_category": "RUNNING_SHOES",
+            "category_changed": False,
+            "slots": {},
+            "required_slots_by_category": {"RUNNING_SHOES": ["size"]},
+            "allowed_slots_by_category": {"RUNNING_SHOES": ["size"]},
+            "taxonomy_slot_definitions_by_category": {
+                "RUNNING_SHOES": {"size": {"type": "enum", "values": [35, 36, 42]}}
+            },
+        }
+    )
+
+    size_definition = captured["slot_definitions"]["size"]
+    assert size_definition["type"] == "number"
+    assert size_definition["productAttribute"] == "sizeRange"
+    assert size_definition["matchMode"] == "range_contains"
+    assert result["slots"] == {"size": 42}
 
 
 @pytest.mark.asyncio
