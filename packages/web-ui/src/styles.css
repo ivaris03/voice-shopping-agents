@@ -141,9 +141,9 @@ h1 { max-width: 720px; margin: 0; font-family: Georgia, "Songti SC", serif; font
 .taxonomy-heading h3 { margin: 8px 0 0; }
 .taxonomy-child { margin-top: 14px; padding: 14px; border-radius: 13px; background: #f4f1e9; }
 .slot-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-.slot-chip { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; border-radius: 999px; color: #24583a; background: #dfeee3; font-size: 12px; }
+.slot-chip { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; border-radius: 999px; color: #24583a; background: #dfeee3; font-size: 12px; white-space: nowrap; }
 .slot-chip--optional { color: #785422; background: #f3e7cb; }
-.slot-chip button { width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; color: inherit; background: rgba(255, 255, 255, 0.55); cursor: pointer; }
+.slot-chip button { flex: 0 0 auto; width: auto; min-height: 18px; padding: 1px 4px; border: 0; border-radius: 6px; color: inherit; background: rgba(255, 255, 255, 0.55); cursor: pointer; white-space: nowrap; }
 
 .secondary-button, .danger-button, .ghost-button {
   border: 1px solid rgba(24, 34, 28, 0.16);
