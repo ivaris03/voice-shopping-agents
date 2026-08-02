@@ -47,6 +47,7 @@ async def embed_text(text: str) -> tuple[list[float], dict[str, Any] | None]:
             "ls_provider": "dashscope",
             "ls_model_name": settings.embedding_model,
             "operation": "embedding",
+            "text": text,
         },
         tags=["dashscope", "embedding"],
         project_name=settings.langsmith_project,
@@ -72,6 +73,8 @@ async def embed_text(text: str) -> tuple[list[float], dict[str, Any] | None]:
             metadata={
                 "status": "ok",
                 "duration_ms": round((perf_counter() - started) * 1000, 2),
+                "text": text,
+                "vector": vector,
                 "vector_dimensions": len(vector),
                 "request_id": response_request_id(recorder.response),
             },

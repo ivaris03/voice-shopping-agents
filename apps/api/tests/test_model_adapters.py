@@ -149,7 +149,9 @@ async def test_embedding_preserves_dashscope_usage(monkeypatch: pytest.MonkeyPat
     assert vector == [3.0, 4.0]
     assert usage == {"input_tokens": 7, "total_tokens": 7}
     assert started[0][1]["inputs"]["text"] == "通勤耳机"
+    assert started[0][1]["metadata"]["text"] == "通勤耳机"
     assert finished[0]["outputs"]["vector"] == [3.0, 4.0]
+    assert finished[0]["metadata"]["vector"] == [3.0, 4.0]
 
 
 def test_usage_normalization_preserves_provider_costs() -> None:
@@ -192,4 +194,7 @@ async def test_rerank_uses_dashscope_rerank(monkeypatch: pytest.MonkeyPatch) -> 
     assert isinstance(_FakeReranker.init_kwargs["client"], model_module._InstructionalRerankClient)
     assert started[0][1]["inputs"]["query"] == "通勤耳机"
     assert len(started[0][1]["inputs"]["documents"]) == 2
+    assert started[0][1]["metadata"]["query"] == "通勤耳机"
+    assert len(started[0][1]["metadata"]["documents"]) == 2
     assert finished[0]["outputs"]["scores"] == result
+    assert finished[0]["metadata"]["scores"] == result

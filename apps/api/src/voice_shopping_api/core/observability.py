@@ -59,11 +59,17 @@ def finish_trace(
     if handle is None:
         return
     try:
-        if metadata:
-            handle.run.add_metadata(dict(metadata))
         normalized_usage = normalize_usage(usage)
+        trace_metadata = dict(metadata or {})
         if normalized_usage:
+            trace_metadata.setdefault("usage", normalized_usage)
+            if normalized_usage.get("total_cost") is not None:
+                trace_metadata.setdefault("cost", normalized_usage["total_cost"])
             handle.run.set(usage_metadata=normalized_usage)
+        if error is not None:
+            trace_metadata.setdefault("error", str(error) or type(error).__name__)
+        if trace_metadata:
+            handle.run.add_metadata(trace_metadata)
         if error is not None:
             handle.run.end(error=str(error) or type(error).__name__)
         else:

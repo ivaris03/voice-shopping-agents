@@ -62,6 +62,7 @@ async def test_asr_trace_records_safe_usage_summary(monkeypatch) -> None:
     assert started[0][0] == "dashscope-asr"
     assert finished[0]["metadata"]["audio_bytes"] == 4
     assert finished[0]["metadata"]["billed_audio_duration_ms"] == 125
+    assert finished[0]["metadata"]["transcript"] == "不要上传这句原文"
     assert finished[0]["outputs"]["transcript"] == "不要上传这句原文"
 
 
@@ -108,4 +109,5 @@ async def test_tts_stream_uses_dashscope_audio_format(monkeypatch) -> None:
     assert started[0][0] == "dashscope-tts"
     assert finished[0]["metadata"]["usage_characters"] == 2
     assert finished[0]["metadata"]["audio_bytes"] == len(b"wav-1wav-2")
+    assert finished[0]["metadata"]["text"] == "你好"
     assert finished[0]["outputs"]["audio_bytes"] == len(b"wav-1wav-2")

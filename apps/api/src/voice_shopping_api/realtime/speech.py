@@ -60,11 +60,9 @@ class StreamingAsr:
             "operation": "asr",
             "channel": "audio",
             "sample_rate": 16000,
+            "session_id": session_id,
+            "turn_id": turn_id,
         }
-        if session_id:
-            trace_metadata["session_id"] = session_id
-        if turn_id:
-            trace_metadata["turn_id"] = turn_id
         self._trace = start_trace(
             "dashscope-asr",
             run_type="llm",
@@ -93,12 +91,15 @@ class StreamingAsr:
         if self._trace_closed:
             return
         self._trace_closed = True
+        trace_transcript = transcript or "".join(self.completed) or self.latest
         metadata: dict[str, Any] = {
             "status": "error" if error is not None else "ok",
             "duration_ms": round((perf_counter() - self._trace_started) * 1000, 2),
             "audio_bytes": self.received_bytes,
             "sentence_count": len(self.completed),
-            "transcript_length": len(transcript),
+            "transcript": trace_transcript,
+            "transcript_length": len(trace_transcript),
+            "completed_sentences": list(self.completed),
         }
         if self.request_id:
             metadata["request_id"] = self.request_id
@@ -109,8 +110,8 @@ class StreamingAsr:
         finish_trace(
             self._trace,
             outputs=None if error is not None else {
-                "transcript": transcript,
-                "transcript_length": len(transcript),
+                "transcript": trace_transcript,
+                "transcript_length": len(trace_transcript),
                 "sentence_count": len(self.completed),
             },
             metadata=metadata,
@@ -189,13 +190,12 @@ async def synthesize_chunks(
         "ls_model_name": settings.tts_model,
         "operation": "tts",
         "channel": "audio",
+        "text": text_value,
         "text_length": len(text_value),
         "sample_rate": 24000,
     }
-    if session_id:
-        trace_metadata["session_id"] = session_id
-    if turn_id:
-        trace_metadata["turn_id"] = turn_id
+    trace_metadata["session_id"] = session_id
+    trace_metadata["turn_id"] = turn_id
     span = start_trace(
         "dashscope-tts",
         run_type="llm",
@@ -226,6 +226,7 @@ async def synthesize_chunks(
             "duration_ms": round((perf_counter() - started) * 1000, 2),
             "chunk_count": chunk_count,
             "audio_bytes": audio_bytes,
+            "text": text_value,
             "text_length": len(text_value),
             # DashScope TTS bills characters; the streaming result does not expose
             # a final response usage object, so retain the safe count as metadata.

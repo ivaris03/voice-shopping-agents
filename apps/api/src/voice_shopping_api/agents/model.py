@@ -151,6 +151,8 @@ async def rerank_products(query: str, products: list[dict[str, Any]]) -> dict[st
             "operation": "rerank",
             "document_count": len(documents),
             "instruction": RECOMMENDATION_RERANK_INSTRUCTION,
+            "query": query,
+            "documents": documents,
         },
         tags=["dashscope", "rerank"],
         project_name=settings.langsmith_project,
@@ -182,8 +184,11 @@ async def rerank_products(query: str, products: list[dict[str, Any]]) -> dict[st
             metadata={
                 "status": "ok",
                 "duration_ms": round((perf_counter() - started) * 1000, 2),
+                "query": query,
+                "documents": documents,
                 "result_count": len(scores),
                 "request_id": response_request_id(recording_client.response),
+                "scores": scores,
             },
             usage=usage,
         )
