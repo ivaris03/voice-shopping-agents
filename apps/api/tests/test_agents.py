@@ -656,3 +656,38 @@ async def test_full_text_compliance_uses_fixed_fallback() -> None:
 
     assert result["compliance_blocked"] is True
     assert result["final_reply"] == COMPLIANCE_FALLBACK
+
+
+@pytest.mark.asyncio
+async def test_response_model_uses_streaming_json_when_a_delta_handler_is_provided(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    received: list[str] = []
+
+    async def collect(delta: str) -> None:
+        received.append(delta)
+
+    async def fake_stream_chat_json(
+        system_prompt: str,
+        payload: dict[str, object],
+        on_speech_delta: object,
+    ) -> dict[str, object]:
+        assert "speech_text" in system_prompt
+        assert payload["utterance"] == "推荐耳机"
+        assert callable(on_speech_delta)
+        await on_speech_delta("正在为你筛选。")  # type: ignore[operator]
+        return {
+            "speech_text": "正在为你筛选。",
+            "reasons": [{"product_id": "product-1", "reason": "适合通勤。"}],
+        }
+
+    monkeypatch.setattr(model_module, "_stream_chat_json", fake_stream_chat_json)
+    result = await model_module.respond_with_model(
+        "推荐耳机",
+        [{"productId": "product-1"}],
+        "warm-professional",
+        collect,
+    )
+
+    assert received == ["正在为你筛选。"]
+    assert result.speech_text == "正在为你筛选。"

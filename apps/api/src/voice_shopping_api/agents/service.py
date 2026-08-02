@@ -365,10 +365,11 @@ def state_events(
                 },
             )
     reply = state.get("final_reply", "")
-    for start in range(0, len(reply), 12):
-        delta = reply[start : start + 12]
-        if is_compliant(delta):
-            add("text.delta", {"scope": "speech", "delta": delta})
+    if not state.get("speech_streamed"):
+        for start in range(0, len(reply), 12):
+            delta = reply[start : start + 12]
+            if is_compliant(delta):
+                add("text.delta", {"scope": "speech", "delta": delta})
     add(
         "text.completed",
         {"text": reply, "complianceBlocked": state.get("compliance_blocked", False)},
@@ -411,6 +412,7 @@ async def process_turn(
         "reasons": [],
         "speech_text": "",
         "final_reply": "",
+        "speech_streamed": False,
         "compliance_blocked": False,
     }
     run_config = {
@@ -441,6 +443,24 @@ async def process_turn(
             ]
         )
         next_sequence += 1
+
+    async def publish_speech_delta(delta: str) -> None:
+        nonlocal next_sequence
+        if not on_events or not delta or not is_compliant(delta):
+            return
+        await on_events(
+            [
+                {
+                    "type": "text.delta",
+                    "sessionId": session_key,
+                    "turnId": turn_key,
+                    "seq": next_sequence,
+                    "payload": {"scope": "speech", "delta": delta},
+                }
+            ]
+        )
+        next_sequence += 1
+
     workflow = await _workflow_for_turn()
     async for update in workflow.astream(
         state_input,
@@ -450,6 +470,7 @@ async def process_turn(
             order_handler=lambda current_state: _handle_order(
                 session, current_state, user_id, session_id, turn_id
             ),
+            speech_delta_publisher=publish_speech_delta if on_events else None,
         ),
         stream_mode="updates",
     ):

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import dashscope
@@ -172,14 +173,125 @@ async def clarify_with_model(
     return SlotExtractionResult.model_validate(result).slots
 
 
+async def _stream_chat_json(
+    system_prompt: str,
+    payload: dict[str, Any],
+    on_speech_delta: Callable[[str], Awaitable[None]],
+) -> Any:
+    """Stream a JSON response and expose the ``speech_text`` value as it arrives."""
+    settings = get_settings()
+    if not settings.dashscope_api_key:
+        raise RuntimeError("DashScope API key is not configured")
+
+    content_parts: list[str] = []
+    speech_started = False
+    speech_ended = False
+    speech_offset = 0
+    speech_buffer = ""
+    usage: dict[str, Any] | None = None
+
+    async def publish_available_speech() -> None:
+        nonlocal speech_started, speech_ended, speech_offset, speech_buffer
+        content = "".join(content_parts)
+        if not speech_started:
+            match = re.search(r'"speech_text"\s*:\s*"', content)
+            if match is None:
+                return
+            speech_started = True
+            speech_offset = match.end()
+        while speech_offset < len(content) and not speech_ended:
+            character = content[speech_offset]
+            if character == '"':
+                speech_ended = True
+                speech_offset += 1
+                break
+            if character != "\\":
+                speech_buffer += character
+                speech_offset += 1
+                continue
+            if speech_offset + 1 >= len(content):
+                break
+            escaped = content[speech_offset + 1]
+            simple_escapes = {
+                '"': '"',
+                "\\": "\\",
+                "/": "/",
+                "b": "\b",
+                "f": "\f",
+                "n": "\n",
+                "r": "\r",
+                "t": "\t",
+            }
+            if escaped == "u":
+                if speech_offset + 6 > len(content):
+                    break
+                hex_value = content[speech_offset + 2 : speech_offset + 6]
+                if not re.fullmatch(r"[0-9a-fA-F]{4}", hex_value):
+                    raise ValueError("Invalid unicode escape in streamed model response")
+                speech_buffer += chr(int(hex_value, 16))
+                speech_offset += 6
+            elif escaped in simple_escapes:
+                speech_buffer += simple_escapes[escaped]
+                speech_offset += 2
+            else:
+                raise ValueError("Invalid escape in streamed model response")
+        if speech_buffer:
+            delta = speech_buffer
+            speech_buffer = ""
+            await on_speech_delta(delta)
+
+    async with httpx.AsyncClient(timeout=30) as client, client.stream(
+        "POST",
+        f"{settings.dashscope_chat_base_url.rstrip('/')}/chat/completions",
+        headers={"Authorization": f"Bearer {settings.dashscope_api_key}"},
+        json={
+            "model": settings.agent_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            "response_format": {"type": "json_object"},
+            "enable_thinking": False,
+            "temperature": 0.1,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        },
+    ) as response:
+        response.raise_for_status()
+        async for line in response.aiter_lines():
+            if not line.startswith("data:"):
+                continue
+            data = line.removeprefix("data:").strip()
+            if data == "[DONE]":
+                break
+            packet = json.loads(data)
+            usage = packet.get("usage") or usage
+            choices = packet.get("choices") or []
+            if not choices:
+                continue
+            delta = choices[0].get("delta") or {}
+            chunk = delta.get("content")
+            if not chunk:
+                continue
+            content_parts.append(str(chunk))
+            await publish_available_speech()
+    if not speech_ended:
+        raise ValueError("Streamed model response did not contain a complete speech_text field")
+    _mark_model_run(settings.agent_model, usage)
+    return _parse_json("".join(content_parts))
+
+
 async def respond_with_model(
     utterance: str,
     product_cards: list[dict[str, Any]],
     emotion_style: str,
+    on_speech_delta: Callable[[str], Awaitable[None]] | None = None,
 ) -> EmotionalResponseResult:
-    result = await _chat_json(
-        EMOTIONAL_RESPONSE_SYSTEM_PROMPT,
-        {"utterance": utterance, "emotionStyle": emotion_style, "productCards": product_cards},
+    payload = {"utterance": utterance, "emotionStyle": emotion_style, "productCards": product_cards}
+    result = (
+        await _stream_chat_json(EMOTIONAL_RESPONSE_SYSTEM_PROMPT, payload, on_speech_delta)
+        if on_speech_delta
+        else await _chat_json(EMOTIONAL_RESPONSE_SYSTEM_PROMPT, payload)
     )
     response = EmotionalResponseResult.model_validate(result)
     expected_ids = {card["productId"] for card in product_cards}

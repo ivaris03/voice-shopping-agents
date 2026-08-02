@@ -29,7 +29,9 @@ async def order_response(
     return await context.order_handler(state)
 
 
-async def emotional_response(state: ShoppingState) -> dict[str, Any]:
+async def emotional_response(
+    state: ShoppingState, runtime: Runtime[ShoppingWorkflowContext]
+) -> dict[str, Any]:
     if state.get("clarification_status") == "ASK":
         speech = (state.get("pending_question") or {}).get("question", QUESTIONS["productCategory"])
         result = EmotionalResponseResult(reasons=[], speech_text=speech)
@@ -40,11 +42,15 @@ async def emotional_response(state: ShoppingState) -> dict[str, Any]:
                     state.get("utterance", ""),
                     state["product_cards"],
                     state.get("emotion_style", "warm-professional"),
+                    runtime.context.speech_delta_publisher if runtime.context else None,
                 )
                 return {
                     "reasons": [reason.model_dump() for reason in model_result.reasons],
                     "speech_text": model_result.speech_text,
                     "final_reply": model_result.speech_text,
+                    "speech_streamed": bool(
+                        runtime.context and runtime.context.speech_delta_publisher
+                    ),
                 }
             except Exception as exc:
                 logger.warning("Response model failed; using deterministic fallback: %s", exc)

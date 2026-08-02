@@ -251,9 +251,26 @@ function handleEvent(event: ApiEvent<Record<string, unknown>>) {
     const card = recommendations.value.find((item) => item.productId === event.payload.productId)
     if (card) card.reason = `${card.reason ?? ''}${String(event.payload.delta ?? '')}`
   }
+  if (event.type === 'text.delta' && event.payload.scope === 'speech') {
+    const delta = String(event.payload.delta ?? '')
+    if (!delta) return
+    const liveMessage = messages.value.find(
+      (item) => item.role === 'assistant' && item.turnId === event.turnId && item.streaming,
+    )
+    if (liveMessage) liveMessage.text += delta
+    else messages.value.push({ role: 'assistant', text: delta, turnId: event.turnId, streaming: true })
+  }
   if (event.type === 'text.completed') {
     const text = String(event.payload.text ?? '')
-    messages.value.push({ role: 'assistant', text })
+    const liveMessage = messages.value.find(
+      (item) => item.role === 'assistant' && item.turnId === event.turnId && item.streaming,
+    )
+    if (liveMessage) {
+      liveMessage.text = text
+      liveMessage.streaming = false
+    } else {
+      messages.value.push({ role: 'assistant', text, turnId: event.turnId })
+    }
     const suppressSpeech = isBargingIn && event.turnId !== latestVoiceTurnId
     if (suppressSpeech) mutedSpeechTurnIds.add(event.turnId)
     if (!suppressSpeech && audioSocket?.readyState === WebSocket.OPEN) {

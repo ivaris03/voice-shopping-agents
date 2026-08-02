@@ -151,6 +151,31 @@ describe('assistant reply audio coordination', () => {
     wrapper.unmount()
   })
 
+  it('renders assistant speech deltas immediately and completes the same message', async () => {
+    const wrapper = mount(App)
+    await flushPromises()
+    const textSocket = FakeWebSocket.instances.find((socket) => socket.url.includes('/ws/text/'))
+
+    textSocket?.emitJson({
+      type: 'text.delta',
+      turnId: 'turn-streaming',
+      payload: { scope: 'speech', delta: '正在为你筛选' },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('正在为你筛选')
+
+    textSocket?.emitJson({
+      type: 'text.completed',
+      turnId: 'turn-streaming',
+      payload: { text: '正在为你筛选两款通勤耳机。' },
+    })
+    await flushPromises()
+
+    expect(wrapper.findAll('.message--assistant')).toHaveLength(2)
+    expect(wrapper.text()).toContain('正在为你筛选两款通勤耳机。')
+    wrapper.unmount()
+  })
+
   it('uses browser speech only after the audio channel explicitly selects fallback', async () => {
     const wrapper = mount(App)
     await flushPromises()

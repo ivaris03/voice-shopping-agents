@@ -123,10 +123,12 @@ class ResponseState(TypedDict, total=False):
     speech_text: str
     final_reply: str
     compliance_blocked: bool
+    speech_streamed: bool
 
 
 CatalogLoader = Callable[[str, bool], Awaitable[list[dict[str, Any]]]]
 OrderHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
+SpeechDeltaPublisher = Callable[[str], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -135,6 +137,7 @@ class ShoppingWorkflowContext:
 
     catalog_loader: CatalogLoader
     order_handler: OrderHandler | None = None
+    speech_delta_publisher: SpeechDeltaPublisher | None = None
 
 
 class ShoppingState(
