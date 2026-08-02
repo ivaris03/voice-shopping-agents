@@ -7,6 +7,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from voice_shopping_api.core.database import get_db_session
+from voice_shopping_api.core.embeddings import embed_product_text
+from voice_shopping_api.core.product_embedding import embedding_text_for_product
 from voice_shopping_api.core.queries import (
     MERCHANT_COLUMNS,
     ORDER_COLUMNS,
@@ -284,6 +286,39 @@ async def set_merchant_status(
         {"id": merchant_id},
     )
     return row_or_404(current, "商家不存在")
+
+
+@router.post("/products/embeddings/rebuild")
+async def rebuild_product_embeddings(session: Db) -> dict[str, int]:
+    """为全部未删除商品重新生成向量，覆盖占位或过期的 embedding。
+
+    同步执行：当前数据量下每个商品一次 embedding 调用，整体几秒内完成；
+    商品数量增长后应改为后台任务，避免长时间占用请求连接。
+    """
+    result = await session.execute(
+        text(
+            """
+            SELECT id, name, category_l1, category_l2, brand, description,
+                   price, attributes, selling_points
+            FROM products WHERE deleted_at IS NULL ORDER BY created_at
+            """
+        )
+    )
+    products = result.mappings().all()
+    updated = 0
+    failed = 0
+    for product in products:
+        wire = await embed_product_text(embedding_text_for_product(product))
+        if wire is None:
+            failed += 1
+            continue
+        await session.execute(
+            text("UPDATE products SET embedding = CAST(:embedding AS vector) WHERE id = :id"),
+            {"id": product["id"], "embedding": wire},
+        )
+        updated += 1
+    await session.commit()
+    return {"total": len(products), "updated": updated, "failed": failed}
 
 
 @router.get("/products", response_model=ItemsResponse[ProductOut])

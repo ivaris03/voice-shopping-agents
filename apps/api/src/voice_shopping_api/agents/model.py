@@ -21,6 +21,7 @@ from voice_shopping_api.agents.state import (
     SlotExtractionResult,
 )
 from voice_shopping_api.core.config import get_settings
+from voice_shopping_api.core.embeddings import embed_text
 
 
 def _parse_json(content: str) -> Any:
@@ -80,21 +81,9 @@ async def _chat_json(system_prompt: str, payload: dict[str, Any]) -> Any:
 @traceable(name="dashscope-embedding", run_type="embedding", tags=["dashscope", "embedding"])
 async def embed_query(query: str) -> list[float]:
     settings = get_settings()
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.post(
-            f"{settings.dashscope_chat_base_url.rstrip('/')}/embeddings",
-            headers={"Authorization": f"Bearer {settings.dashscope_api_key}"},
-            json={
-                "model": settings.embedding_model,
-                "input": query,
-                "dimensions": 1024,
-                "encoding_format": "float",
-            },
-        )
-        response.raise_for_status()
-    response_data = response.json()
-    _mark_model_run(settings.embedding_model, response_data.get("usage"))
-    return [float(value) for value in response_data["data"][0]["embedding"]]
+    vector, usage = await embed_text(query)
+    _mark_model_run(settings.embedding_model, usage)
+    return vector
 
 
 @traceable(name="dashscope-rerank", run_type="retriever", tags=["dashscope", "rerank"])

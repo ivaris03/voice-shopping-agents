@@ -7,7 +7,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from voice_shopping_api.core.database import get_db_session
+from voice_shopping_api.core.embeddings import embed_product_text
 from voice_shopping_api.core.identity import current_merchant_owner_id
+from voice_shopping_api.core.product_embedding import embedding_text_for_product
 from voice_shopping_api.core.queries import (
     MERCHANT_COLUMNS,
     ORDER_COLUMNS,
@@ -33,6 +35,20 @@ from voice_shopping_api.schemas.domain import (
 router = APIRouter()
 Db = Annotated[AsyncSession, Depends(get_db_session)]
 OwnerId = Annotated[UUID, Depends(current_merchant_owner_id)]
+
+# 仅这些字段参与向量拼装；改 sku/stock/status/image_urls 不需要重算向量。
+EMBEDDING_FIELDS = frozenset(
+    {
+        "name",
+        "category_l1",
+        "category_l2",
+        "brand",
+        "description",
+        "attributes",
+        "selling_points",
+        "price",
+    }
+)
 
 
 @router.get("/categories", response_model=ItemsResponse[CategoryOut])
@@ -181,15 +197,18 @@ async def create_product(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     values = _product_params(payload)
+    text_product = {**values, "attributes": payload.attributes}
+    values["embedding"] = await embed_product_text(embedding_text_for_product(text_product))
     result = await session.execute(
         text(
             """
             INSERT INTO products (
                 merchant_id, sku, name, category_l1, category_l2, brand, description,
-                price, stock, attributes, selling_points, image_urls, status
+                price, stock, attributes, selling_points, image_urls, status, embedding
             ) VALUES (
                 :merchant_id, :sku, :name, :category_l1, :category_l2, :brand, :description,
-                :price, :stock, CAST(:attributes AS jsonb), :selling_points, :image_urls, :status
+                :price, :stock, CAST(:attributes AS jsonb), :selling_points, :image_urls, :status,
+                CAST(:embedding AS vector)
             ) RETURNING id
             """
         ),
@@ -215,10 +234,12 @@ async def update_product(
 ) -> dict[str, object]:
     values = _product_params(payload)
     if values:
+        needs_embedding_review = bool(EMBEDDING_FIELDS & values.keys())
         existing = await session.execute(
             text(
                 """
-                SELECT p.category_l1, p.category_l2, p.attributes
+                SELECT p.name, p.category_l1, p.category_l2, p.brand, p.description,
+                       p.price, p.attributes, p.selling_points
                 FROM products p JOIN merchants m ON m.id = p.merchant_id
                 WHERE p.id = :id AND m.owner_user_id = :owner_id
                   AND p.deleted_at IS NULL AND m.deleted_at IS NULL
@@ -229,7 +250,7 @@ async def update_product(
         current_product = existing.mappings().first()
         if current_product is None:
             raise HTTPException(status_code=404, detail="商品不存在")
-        if {"category_l1", "category_l2", "attributes"} & values.keys():
+        if needs_embedding_review:
             category_l1 = str(values.get("category_l1", current_product["category_l1"]))
             category_l2 = values.get("category_l2", current_product["category_l2"])
             category_changed = (
@@ -251,11 +272,27 @@ async def update_product(
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
+            text_product = {
+                **dict(current_product),
+                **{key: value for key, value in values.items() if key in EMBEDDING_FIELDS},
+            }
+            if isinstance(text_product["attributes"], str):
+                text_product["attributes"] = json.loads(text_product["attributes"])
+            # 拼装文本没变（如价格仍在同一价格带内）时保留原向量，避免无谓调用。
+            if embedding_text_for_product(current_product) != embedding_text_for_product(
+                text_product
+            ):
+                values["embedding"] = await embed_product_text(
+                    embedding_text_for_product(text_product)
+                )
         expressions = []
         for key in values:
-            expressions.append(
-                f"{key} = CAST(:{key} AS jsonb)" if key == "attributes" else f"{key} = :{key}"
-            )
+            if key == "attributes":
+                expressions.append(f"{key} = CAST(:{key} AS jsonb)")
+            elif key == "embedding":
+                expressions.append(f"{key} = CAST(:{key} AS vector)")
+            else:
+                expressions.append(f"{key} = :{key}")
         result = await session.execute(
             text(
                 f"""
