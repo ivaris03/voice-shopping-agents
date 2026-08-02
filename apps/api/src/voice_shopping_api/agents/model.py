@@ -5,7 +5,8 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 import dashscope
-import httpx
+from langchain_community.document_compressors import DashScopeRerank
+from langchain_qwq import ChatQwen
 from langsmith import get_current_run_tree, traceable
 
 from voice_shopping_api.agents.prompts import (
@@ -48,34 +49,64 @@ def _mark_model_run(model: str, usage: dict[str, Any] | None = None) -> None:
     )
 
 
-@traceable(name="dashscope-chat", run_type="llm", tags=["dashscope", "chat"])
-async def _chat_json(system_prompt: str, payload: dict[str, Any]) -> Any:
+def _message_content(message: Any) -> str:
+    content = getattr(message, "content", message)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        text_parts = [part.get("text", "") for part in content if isinstance(part, dict)]
+        return "".join(str(part) for part in text_parts)
+    return str(content)
+
+
+def _message_usage(message: Any) -> dict[str, Any] | None:
+    usage = getattr(message, "usage_metadata", None)
+    if isinstance(usage, dict):
+        return usage
+    response_metadata = getattr(message, "response_metadata", None)
+    if not isinstance(response_metadata, dict):
+        return None
+    token_usage = response_metadata.get("token_usage") or response_metadata.get("usage")
+    return token_usage if isinstance(token_usage, dict) else None
+
+
+class _InstructionalRerankClient:
+    """Pass the existing rerank instruction through LangChain's client hook."""
+
+    def __init__(self, instruction: str) -> None:
+        self.instruction = instruction
+
+    def call(self, **kwargs: Any) -> Any:
+        return dashscope.TextReRank.call(instruct=self.instruction, **kwargs)
+
+
+def _chat_model() -> ChatQwen:
     settings = get_settings()
     if not settings.dashscope_api_key:
         raise RuntimeError("DashScope API key is not configured")
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.post(
-            f"{settings.dashscope_chat_base_url.rstrip('/')}/chat/completions",
-            headers={"Authorization": f"Bearer {settings.dashscope_api_key}"},
-            json={
-                "model": settings.agent_model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-                ],
-                "response_format": {"type": "json_object"},
-                # Intent classification and the other structured Agent calls do not
-                # need Qwen's hidden reasoning tokens. Disabling them keeps the
-                # response small and prevents avoidable request timeouts.
-                "enable_thinking": False,
-                "temperature": 0.1,
-            },
-        )
-        response.raise_for_status()
-    response_data = response.json()
-    _mark_model_run(settings.agent_model, response_data.get("usage"))
-    content = response_data["choices"][0]["message"]["content"]
-    return _parse_json(content)
+    return ChatQwen(
+        model=settings.agent_model,
+        api_key=settings.dashscope_api_key,
+        base_url=settings.dashscope_chat_base_url,
+        model_kwargs={"response_format": {"type": "json_object"}},
+        enable_thinking=False,
+        temperature=0.1,
+        timeout=30,
+        max_retries=2,
+    )
+
+
+@traceable(name="dashscope-chat", run_type="llm", tags=["dashscope", "chat"])
+async def _chat_json(system_prompt: str, payload: dict[str, Any]) -> Any:
+    settings = get_settings()
+    message = await _chat_model().ainvoke(
+        [
+            ("system", system_prompt),
+            ("human", json.dumps(payload, ensure_ascii=False)),
+        ]
+    )
+    _mark_model_run(settings.agent_model, _message_usage(message))
+    return _parse_json(_message_content(message))
 
 
 @traceable(name="dashscope-embedding", run_type="embedding", tags=["dashscope", "embedding"])
@@ -106,21 +137,18 @@ async def rerank_products(query: str, products: list[dict[str, Any]]) -> dict[st
     def call() -> Any:
         dashscope.api_key = settings.dashscope_api_key
         dashscope.base_http_api_url = settings.dashscope_http_base_url
-        return dashscope.TextReRank.call(
+        reranker = DashScopeRerank(
+            client=_InstructionalRerankClient(RECOMMENDATION_RERANK_INSTRUCTION),
             model=settings.reranker_model,
-            query=query,
-            documents=documents,
             top_n=len(documents),
-            return_documents=False,
-            instruct=RECOMMENDATION_RERANK_INSTRUCTION,
+            dashscope_api_key=settings.dashscope_api_key,
         )
+        return reranker.rerank(documents, query, top_n=len(documents))
 
     response = await asyncio.to_thread(call)
-    if response.status_code != 200:
-        raise RuntimeError(response.message)
     _mark_model_run(settings.reranker_model)
     scores: dict[str, float] = {}
-    for item in response.output.get("results", []):
+    for item in response:
         product = products[int(item["index"])]
         scores[str(product["id"])] = float(item["relevance_score"])
     return scores
@@ -169,8 +197,6 @@ async def _stream_chat_json(
 ) -> Any:
     """Stream a JSON response and expose the ``speech_text`` value as it arrives."""
     settings = get_settings()
-    if not settings.dashscope_api_key:
-        raise RuntimeError("DashScope API key is not configured")
 
     content_parts: list[str] = []
     speech_started = False
@@ -229,41 +255,18 @@ async def _stream_chat_json(
             speech_buffer = ""
             await on_speech_delta(delta)
 
-    async with httpx.AsyncClient(timeout=30) as client, client.stream(
-        "POST",
-        f"{settings.dashscope_chat_base_url.rstrip('/')}/chat/completions",
-        headers={"Authorization": f"Bearer {settings.dashscope_api_key}"},
-        json={
-            "model": settings.agent_model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
-            "response_format": {"type": "json_object"},
-            "enable_thinking": False,
-            "temperature": 0.1,
-            "stream": True,
-            "stream_options": {"include_usage": True},
-        },
-    ) as response:
-        response.raise_for_status()
-        async for line in response.aiter_lines():
-            if not line.startswith("data:"):
-                continue
-            data = line.removeprefix("data:").strip()
-            if data == "[DONE]":
-                break
-            packet = json.loads(data)
-            usage = packet.get("usage") or usage
-            choices = packet.get("choices") or []
-            if not choices:
-                continue
-            delta = choices[0].get("delta") or {}
-            chunk = delta.get("content")
-            if not chunk:
-                continue
-            content_parts.append(str(chunk))
-            await publish_available_speech()
+    async for chunk in _chat_model().astream(
+        [
+            ("system", system_prompt),
+            ("human", json.dumps(payload, ensure_ascii=False)),
+        ]
+    ):
+        usage = _message_usage(chunk) or usage
+        chunk_content = _message_content(chunk)
+        if not chunk_content:
+            continue
+        content_parts.append(chunk_content)
+        await publish_available_speech()
     if not speech_ended:
         raise ValueError("Streamed model response did not contain a complete speech_text field")
     _mark_model_run(settings.agent_model, usage)

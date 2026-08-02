@@ -1,9 +1,11 @@
-"""DashScope embedding 网关：查询文本与商品文本共用同一套向量化调用。"""
+"""DashScope embedding gateway used by queries and product indexing."""
+import asyncio
 import json
 import logging
 from typing import Any
 
-import httpx
+import dashscope
+from langchain_community.embeddings import DashScopeEmbeddings
 
 from voice_shopping_api.core.config import get_settings
 
@@ -11,27 +13,23 @@ logger = logging.getLogger(__name__)
 
 
 async def embed_text(text: str) -> tuple[list[float], dict[str, Any] | None]:
-    """Call the configured embedding model for one text and return (vector, usage).
+    """Call the configured LangChain embedding model for one text.
 
     The returned vector is the raw model output; callers that persist it must
     normalize it first (see ``normalize_embedding``).
     """
     settings = get_settings()
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.post(
-            f"{settings.dashscope_chat_base_url.rstrip('/')}/embeddings",
-            headers={"Authorization": f"Bearer {settings.dashscope_api_key}"},
-            json={
-                "model": settings.embedding_model,
-                "input": text,
-                "dimensions": 1024,
-                "encoding_format": "float",
-            },
-        )
-        response.raise_for_status()
-    response_data = response.json()
-    vector = [float(value) for value in response_data["data"][0]["embedding"]]
-    return vector, response_data.get("usage")
+    if not settings.dashscope_api_key:
+        raise RuntimeError("DashScope API key is not configured")
+
+    dashscope.api_key = settings.dashscope_api_key
+    dashscope.base_http_api_url = settings.dashscope_http_base_url
+    embeddings = DashScopeEmbeddings(
+        model=settings.embedding_model,
+        dashscope_api_key=settings.dashscope_api_key,
+    )
+    vector = await asyncio.to_thread(embeddings.embed_query, text)
+    return [float(value) for value in vector], None
 
 
 def normalize_embedding(vector: list[float]) -> list[float]:

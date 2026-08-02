@@ -95,7 +95,7 @@ async def synthesize_chunks(text_value: str) -> AsyncIterator[bytes]:
                 model=settings.tts_model,
                 text=text_value,
                 voice=settings.tts_voice,
-                format="wav",
+                audio_format="wav",
                 sample_rate=24000,
                 stream=True,
                 api_key=settings.dashscope_api_key,
