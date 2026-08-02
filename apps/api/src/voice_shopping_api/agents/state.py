@@ -78,8 +78,7 @@ class ShoppingState(TypedDict, total=False):
     utterance: str
     conversation_history: list[str]
     model_enabled: bool
-    intents: list[Intent]
-    action_queue: list[str]
+    intent: Intent
     product_category: str
     category_changed: bool
     required_slots: list[str]

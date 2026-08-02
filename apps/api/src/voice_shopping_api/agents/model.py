@@ -136,12 +136,12 @@ async def recognize_with_model(
     utterance: str,
     conversation_history: list[str],
     taxonomy_categories: list[dict[str, Any]],
-) -> list[IntentResult]:
+) -> IntentResult:
     result = await _chat_json(
         build_intent_system_prompt(taxonomy_categories),
         {"utterance": utterance, "recentConversation": conversation_history[-6:]},
     )
-    return [IntentResult.model_validate(item) for item in result.get("intents", [])]
+    return IntentResult.model_validate(result["intent"])
 
 
 async def clarify_with_model(

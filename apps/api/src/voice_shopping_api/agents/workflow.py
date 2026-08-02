@@ -206,61 +206,51 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
         not state.get("pending_question") or category_switched_by_rule
     ):
         try:
-            model_results = await recognize_with_model(
+            model_intent = await recognize_with_model(
                 utterance,
                 state.get("conversation_history", []),
                 state.get("taxonomy_categories", []),
             )
-            if model_results:
-                normalized_results: list[IntentResult] = []
-                for item in model_results:
-                    normalized_category = (
-                        item.product_category
-                        if item.product_category in dynamic_category_names
-                        else _normalize_category(item.product_category)
-                    )
-                    normalized_results.append(
-                        item.model_copy(update={"product_category": normalized_category})
-                    )
-                model_results = normalized_results
-                model_category = next(
-                    (item.product_category for item in model_results if item.product_category),
-                    None,
+            normalized_category = (
+                model_intent.product_category
+                if model_intent.product_category in dynamic_category_names
+                else _normalize_category(model_intent.product_category)
+            )
+            model_intent = model_intent.model_copy(
+                update={"product_category": normalized_category}
+            )
+            category = explicit_category or model_intent.product_category or previous_category
+            category_changed = bool(category and category != previous_category)
+            if (
+                category_changed
+                and model_intent.type == "PRODUCT_ORDER"
+                and model_intent.action == "CREATE"
+                and not _has_order_target(state, utterance)
+            ):
+                model_intent = IntentResult(
+                    type="PRODUCT_RECOMMENDATION",
+                    confidence=model_intent.confidence,
+                    product_category=category,
                 )
-                category = explicit_category or model_category or previous_category
-                category_changed = bool(category and category != previous_category)
-                if (
-                    category_changed
-                    and model_results[0].type == "PRODUCT_ORDER"
-                    and model_results[0].action == "CREATE"
-                    and not _has_order_target(state, utterance)
-                ):
-                    model_results[0] = IntentResult(
-                        type="PRODUCT_RECOMMENDATION",
-                        confidence=model_results[0].confidence,
-                        product_category=category,
-                    )
-                model_results = [
-                    item.model_copy(update={"product_category": category})
-                    if category
-                    and item.type in ("PRODUCT_RECOMMENDATION", "PRODUCT_COMPARE", "PRODUCT_QUERY")
-                    else item
-                    for item in model_results
-                ]
-                return {
-                    "intents": [item.model_dump(exclude_none=True) for item in model_results],
-                    "action_queue": [item.type for item in model_results],
-                    "product_category": category,
-                    "category_changed": category_changed,
-                }
+            elif category and model_intent.type in (
+                "PRODUCT_RECOMMENDATION",
+                "PRODUCT_COMPARE",
+                "PRODUCT_QUERY",
+            ):
+                model_intent = model_intent.model_copy(update={"product_category": category})
+            return {
+                "intent": model_intent.model_dump(exclude_none=True),
+                "product_category": category,
+                "category_changed": category_changed,
+            }
         except Exception as exc:
             logger.warning("Intent model failed; using deterministic fallback: %s", exc)
     category = explicit_category or previous_category
     category_changed = bool(category and category != previous_category)
     if state.get("pending_question") and not category_changed:
-        results = [
-            IntentResult(type="PRODUCT_RECOMMENDATION", confidence=0.99, product_category=category)
-        ]
+        selected = IntentResult(
+            type="PRODUCT_RECOMMENDATION", confidence=0.99, product_category=category
+        )
     else:
         detections: list[tuple[int, IntentResult]] = []
 
@@ -293,16 +283,9 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
         detect(("你好", "谢谢", "嗨", "再见"), IntentResult(type="CHAT", confidence=0.9))
         if not detections:
             detections.append((0, IntentResult(type="UNSUPPORTED_REQUEST", confidence=0.86)))
-        results = []
-        seen: set[str] = set()
-        for _, result in sorted(detections, key=lambda item: item[0]):
-            if result.type not in seen:
-                results.append(result)
-                seen.add(result.type)
-    data = [result.model_dump(exclude_none=True) for result in results]
+        selected = min(detections, key=lambda item: item[0])[1]
     return {
-        "intents": data,
-        "action_queue": [result.type for result in results],
+        "intent": selected.model_dump(exclude_none=True),
         "product_category": category,
         "category_changed": category_changed,
     }
@@ -712,7 +695,7 @@ def _product_attribute_value(attributes: dict[str, Any], slot: str) -> Any:
 
 
 async def recommend_products(state: ShoppingState) -> dict[str, Any]:
-    intent = (state.get("intents") or [{}])[0].get("type")
+    intent = (state.get("intent") or {}).get("type")
     previous_cards = state.get("previous_product_cards", [])
     if intent in ("PRODUCT_COMPARE", "PRODUCT_QUERY") and previous_cards:
         selected = previous_cards
@@ -849,7 +832,7 @@ async def emotional_response(state: ShoppingState) -> dict[str, Any]:
         speech += " ".join(reason.reason for reason in reasons)
         result = EmotionalResponseResult(reasons=reasons, speech_text=speech)
     else:
-        intent = (state.get("intents") or [{}])[0].get("type")
+        intent = (state.get("intent") or {}).get("type")
         if intent == "CHAT":
             speech = "你好，我可以帮你推荐、查询、对比商品，也可以协助语音下单。"
         elif intent == "UNSUPPORTED_REQUEST":
@@ -881,7 +864,7 @@ async def compliance_check(state: ShoppingState) -> dict[str, Any]:
 
 
 def _route_intent(state: ShoppingState) -> str:
-    intent = (state.get("intents") or [{}])[0].get("type")
+    intent = (state.get("intent") or {}).get("type")
     if intent == "PRODUCT_RECOMMENDATION":
         return "clarify"
     if intent in ("PRODUCT_COMPARE", "PRODUCT_QUERY"):

@@ -193,7 +193,7 @@ async def _handle_order(
     session_id: UUID,
     turn_id: UUID,
 ) -> dict[str, Any]:
-    intent = (state.get("intents") or [{}])[0]
+    intent = state.get("intent") or {}
     action = intent.get("action", "CREATE")
     pending = state.get("pending_order") or {}
     order_id = UUID(str(pending["id"])) if pending.get("id") else None
@@ -351,7 +351,7 @@ def state_events(
         sequence += 1
 
     if include_processing:
-        add("flow.status", {"status": "processing", "intents": state.get("intents", [])})
+        add("flow.status", {"status": "processing", "intent": state.get("intent")})
     if include_cards and state.get("product_cards"):
         add(
             "recommendation.cards",
@@ -397,6 +397,8 @@ async def process_turn(
     session_id = stable_uuid(session_key)
     turn_id = stable_uuid(f"{session_key}:{turn_key}")
     previous = await _load_previous(session, session_id)
+    previous.pop("intents", None)
+    previous.pop("action_queue", None)
     model_enabled = bool(settings.dashscope_api_key)
     taxonomy_context = await _taxonomy_context(session)
     state_input: ShoppingState = {
@@ -408,8 +410,7 @@ async def process_turn(
         "utterance": utterance.strip(),
         "conversation_history": await _conversation_history(session, session_id),
         "model_enabled": model_enabled,
-        "intents": [],
-        "action_queue": [],
+        "intent": {},
         "catalog_products": [],
         "user_profile_snapshot": await profile_snapshot(session, user_id),
         "previous_product_cards": previous.get("product_cards", []),

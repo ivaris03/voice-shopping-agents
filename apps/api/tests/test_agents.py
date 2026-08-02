@@ -15,15 +15,11 @@ from voice_shopping_api.agents.workflow import (
 
 
 @pytest.mark.asyncio
-async def test_intents_are_returned_in_semantic_order() -> None:
+async def test_intent_selects_the_first_expressed_request() -> None:
     result = await recognize_intent({"utterance": "先推荐耳机，再对比一下，然后下单"})
 
-    assert result["action_queue"] == [
-        "PRODUCT_RECOMMENDATION",
-        "PRODUCT_COMPARE",
-        "PRODUCT_ORDER",
-    ]
-    assert result["intents"][2]["action"] == "CREATE"
+    assert result["intent"]["type"] == "PRODUCT_RECOMMENDATION"
+    assert result["intent"]["product_category"] == "HEADPHONES"
 
 
 @pytest.mark.asyncio
@@ -119,7 +115,7 @@ async def test_order_node_executes_the_context_order_handler() -> None:
         ),
     )
 
-    assert handled_states[0]["intents"][0]["type"] == "PRODUCT_ORDER"
+    assert handled_states[0]["intent"]["type"] == "PRODUCT_ORDER"
     assert result["pending_order"]["id"] == "order-1"
 
 
@@ -287,15 +283,13 @@ async def test_model_category_switch_overrides_history_and_does_not_create_order
         utterance: str,
         conversation_history: list[str],
         taxonomy_categories: list[dict[str, object]],
-    ) -> list[IntentResult]:
-        return [
-            IntentResult(
-                type="PRODUCT_ORDER",
-                action="CREATE",
-                confidence=0.95,
-                product_category="鞋子",
-            )
-        ]
+    ) -> IntentResult:
+        return IntentResult(
+            type="PRODUCT_ORDER",
+            action="CREATE",
+            confidence=0.95,
+            product_category="鞋子",
+        )
 
     async def fake_clarify_with_model(*args: object) -> dict[str, object]:
         return {}
@@ -317,8 +311,8 @@ async def test_model_category_switch_overrides_history_and_does_not_create_order
         }
     )
 
-    assert result["intents"][0]["type"] == "PRODUCT_RECOMMENDATION"
-    assert result["intents"][0]["product_category"] == "RUNNING_SHOES"
+    assert result["intent"]["type"] == "PRODUCT_RECOMMENDATION"
+    assert result["intent"]["product_category"] == "RUNNING_SHOES"
     assert result["product_category"] == "RUNNING_SHOES"
     assert result["pending_question"]["slot"] == "gender"
     assert result["pending_question"]["slots"] == ["gender", "size"]
@@ -334,13 +328,11 @@ async def test_intent_system_prompt_contains_all_category_slot_configuration(
         captured["system_prompt"] = system_prompt
         captured["payload"] = payload
         return {
-            "intents": [
-                {
-                    "type": "PRODUCT_RECOMMENDATION",
-                    "confidence": 0.98,
-                    "product_category": "HEADPHONES",
-                }
-            ]
+            "intent": {
+                "type": "PRODUCT_RECOMMENDATION",
+                "confidence": 0.98,
+                "product_category": "HEADPHONES",
+            }
         }
 
     monkeypatch.setattr(model_module, "_chat_json", fake_chat_json)

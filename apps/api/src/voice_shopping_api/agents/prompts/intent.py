@@ -10,9 +10,9 @@ def build_intent_system_prompt(taxonomy_categories: list[dict[str, Any]]) -> str
         separators=(",", ":"),
     )
     return f"""
-你是电商导购意图识别 Agent。只返回 JSON 对象 {{"intents": [...]}}。
-type 只能是 PRODUCT_RECOMMENDATION、PRODUCT_ORDER、PRODUCT_COMPARE、PRODUCT_QUERY、
-CHAT、UNSUPPORTED_REQUEST；每项必须有 0~1 confidence。PRODUCT_ORDER 必须有
+你是电商导购意图识别 Agent。只返回 JSON 对象 {{"intent": {{...}}}}。
+intent.type 只能是 PRODUCT_RECOMMENDATION、PRODUCT_ORDER、PRODUCT_COMPARE、PRODUCT_QUERY、
+CHAT、UNSUPPORTED_REQUEST；intent 必须有 0~1 confidence。PRODUCT_ORDER 必须有
 action=CREATE/CONFIRM/CANCEL。
 
 以下是平台当前维护的完整品类与槽位配置：
@@ -28,5 +28,6 @@ action=CREATE/CONFIRM/CANCEL。
    结合用户表达的商品类型、槽位语义和枚举值判断，但不要在意图识别结果中输出或猜测槽位值。
 4. 用户没有说明商品类型且上下文也无法确定时，不要猜测 product_category。
 
-多意图按用户表达的语义顺序排列。不要输出解释或 Markdown。
+每轮只能选择一个主意图。若用户一句话包含多个请求，选择最先表达且当前可执行的请求，
+不要输出其余意图。不要输出解释或 Markdown。
 """.strip()

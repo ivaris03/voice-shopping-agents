@@ -33,7 +33,7 @@ PRODUCT_COMPARE         PRODUCT_QUERY
 CHAT                    UNSUPPORTED_REQUEST
 ```
 
-- 每个意图包含 `confidence`，多意图按语义顺序返回。
+- 每轮只返回一个主意图及其 `confidence`。一句话包含多个请求时，选择最先表达且当前可执行的请求。
 - `PRODUCT_ORDER` 使用 `action=CREATE/CONFIRM/CANCEL` 区分订单阶段。
 - `UNSUPPORTED_REQUEST` 不再细分原因。
 - 意图识别 Agent 的 System Prompt 必须包含平台当前维护的全部二级分类，以及各分类的
