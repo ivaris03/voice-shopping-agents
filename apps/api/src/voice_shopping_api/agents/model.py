@@ -62,6 +62,10 @@ async def _chat_json(system_prompt: str, payload: dict[str, Any]) -> Any:
                     {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
                 ],
                 "response_format": {"type": "json_object"},
+                # Intent classification and the other structured Agent calls do not
+                # need Qwen's hidden reasoning tokens. Disabling them keeps the
+                # response small and prevents avoidable request timeouts.
+                "enable_thinking": False,
                 "temperature": 0.1,
             },
         )
