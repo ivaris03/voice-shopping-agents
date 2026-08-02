@@ -60,6 +60,7 @@ class Intent(TypedDict, total=False):
 
 
 CatalogLoader = Callable[[str, bool], Awaitable[list[dict[str, Any]]]]
+OrderHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,7 @@ class ShoppingWorkflowContext:
     """Non-persisted dependencies available to workflow nodes for one turn."""
 
     catalog_loader: CatalogLoader
+    order_handler: OrderHandler | None = None
 
 
 class ShoppingState(TypedDict, total=False):

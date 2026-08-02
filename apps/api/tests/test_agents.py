@@ -92,6 +92,38 @@ async def test_catalog_retrieval_runs_only_after_clarification_is_ready() -> Non
 
 
 @pytest.mark.asyncio
+async def test_order_node_executes_the_context_order_handler() -> None:
+    handled_states: list[dict[str, object]] = []
+
+    async def load_catalog(_: str, __: bool) -> list[dict[str, object]]:
+        return []
+
+    async def handle_order(state: dict[str, object]) -> dict[str, object]:
+        handled_states.append(state)
+        return {
+            "pending_order": {"id": "order-1", "status": "pending"},
+            "speech_text": "已生成待确认订单。",
+            "final_reply": "已生成待确认订单。",
+            "compliance_blocked": False,
+        }
+
+    result = await shopping_workflow.ainvoke(
+        {
+            "utterance": "下单",
+            "previous_product_cards": [{"productId": "product-1", "name": "测试商品"}],
+            "model_enabled": False,
+        },
+        context=ShoppingWorkflowContext(
+            catalog_loader=load_catalog,
+            order_handler=handle_order,
+        ),
+    )
+
+    assert handled_states[0]["intents"][0]["type"] == "PRODUCT_ORDER"
+    assert result["pending_order"]["id"] == "order-1"
+
+
+@pytest.mark.asyncio
 async def test_clarification_asks_up_to_two_slots_then_recommends() -> None:
     first = await shopping_workflow.ainvoke(
         {

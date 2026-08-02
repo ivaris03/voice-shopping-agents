@@ -189,24 +189,22 @@ async def _latest_pending_order_id(
 async def _handle_order(
     session: AsyncSession,
     state: ShoppingState,
-    previous: ShoppingState,
     user_id: UUID,
     session_id: UUID,
     turn_id: UUID,
-) -> None:
+) -> dict[str, Any]:
     intent = (state.get("intents") or [{}])[0]
     action = intent.get("action", "CREATE")
-    pending = previous.get("pending_order") or {}
+    pending = state.get("pending_order") or {}
     order_id = UUID(str(pending["id"])) if pending.get("id") else None
     order_id = order_id or await _latest_pending_order_id(session, user_id, session_id)
     if action == "CREATE":
         product_id = _selected_product_id(
-            state.get("utterance", ""), previous.get("product_cards", [])
+            state.get("utterance", ""), state.get("previous_product_cards", [])
         )
         if product_id is None:
             reply = "请告诉我要购买推荐结果中的第几款商品。"
-            state.update(speech_text=reply, final_reply=reply)
-            return
+            return {"speech_text": reply, "final_reply": reply}
         order = await create_pending_order(
             session,
             user_id,
@@ -237,12 +235,12 @@ async def _handle_order(
     else:
         order = await cancel_order(session, user_id, order_id)
         reply = "订单已取消。"
-    state.update(
-        pending_order=(jsonable_encoder(dict(order)) if order else None),
-        speech_text=reply,
-        final_reply=reply,
-        compliance_blocked=not is_compliant(reply),
-    )
+    return {
+        "pending_order": jsonable_encoder(dict(order)) if order else None,
+        "speech_text": reply,
+        "final_reply": reply,
+        "compliance_blocked": not is_compliant(reply),
+    }
 
 
 async def _persist(
@@ -454,7 +452,10 @@ async def process_turn(
         state_input,
         config=run_config,
         context=ShoppingWorkflowContext(
-            catalog_loader=lambda query, enabled: _catalog(session, query, enabled)
+            catalog_loader=lambda query, enabled: _catalog(session, query, enabled),
+            order_handler=lambda current_state: _handle_order(
+                session, current_state, user_id, session_id, turn_id
+            ),
         ),
         stream_mode="updates",
     ):
@@ -476,8 +477,6 @@ async def process_turn(
                     ]
                 )
                 next_sequence += 1
-    if (result.get("intents") or [{}])[0].get("type") == "PRODUCT_ORDER":
-        await _handle_order(session, result, previous, user_id, session_id, turn_id)
     await _persist(session, result, user_id, session_id, turn_id)
     await session.commit()
     events = state_events(

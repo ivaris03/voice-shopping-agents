@@ -808,8 +808,13 @@ async def retrieve_catalog(
     }
 
 
-async def order_response(_: ShoppingState) -> dict[str, Any]:
-    return {"speech_text": "正在处理你的订单请求。", "final_reply": "正在处理你的订单请求。"}
+async def order_response(
+    state: ShoppingState, runtime: Runtime[ShoppingWorkflowContext]
+) -> dict[str, Any]:
+    context = runtime.context
+    if context is None or context.order_handler is None:
+        return {"speech_text": "正在处理你的订单请求。", "final_reply": "正在处理你的订单请求。"}
+    return await context.order_handler(state)
 
 
 async def emotional_response(state: ShoppingState) -> dict[str, Any]:
