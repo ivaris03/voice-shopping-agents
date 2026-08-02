@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from voice_shopping_api import __version__
+from voice_shopping_api.agents.checkpointer import close_checkpointer
 from voice_shopping_api.api.router import api_router
 from voice_shopping_api.core.config import get_settings
 from voice_shopping_api.core.database import engine
@@ -23,6 +24,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         os.environ.setdefault("LANGSMITH_PROJECT", settings.langsmith_project)
         os.environ.setdefault("LANGSMITH_TRACING", "true")
     yield
+    await close_checkpointer()
     await realtime_hub.close()
     await engine.dispose()
 

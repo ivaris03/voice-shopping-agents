@@ -94,7 +94,7 @@ flowchart TD
     S --> A["语音 WS：音频流"]
 ```
 
-LangGraph Checkpointer 负责持久化每轮 `ShoppingState`，使工作流能在下一轮继续恢复；本项目使用 `sessionId` 作为 `thread_id`。核心状态包括 `turnId`、`utterance`、`intents`、`actionQueue`、`productCategory`、`requiredSlots`、`slots`、`pendingQuestion`、`userProfileSnapshot`、`productCards`、`emotionStyle`、`pendingOrder` 和最终回复。
+LangGraph 的 PostgreSQL Checkpointer 负责持久化每个节点后的 `ShoppingState`，使工作流能在下一轮继续恢复；本项目使用 `sessionId` 作为 `configurable.thread_id`，并同时作为 LangSmith 的 `metadata.thread_id`。`session_states` 继续保存面向业务查询的整轮审计快照。核心状态包括 `turnId`、`utterance`、`intents`、`actionQueue`、`productCategory`、`requiredSlots`、`slots`、`pendingQuestion`、`userProfileSnapshot`、`productCards`、`emotionStyle`、`pendingOrder` 和最终回复。
 
 LangSmith 记录整条 StateGraph Trace，并以 `sessionId`、`turnId`、意图和 Agent 节点作为元数据，用于查看节点输入输出、模型调用、延迟、Token 消耗和错误。Trace 只用于可观测与评估，不保存业务状态；用户原话、画像和订单数据写入前需要脱敏。
 

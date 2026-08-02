@@ -1,10 +1,12 @@
 import pytest
+from langgraph.checkpoint.memory import InMemorySaver
 
 from voice_shopping_api.agents import model as model_module
 from voice_shopping_api.agents import workflow as workflow_module
 from voice_shopping_api.agents.state import IntentResult
 from voice_shopping_api.agents.workflow import (
     COMPLIANCE_FALLBACK,
+    build_workflow,
     clarify_requirements,
     compliance_check,
     recognize_intent,
@@ -22,6 +24,28 @@ async def test_intents_are_returned_in_semantic_order() -> None:
         "PRODUCT_ORDER",
     ]
     assert result["intents"][2]["action"] == "CREATE"
+
+
+@pytest.mark.asyncio
+async def test_workflow_restores_state_with_a_checkpointer() -> None:
+    workflow = build_workflow(checkpointer=InMemorySaver())
+    config = {"configurable": {"thread_id": "checkpointer-test"}}
+
+    first = await workflow.ainvoke(
+        {
+            "utterance": "我想买双跑鞋",
+            "slots": {},
+            "catalog_products": [],
+            "user_profile_snapshot": {},
+            "model_enabled": False,
+        },
+        config=config,
+    )
+    second = await workflow.ainvoke({"utterance": "男款，42码"}, config=config)
+
+    assert first["pending_question"]["slots"] == ["gender", "size"]
+    assert second["slots"]["gender"] == "male"
+    assert second["slots"]["size"] == 42.0
 
 
 @pytest.mark.asyncio

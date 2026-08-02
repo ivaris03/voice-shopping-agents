@@ -21,6 +21,14 @@ class Settings(BaseSettings):
         "postgresql+asyncpg://postgres:postgres@localhost:5432/voice-shopping-agents"
     )
     redis_url: str = "redis://localhost:6379/0"
+    langgraph_checkpoint_enabled: bool = True
+    langgraph_checkpoint_database_url: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "LANGGRAPH_CHECKPOINT_DATABASE_URL",
+            "VOICE_SHOPPING_LANGGRAPH_CHECKPOINT_DATABASE_URL",
+        ),
+    )
     cors_origins: str = Field(
         default="http://localhost:5173,http://localhost:5174,http://localhost:5175"
     )
@@ -50,6 +58,13 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @computed_field
+    @property
+    def langgraph_checkpoint_url(self) -> str:
+        if self.langgraph_checkpoint_database_url:
+            return self.langgraph_checkpoint_database_url
+        return self.database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
 
 
 @lru_cache

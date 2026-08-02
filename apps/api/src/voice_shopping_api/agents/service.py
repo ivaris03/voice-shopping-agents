@@ -1,3 +1,4 @@
+import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -8,9 +9,10 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from voice_shopping_api.agents.checkpointer import get_checkpointer
 from voice_shopping_api.agents.model import embed_query
 from voice_shopping_api.agents.state import ShoppingState
-from voice_shopping_api.agents.workflow import is_compliant, shopping_workflow
+from voice_shopping_api.agents.workflow import build_workflow, is_compliant, shopping_workflow
 from voice_shopping_api.core.config import get_settings
 from voice_shopping_api.core.queries import PRODUCT_COLUMNS, rows
 from voice_shopping_api.core.taxonomy import list_categories
@@ -23,6 +25,24 @@ from voice_shopping_api.modules.orders.service import (
 from voice_shopping_api.schemas.domain import OrderCreate
 
 SESSION_NAMESPACE = UUID("f9b9f456-2d14-4ed5-a293-8b4d83f5c777")
+
+_checkpointed_workflow: tuple[object, Any] | None = None
+_checkpointed_workflow_lock = asyncio.Lock()
+
+
+async def _workflow_for_turn() -> Any:
+    checkpointer = await get_checkpointer()
+    if checkpointer is None:
+        return shopping_workflow
+    global _checkpointed_workflow
+    if _checkpointed_workflow and _checkpointed_workflow[0] is checkpointer:
+        return _checkpointed_workflow[1]
+    async with _checkpointed_workflow_lock:
+        if _checkpointed_workflow and _checkpointed_workflow[0] is checkpointer:
+            return _checkpointed_workflow[1]
+        workflow = build_workflow(checkpointer=checkpointer)
+        _checkpointed_workflow = (checkpointer, workflow)
+        return workflow
 
 
 def stable_uuid(value: str) -> UUID:
@@ -403,6 +423,7 @@ async def process_turn(
     }
     run_config = {
         "run_name": "voice-shopping-turn",
+        "configurable": {"thread_id": session_key},
         "tags": [settings.environment, f"model:{settings.agent_model}"],
         "metadata": {
             "thread_id": session_key,
@@ -428,7 +449,8 @@ async def process_turn(
             ]
         )
         next_sequence += 1
-    async for update in shopping_workflow.astream(
+    workflow = await _workflow_for_turn()
+    async for update in workflow.astream(
         state_input, config=run_config, stream_mode="updates"
     ):
         for node_name, partial in update.items():

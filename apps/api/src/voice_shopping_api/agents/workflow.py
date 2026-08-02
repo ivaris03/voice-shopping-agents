@@ -3,6 +3,7 @@ import re
 from decimal import Decimal
 from typing import Any
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 
 from voice_shopping_api.agents.model import (
@@ -872,7 +873,7 @@ def _route_clarification(state: ShoppingState) -> str:
     return "recommend" if state.get("clarification_status") == "READY" else "respond"
 
 
-def build_workflow():
+def build_workflow(*, checkpointer: BaseCheckpointSaver | None = None):
     graph = StateGraph(ShoppingState)
     graph.add_node("intent_agent", recognize_intent)
     graph.add_node("clarification_agent", clarify_requirements)
@@ -900,7 +901,7 @@ def build_workflow():
     graph.add_edge("order_node", "compliance_check")
     graph.add_edge("emotional_agent", "compliance_check")
     graph.add_edge("compliance_check", END)
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 
 shopping_workflow = build_workflow()
