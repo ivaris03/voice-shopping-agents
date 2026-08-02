@@ -50,7 +50,7 @@ async def _category_or_404(session: AsyncSession, category_id: UUID) -> dict[str
 
 @router.get("/category-level-ones", response_model=ItemsResponse[CategoryL1Out])
 async def get_category_level_ones(session: Db) -> dict[str, object]:
-    result = await session.execute(text("SELECT * FROM category_groups ORDER BY code, created_at"))
+    result = await session.execute(text("SELECT * FROM category_l1 ORDER BY code, created_at"))
     return {"items": rows(result)}
 
 
@@ -59,7 +59,7 @@ async def create_category_level_one(payload: CategoryL1Create, session: Db) -> d
     result = await session.execute(
         text(
             """
-            INSERT INTO category_groups (code) VALUES (:code)
+            INSERT INTO category_l1 (code) VALUES (:code)
             ON CONFLICT (code) DO NOTHING
             RETURNING *
             """
@@ -78,10 +78,10 @@ async def delete_category_level_one(category_l1_id: UUID, session: Db) -> Respon
     result = await session.execute(
         text(
             """
-            DELETE FROM category_groups g
+            DELETE FROM category_l1 g
             WHERE g.id = :id
               AND NOT EXISTS (
-                  SELECT 1 FROM categories c WHERE c.category_l1_id = g.id
+                  SELECT 1 FROM category_l2 c WHERE c.category_l1_id = g.id
               )
             RETURNING id
             """
@@ -97,7 +97,7 @@ async def delete_category_level_one(category_l1_id: UUID, session: Db) -> Respon
 @router.post("/categories", response_model=CategoryOut, status_code=201)
 async def create_category(payload: CategoryCreate, session: Db) -> dict[str, Any]:
     parent_result = await session.execute(
-        text("SELECT code FROM category_groups WHERE id = :id"),
+        text("SELECT code FROM category_l1 WHERE id = :id"),
         {"id": payload.category_l1_id},
     )
     category_l1 = parent_result.scalar_one_or_none()
@@ -106,7 +106,7 @@ async def create_category(payload: CategoryCreate, session: Db) -> dict[str, Any
     result = await session.execute(
         text(
             """
-            INSERT INTO categories (
+            INSERT INTO category_l2 (
                 category_l1_id, category_l1, category_l2
             ) VALUES (
                 :category_l1_id, :category_l1, :category_l2
@@ -129,13 +129,13 @@ async def update_category(
     category_id: UUID, payload: CategoryUpdate, session: Db
 ) -> dict[str, Any]:
     current_result = await session.execute(
-        text("SELECT * FROM categories WHERE id = :id"), {"id": category_id}
+        text("SELECT * FROM category_l2 WHERE id = :id"), {"id": category_id}
     )
     row_or_404(current_result, "二级分类不存在")
     values = payload.model_dump(exclude_unset=True)
     if "category_l1_id" in values:
         parent_result = await session.execute(
-            text("SELECT code FROM category_groups WHERE id = :id"),
+            text("SELECT code FROM category_l1 WHERE id = :id"),
             {"id": values["category_l1_id"]},
         )
         category_l1 = parent_result.scalar_one_or_none()
@@ -145,7 +145,7 @@ async def update_category(
     if values:
         assignments = ", ".join(f"{key} = :{key}" for key in values)
         await session.execute(
-            text(f"UPDATE categories SET {assignments} WHERE id = :id"),
+            text(f"UPDATE category_l2 SET {assignments} WHERE id = :id"),
             {**values, "id": category_id},
         )
         await commit_or_conflict(session, "二级分类已存在")
@@ -157,7 +157,7 @@ async def create_category_slot(
     category_id: UUID, payload: CategorySlotCreate, session: Db
 ) -> dict[str, Any]:
     category = await session.execute(
-        text("SELECT id FROM categories WHERE id = :id"), {"id": category_id}
+        text("SELECT id FROM category_l2 WHERE id = :id"), {"id": category_id}
     )
     if category.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="二级分类不存在")
@@ -225,7 +225,7 @@ async def delete_category(category_id: UUID, session: Db) -> Response:
     result = await session.execute(
         text(
             """
-            DELETE FROM categories c
+            DELETE FROM category_l2 c
             WHERE c.id = :id
               AND NOT EXISTS (
                 SELECT 1 FROM products p

@@ -110,8 +110,8 @@ async def validate_product_taxonomy(
         text(
             """
             SELECT c.id, g.code AS category_l1, c.category_l2
-            FROM categories c
-            JOIN category_groups g ON g.id = c.category_l1_id
+            FROM category_l2 c
+            JOIN category_l1 g ON g.id = c.category_l1_id
             WHERE c.category_l2 = :category_l2
             """
         ),
@@ -161,8 +161,8 @@ async def list_categories(session: AsyncSession) -> list[dict[str, Any]]:
                        ) FILTER (WHERE s.id IS NOT NULL), '[]'::jsonb
                    ) AS slots,
                    c.created_at, c.updated_at
-            FROM categories c
-            JOIN category_groups g ON g.id = c.category_l1_id
+            FROM category_l2 c
+            JOIN category_l1 g ON g.id = c.category_l1_id
             LEFT JOIN category_slots s ON s.category_id = c.id
             GROUP BY c.id, c.category_l1_id, g.code, c.category_l2, c.created_at, c.updated_at
             ORDER BY g.code, c.category_l2, c.created_at

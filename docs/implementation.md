@@ -19,7 +19,7 @@
 `intent_agent → clarification_agent → recommendation_agent → emotional_agent → compliance_check`
 由 LangGraph 条件边驱动。订单意图路由到普通 Python 事务节点，再进入合规检查。
 
-- 意图识别读取当前话语和最近三轮消息，并把 `categories` 中全部二级分类的必填、选填
+- 意图识别读取当前话语和最近三轮消息，并把 `category_l2` 中全部二级分类的必填、选填
   槽位动态注入 System Prompt，输出六类标准意图、置信度、订单 action 和多意图队列。
 - 澄清规则从平台品类表加载必填槽位；先抽取当前话语已有信息，再询问前一到两个缺失槽位。
 - 推荐先执行品类、预算和属性硬约束，使用 1024 维查询向量计算 PGVector 相似度并截取
@@ -31,7 +31,7 @@
 
 ## 品类与商品校验
 
-`category_groups` 独立保存一级分类，`categories` 保存二级分类并通过外键关联一级分类，
+`category_l1` 独立保存一级分类，`category_l2` 保存二级分类并通过外键关联一级分类，
 `category_slots` 保存二级分类槽位、必填标记和非空 JSON 枚举数组。平台 API 按“一级分类 →
 二级分类 → 槽位”三步创建，并在数据库和请求模型两层阻止孤立二级分类及空枚举槽位；商家端
 选择二级分类后自动带出一级分类，并根据槽位枚举生成选择控件。

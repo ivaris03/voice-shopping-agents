@@ -83,21 +83,21 @@ FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 -- 二、商品域：平台品类、槽位与商品
 -- ============================================================================
 
-CREATE TABLE IF NOT EXISTS category_groups (
+CREATE TABLE IF NOT EXISTS category_l1 (
     id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     code            varchar(100) NOT NULL,
     created_at      timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT category_groups_code_not_blank CHECK (btrim(code) <> ''),
-    CONSTRAINT category_groups_code_uq UNIQUE (code)
+    CONSTRAINT category_l1_code_not_blank CHECK (btrim(code) <> ''),
+    CONSTRAINT category_l1_code_uq UNIQUE (code)
 );
 
-DROP TRIGGER IF EXISTS category_groups_set_updated_at ON category_groups;
-CREATE TRIGGER category_groups_set_updated_at
-BEFORE UPDATE ON category_groups
+DROP TRIGGER IF EXISTS category_l1_set_updated_at ON category_l1;
+CREATE TRIGGER category_l1_set_updated_at
+BEFORE UPDATE ON category_l1
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
-CREATE TABLE IF NOT EXISTS categories (
+CREATE TABLE IF NOT EXISTS category_l2 (
     id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     category_l1_id  uuid NOT NULL,
     category_l1     varchar(100) NOT NULL,
@@ -106,49 +106,28 @@ CREATE TABLE IF NOT EXISTS categories (
     optional_slots  text[] NOT NULL DEFAULT ARRAY[]::text[],
     created_at      timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT categories_l1_not_blank CHECK (btrim(category_l1) <> ''),
-    CONSTRAINT categories_l2_not_blank CHECK (btrim(category_l2) <> ''),
-    CONSTRAINT categories_l2_uq UNIQUE (category_l2),
-    CONSTRAINT categories_slots_disjoint CHECK (NOT (required_slots && optional_slots))
+    CONSTRAINT category_l2_l1_not_blank CHECK (btrim(category_l1) <> ''),
+    CONSTRAINT category_l2_code_not_blank CHECK (btrim(category_l2) <> ''),
+    CONSTRAINT category_l2_code_uq UNIQUE (category_l2),
+    CONSTRAINT category_l2_slots_disjoint CHECK (NOT (required_slots && optional_slots))
 );
 
--- 从旧版单表结构原地迁移一级分类关联，保留现有二级分类和商品数据。
-ALTER TABLE categories ADD COLUMN IF NOT EXISTS category_l1_id uuid;
-INSERT INTO category_groups (code)
-SELECT DISTINCT category_l1 FROM categories
-ON CONFLICT (code) DO NOTHING;
-UPDATE categories c
-SET category_l1_id = g.id
-FROM category_groups g
-WHERE c.category_l1_id IS NULL AND g.code = c.category_l1;
-ALTER TABLE categories ALTER COLUMN category_l1_id SET NOT NULL;
+ALTER TABLE category_l2
+    ADD CONSTRAINT category_l2_category_l1_fk
+    FOREIGN KEY (category_l1_id)
+    REFERENCES category_l1(id)
+    ON DELETE RESTRICT;
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'categories_category_l1_fk'
-          AND conrelid = 'categories'::regclass
-    ) THEN
-        ALTER TABLE categories
-            ADD CONSTRAINT categories_category_l1_fk
-            FOREIGN KEY (category_l1_id)
-            REFERENCES category_groups(id)
-            ON DELETE RESTRICT;
-    END IF;
-END;
-$$;
+CREATE INDEX IF NOT EXISTS category_l2_l1_idx ON category_l2 (category_l1, category_l2);
 
-CREATE INDEX IF NOT EXISTS categories_l1_idx ON categories (category_l1, category_l2);
-
-DROP TRIGGER IF EXISTS categories_set_updated_at ON categories;
-CREATE TRIGGER categories_set_updated_at
-BEFORE UPDATE ON categories
+DROP TRIGGER IF EXISTS category_l2_set_updated_at ON category_l2;
+CREATE TRIGGER category_l2_set_updated_at
+BEFORE UPDATE ON category_l2
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 CREATE TABLE IF NOT EXISTS category_slots (
     id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    category_id     uuid NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+    category_id     uuid NOT NULL REFERENCES category_l2(id) ON DELETE CASCADE,
     key             varchar(100) NOT NULL,
     is_required     boolean NOT NULL,
     enum_values     jsonb NOT NULL,

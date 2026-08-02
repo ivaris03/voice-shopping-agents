@@ -57,7 +57,7 @@ ON CONFLICT (id) DO UPDATE SET
     status = EXCLUDED.status;
 
 -- 一级分类可以独立存在；二级分类必须引用一个已存在的一级分类。
-INSERT INTO category_groups (code)
+INSERT INTO category_l1 (code)
 VALUES
     ('ELECTRONICS'),
     ('HOME_APPLIANCES'),
@@ -66,7 +66,7 @@ VALUES
     ('BEAUTY')
 ON CONFLICT (code) DO NOTHING;
 
-INSERT INTO categories (
+INSERT INTO category_l2 (
     category_l1_id, category_l1, category_l2, required_slots, optional_slots
 )
 SELECT g.id, seed.category_l1, seed.category_l2, seed.required_slots, seed.optional_slots
@@ -79,7 +79,7 @@ FROM (
         ('FASHION', 'WATCHES', ARRAY['movement'], ARRAY['gender', 'material', 'waterResistance']),
         ('BEAUTY', 'LIPSTICK', ARRAY['shade', 'finish'], ARRAY['skinType'])
 ) AS seed(category_l1, category_l2, required_slots, optional_slots)
-JOIN category_groups g ON g.code = seed.category_l1
+JOIN category_l1 g ON g.code = seed.category_l1
 ON CONFLICT (category_l2) DO UPDATE SET
     category_l1_id = EXCLUDED.category_l1_id,
     category_l1 = EXCLUDED.category_l1,
@@ -115,7 +115,7 @@ FROM (
         ('LIPSTICK', 'finish', true, '["matte","satin","glossy"]'::jsonb),
         ('LIPSTICK', 'skinType', false, '["dry","oily","normal"]'::jsonb)
 ) AS seed(category_l2, key, is_required, enum_values)
-JOIN categories c ON c.category_l2 = seed.category_l2
+JOIN category_l2 c ON c.category_l2 = seed.category_l2
 ON CONFLICT (category_id, key) DO UPDATE SET
     is_required = EXCLUDED.is_required,
     enum_values = EXCLUDED.enum_values;
