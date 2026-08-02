@@ -4,6 +4,7 @@ import pytest
 
 from voice_shopping_api.agents import model as model_module
 from voice_shopping_api.core import embeddings as embeddings_module
+from voice_shopping_api.core import observability as observability_module
 
 
 class _FakeChatModel:
@@ -48,6 +49,25 @@ class _FakeEmbeddings:
     def embed_query(self, text: str) -> list[float]:
         assert text == "通勤耳机"
         return [3.0, 4.0]
+
+
+class _FakeTextEmbedding:
+    @classmethod
+    def call(cls, **kwargs: Any) -> dict[str, Any]:
+        assert kwargs["text_type"] == "query"
+        return {
+            "usage": {"input_tokens": 7},
+            "output": {"embeddings": [{"embedding": [3.0, 4.0]}]},
+        }
+
+
+class _FakeEmbeddingsWithUsage:
+    def __init__(self, **kwargs: Any) -> None:
+        self.client: Any = None
+
+    def embed_query(self, text: str) -> list[float]:
+        response = self.client.call(input=text, text_type="query", model="test")
+        return response["output"]["embeddings"][0]["embedding"]
 
 
 class _FakeReranker:
@@ -105,6 +125,29 @@ async def test_embedding_uses_dashscope_embeddings(monkeypatch: pytest.MonkeyPat
     assert vector == [3.0, 4.0]
     assert usage is None
     assert _FakeEmbeddings.init_kwargs["model"] == "qwen3.7-text-embedding"
+
+
+@pytest.mark.asyncio
+async def test_embedding_preserves_dashscope_usage(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(embeddings_module, "DashScopeEmbeddings", _FakeEmbeddingsWithUsage)
+    monkeypatch.setattr(embeddings_module.dashscope, "TextEmbedding", _FakeTextEmbedding)
+
+    vector, usage = await embeddings_module.embed_text("通勤耳机")
+
+    assert vector == [3.0, 4.0]
+    assert usage == {"input_tokens": 7, "total_tokens": 7}
+
+
+def test_usage_normalization_preserves_provider_costs() -> None:
+    assert observability_module.normalize_usage(
+        {"prompt_tokens": 4, "completion_tokens": 5, "input_cost": "0.01"}
+    ) == {
+        "input_tokens": 4,
+        "output_tokens": 5,
+        "total_tokens": 9,
+        "input_cost": 0.01,
+        "total_cost": 0.01,
+    }
 
 
 @pytest.mark.asyncio

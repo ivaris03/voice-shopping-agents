@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 from collections.abc import Awaitable, Callable
+from time import perf_counter
 from typing import Any
 
 import dashscope
@@ -23,6 +24,12 @@ from voice_shopping_api.agents.state import (
 )
 from voice_shopping_api.core.config import get_settings
 from voice_shopping_api.core.embeddings import embed_text
+from voice_shopping_api.core.observability import (
+    finish_trace,
+    response_request_id,
+    response_usage,
+    start_trace,
+)
 
 
 def _parse_json(content: str) -> Any:
@@ -75,9 +82,11 @@ class _InstructionalRerankClient:
 
     def __init__(self, instruction: str) -> None:
         self.instruction = instruction
+        self.response: Any = None
 
     def call(self, **kwargs: Any) -> Any:
-        return dashscope.TextReRank.call(instruct=self.instruction, **kwargs)
+        self.response = dashscope.TextReRank.call(instruct=self.instruction, **kwargs)
+        return self.response
 
 
 def _chat_model() -> ChatQwen:
@@ -109,7 +118,6 @@ async def _chat_json(system_prompt: str, payload: dict[str, Any]) -> Any:
     return _parse_json(_message_content(message))
 
 
-@traceable(name="dashscope-embedding", run_type="embedding", tags=["dashscope", "embedding"])
 async def embed_query(query: str) -> list[float]:
     settings = get_settings()
     vector, usage = await embed_text(query)
@@ -117,7 +125,6 @@ async def embed_query(query: str) -> list[float]:
     return vector
 
 
-@traceable(name="dashscope-rerank", run_type="retriever", tags=["dashscope", "rerank"])
 async def rerank_products(query: str, products: list[dict[str, Any]]) -> dict[str, float]:
     settings = get_settings()
     documents = [
@@ -133,25 +140,63 @@ async def rerank_products(query: str, products: list[dict[str, Any]]) -> dict[st
         )
         for product in products
     ]
+    started = perf_counter()
+    span = start_trace(
+        "dashscope-rerank",
+        run_type="retriever",
+        inputs={"query_length": len(query), "document_count": len(documents)},
+        metadata={
+            "ls_provider": "dashscope",
+            "ls_model_name": settings.reranker_model,
+            "operation": "rerank",
+            "document_count": len(documents),
+        },
+        tags=["dashscope", "rerank"],
+        project_name=settings.langsmith_project,
+    )
+    recording_client = _InstructionalRerankClient(RECOMMENDATION_RERANK_INSTRUCTION)
 
     def call() -> Any:
         dashscope.api_key = settings.dashscope_api_key
         dashscope.base_http_api_url = settings.dashscope_http_base_url
         reranker = DashScopeRerank(
-            client=_InstructionalRerankClient(RECOMMENDATION_RERANK_INSTRUCTION),
+            client=recording_client,
             model=settings.reranker_model,
             top_n=len(documents),
             dashscope_api_key=settings.dashscope_api_key,
         )
         return reranker.rerank(documents, query, top_n=len(documents))
 
-    response = await asyncio.to_thread(call)
-    _mark_model_run(settings.reranker_model)
-    scores: dict[str, float] = {}
-    for item in response:
-        product = products[int(item["index"])]
-        scores[str(product["id"])] = float(item["relevance_score"])
-    return scores
+    try:
+        response = await asyncio.to_thread(call)
+        usage = response_usage(recording_client.response)
+        _mark_model_run(settings.reranker_model, usage)
+        scores: dict[str, float] = {}
+        for item in response:
+            product = products[int(item["index"])]
+            scores[str(product["id"])] = float(item["relevance_score"])
+        finish_trace(
+            span,
+            outputs={"result_count": len(scores)},
+            metadata={
+                "status": "ok",
+                "duration_ms": round((perf_counter() - started) * 1000, 2),
+                "result_count": len(scores),
+                "request_id": response_request_id(recording_client.response),
+            },
+            usage=usage,
+        )
+        return scores
+    except Exception as exc:
+        finish_trace(
+            span,
+            metadata={
+                "status": "error",
+                "duration_ms": round((perf_counter() - started) * 1000, 2),
+            },
+            error=exc,
+        )
+        raise
 
 
 async def recognize_with_model(

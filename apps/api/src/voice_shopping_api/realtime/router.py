@@ -94,7 +94,7 @@ class RealtimeHub:
     async def publish_audio(self, session_id: str, turn_id: str, text_value: str) -> None:
         if not self.audio_connections[session_id]:
             return
-        stream = synthesize_chunks(text_value)
+        stream = synthesize_chunks(text_value, session_id=session_id, turn_id=turn_id)
         first_chunk = await anext(stream, None)
         use_fallback = first_chunk is None
         start = {
@@ -275,7 +275,7 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
                         with suppress(Exception):
                             await asr.stop()
                         await wait_for_sentence_task()
-                    asr = StreamingAsr()
+                    asr = StreamingAsr(session_id=session_id, turn_id=turn_id)
                     await asr.start()
                 except Exception as exc:
                     logger.exception("ASR failed to start for session %s", session_id)

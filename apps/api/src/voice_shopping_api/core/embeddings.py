@@ -2,14 +2,33 @@
 import asyncio
 import json
 import logging
+from time import perf_counter
 from typing import Any
 
 import dashscope
 from langchain_community.embeddings import DashScopeEmbeddings
 
 from voice_shopping_api.core.config import get_settings
+from voice_shopping_api.core.observability import (
+    finish_trace,
+    response_request_id,
+    response_usage,
+    start_trace,
+)
 
 logger = logging.getLogger(__name__)
+
+
+class _RecordingEmbeddingClient:
+    """Keep the SDK response for usage metadata while retaining LangChain's adapter."""
+
+    def __init__(self, client: Any) -> None:
+        self.client = client
+        self.response: Any = None
+
+    def call(self, **kwargs: Any) -> Any:
+        self.response = self.client.call(**kwargs)
+        return self.response
 
 
 async def embed_text(text: str) -> tuple[list[float], dict[str, Any] | None]:
@@ -19,17 +38,56 @@ async def embed_text(text: str) -> tuple[list[float], dict[str, Any] | None]:
     normalize it first (see ``normalize_embedding``).
     """
     settings = get_settings()
-    if not settings.dashscope_api_key:
-        raise RuntimeError("DashScope API key is not configured")
-
-    dashscope.api_key = settings.dashscope_api_key
-    dashscope.base_http_api_url = settings.dashscope_http_base_url
-    embeddings = DashScopeEmbeddings(
-        model=settings.embedding_model,
-        dashscope_api_key=settings.dashscope_api_key,
+    started = perf_counter()
+    span = start_trace(
+        "dashscope-embedding",
+        run_type="embedding",
+        inputs={"text_length": len(text)},
+        metadata={
+            "ls_provider": "dashscope",
+            "ls_model_name": settings.embedding_model,
+            "operation": "embedding",
+        },
+        tags=["dashscope", "embedding"],
+        project_name=settings.langsmith_project,
     )
-    vector = await asyncio.to_thread(embeddings.embed_query, text)
-    return [float(value) for value in vector], None
+    try:
+        if not settings.dashscope_api_key:
+            raise RuntimeError("DashScope API key is not configured")
+
+        dashscope.api_key = settings.dashscope_api_key
+        dashscope.base_http_api_url = settings.dashscope_http_base_url
+        embeddings = DashScopeEmbeddings(
+            model=settings.embedding_model,
+            dashscope_api_key=settings.dashscope_api_key,
+        )
+        recorder = _RecordingEmbeddingClient(dashscope.TextEmbedding)
+        embeddings.client = recorder
+        vector = await asyncio.to_thread(embeddings.embed_query, text)
+        vector = [float(value) for value in vector]
+        usage = response_usage(recorder.response)
+        finish_trace(
+            span,
+            outputs={"vector_dimensions": len(vector)},
+            metadata={
+                "status": "ok",
+                "duration_ms": round((perf_counter() - started) * 1000, 2),
+                "vector_dimensions": len(vector),
+                "request_id": response_request_id(recorder.response),
+            },
+            usage=usage,
+        )
+        return vector, usage
+    except Exception as exc:
+        finish_trace(
+            span,
+            metadata={
+                "status": "error",
+                "duration_ms": round((perf_counter() - started) * 1000, 2),
+            },
+            error=exc,
+        )
+        raise
 
 
 def normalize_embedding(vector: list[float]) -> list[float]:
