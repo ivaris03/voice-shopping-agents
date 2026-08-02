@@ -50,99 +50,126 @@ def _order_action(utterance: str) -> str:
     return "CREATE"
 
 
+def _starts_new_product_request(
+    utterance: str, category: str | None, intent_type: str
+) -> bool:
+    """Detect an explicit new purchase, excluding slot-answer phrasing."""
+    if not category or intent_type not in ("PRODUCT_RECOMMENDATION", "PRODUCT_ORDER"):
+        return False
+    return any(
+        marker in utterance
+        for marker in ("买", "推荐", "帮我选", "帮我挑", "需要一", "要一")
+    )
+
+
 async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
+    """Recognize the current turn without consulting durable conversation facts.
+
+    Conversation state is synchronized by ``apply_intent_context`` after this
+    node. Keeping that step separate prevents an old pending question or
+    product card from short-circuiting intent recognition for a new turn.
+    """
     utterance = state.get("utterance", "").strip()
-    previous_category = _normalize_category(state.get("product_category"))
     dynamic_category_names = state.get("taxonomy_category_names", {})
     explicit_category = next(
         (code for code, name in dynamic_category_names.items() if name and name in utterance),
         None,
     ) or _category(utterance)
-    category_switched_by_rule = bool(explicit_category and explicit_category != previous_category)
-    if state.get("model_enabled") and (
-        not state.get("pending_question") or category_switched_by_rule
-    ):
+    if state.get("model_enabled"):
         try:
             model_intent = await recognize_with_model(
                 utterance,
                 state.get("conversation_history", []),
                 state.get("taxonomy_categories", []),
             )
-            normalized_category = (
-                model_intent.product_category
-                if model_intent.product_category in dynamic_category_names
-                else _normalize_category(model_intent.product_category)
-            )
-            model_intent = model_intent.model_copy(update={"product_category": normalized_category})
-            category = explicit_category or model_intent.product_category or previous_category
-            category_changed = bool(category and category != previous_category)
-            if (
-                model_intent.type == "PRODUCT_ORDER"
-                and model_intent.action == "CREATE"
-                and (
-                    not _has_recommendation_cards(state)
-                    or (category_changed and not _has_order_target(state, utterance))
-                )
-            ):
-                model_intent = IntentResult(
-                    type="PRODUCT_RECOMMENDATION",
-                    confidence=model_intent.confidence,
-                    product_category=category,
-                )
-            elif category and model_intent.type in (
-                "PRODUCT_RECOMMENDATION",
-                "PRODUCT_COMPARE",
-                "PRODUCT_QUERY",
-            ):
-                model_intent = model_intent.model_copy(update={"product_category": category})
+            category = explicit_category or _normalize_category(model_intent.product_category)
+            model_intent = model_intent.model_copy(update={"product_category": category})
             return {
                 "intent": model_intent.model_dump(exclude_none=True),
-                "product_category": category,
-                "category_changed": category_changed,
+                "starts_new_product_request": _starts_new_product_request(
+                    utterance, explicit_category, model_intent.type
+                ),
             }
         except Exception as exc:
             logger.warning("Intent model failed; using deterministic fallback: %s", exc)
-    category = explicit_category or previous_category
-    category_changed = bool(category and category != previous_category)
-    if state.get("pending_question") and not category_changed:
-        selected = IntentResult(
-            type="PRODUCT_RECOMMENDATION", confidence=0.99, product_category=category
-        )
-    else:
-        detections: list[tuple[int, IntentResult]] = []
+    detections: list[tuple[int, IntentResult]] = []
 
-        def detect(keywords: tuple[str, ...], result: IntentResult) -> None:
-            positions = [utterance.find(word) for word in keywords if word and word in utterance]
-            if positions:
-                detections.append((min(positions), result))
+    def detect(keywords: tuple[str, ...], result: IntentResult) -> None:
+        positions = [utterance.find(word) for word in keywords if word and word in utterance]
+        if positions:
+            detections.append((min(positions), result))
 
-        recommendation_words = ("推荐", "想买", "帮我选", "需要一") + CATEGORY_ALIASES.get(
-            category or "", ()
-        )
-        if category in dynamic_category_names:
-            recommendation_words += (dynamic_category_names[category],)
-        detect(
-            recommendation_words,
-            IntentResult(type="PRODUCT_RECOMMENDATION", confidence=0.95, product_category=category),
-        )
-        detect(
-            ("对比", "比较", "区别"),
-            IntentResult(type="PRODUCT_COMPARE", confidence=0.94, product_category=category),
-        )
-        detect(
-            ("多少钱", "库存", "介绍", "怎么样", "查询"),
-            IntentResult(type="PRODUCT_QUERY", confidence=0.9, product_category=category),
-        )
-        detect(
-            ("下单", "买第一", "买第二", "买第三", "确认", "取消订单"),
-            IntentResult(type="PRODUCT_ORDER", confidence=0.97, action=_order_action(utterance)),
-        )
-        detect(("你好", "谢谢", "嗨", "再见"), IntentResult(type="CHAT", confidence=0.9))
-        if not detections:
-            detections.append((0, IntentResult(type="UNSUPPORTED_REQUEST", confidence=0.86)))
-        selected = min(detections, key=lambda item: item[0])[1]
+    recommendation_words = ("推荐", "想买", "帮我选", "需要一") + CATEGORY_ALIASES.get(
+        explicit_category or "", ()
+    )
+    if explicit_category in dynamic_category_names:
+        recommendation_words += (dynamic_category_names[explicit_category],)
+    detect(
+        recommendation_words,
+        IntentResult(
+            type="PRODUCT_RECOMMENDATION", confidence=0.95, product_category=explicit_category
+        ),
+    )
+    detect(
+        ("对比", "比较", "区别"),
+        IntentResult(type="PRODUCT_COMPARE", confidence=0.94, product_category=explicit_category),
+    )
+    detect(
+        ("多少钱", "库存", "介绍", "怎么样", "查询"),
+        IntentResult(type="PRODUCT_QUERY", confidence=0.9, product_category=explicit_category),
+    )
+    detect(
+        ("下单", "买第一", "买第二", "买第三", "确认", "取消订单"),
+        IntentResult(type="PRODUCT_ORDER", confidence=0.97, action=_order_action(utterance)),
+    )
+    detect(("你好", "谢谢", "嗨", "再见"), IntentResult(type="CHAT", confidence=0.9))
+    if not detections:
+        detections.append((0, IntentResult(type="UNSUPPORTED_REQUEST", confidence=0.86)))
+    selected = min(detections, key=lambda item: item[0])[1]
     return {
         "intent": selected.model_dump(exclude_none=True),
-        "product_category": category,
-        "category_changed": category_changed,
+        "starts_new_product_request": _starts_new_product_request(
+            utterance, explicit_category, selected.type
+        ),
     }
+
+
+async def apply_intent_context(state: ShoppingState) -> dict[str, Any]:
+    """Apply the current intent to conversation state after recognition.
+
+    This node owns stateful guards such as order safety and category changes;
+    the intent Agent itself remains a fresh classification for every turn.
+    """
+    intent = dict(state.get("intent") or {})
+    category = _normalize_category(intent.get("product_category"))
+    previous_category = _normalize_category(state.get("product_category"))
+    updates: dict[str, Any] = {
+        "category_changed": bool(category and category != previous_category),
+    }
+    if category:
+        intent["product_category"] = category
+        updates["product_category"] = category
+
+    if (
+        intent.get("type") == "PRODUCT_ORDER"
+        and intent.get("action") == "CREATE"
+        and (
+            state.get("starts_new_product_request")
+            or not _has_recommendation_cards(state)
+            or (
+                updates["category_changed"]
+                and not _has_order_target(state, state.get("utterance", ""))
+            )
+        )
+    ):
+        intent = IntentResult(
+            type="PRODUCT_RECOMMENDATION",
+            confidence=float(intent.get("confidence", 0.0)),
+            product_category=category,
+        ).model_dump(exclude_none=True)
+        updates["starts_new_product_request"] = bool(
+            category or state.get("starts_new_product_request")
+        )
+
+    updates["intent"] = intent
+    return updates

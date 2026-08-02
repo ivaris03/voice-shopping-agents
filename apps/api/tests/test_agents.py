@@ -26,6 +26,128 @@ async def test_intent_selects_the_first_expressed_request() -> None:
     assert result["intent"]["product_category"] == "HEADPHONES"
 
 
+@pytest.mark.asyncio
+async def test_intent_model_runs_again_even_when_a_question_is_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    async def fake_recognize_with_model(
+        utterance: str,
+        conversation_history: list[str],
+        taxonomy_categories: list[dict[str, object]],
+    ) -> IntentResult:
+        calls.append(utterance)
+        return IntentResult(
+            type="PRODUCT_RECOMMENDATION",
+            confidence=0.98,
+            product_category="RUNNING_SHOES",
+        )
+
+    monkeypatch.setattr(intent_module, "recognize_with_model", fake_recognize_with_model)
+    result = await recognize_intent(
+        {
+            "utterance": "我想重新买一双鞋",
+            "model_enabled": True,
+            "product_category": "RUNNING_SHOES",
+            "pending_question": {"slot": "size"},
+            "previous_product_cards": [{"productId": "old-product"}],
+        }
+    )
+
+    assert calls == ["我想重新买一双鞋"]
+    assert result["intent"]["product_category"] == "RUNNING_SHOES"
+    assert result["starts_new_product_request"] is True
+
+
+@pytest.mark.asyncio
+async def test_same_category_new_request_discards_previous_requirements() -> None:
+    result = await shopping_workflow.ainvoke(
+        {
+            "utterance": "嗯，我要买一双鞋。",
+            "product_category": "RUNNING_SHOES",
+            "slots": {"gender": "unisex", "size": 42, "terrain": "road"},
+            "pending_question": None,
+            "previous_product_cards": [
+                {"productId": "old-1", "name": "旧推荐 1"},
+                {"productId": "old-2", "name": "旧推荐 2"},
+                {"productId": "old-3", "name": "旧推荐 3"},
+            ],
+            "model_enabled": False,
+            "user_profile_snapshot": {},
+        }
+    )
+
+    assert result["clarification_status"] == "ASK"
+    assert result["slots"] == {}
+    assert result["pending_question"]["slots"] == ["gender", "size"]
+    assert result.get("product_cards", []) == []
+
+
+@pytest.mark.asyncio
+async def test_slot_answers_keep_memory_and_recommend_when_requirements_are_complete() -> None:
+    product = {
+        "id": "20000000-0000-4000-8000-000000000101",
+        "merchant_id": "10000000-0000-4000-8000-000000000004",
+        "merchant_name": "飞跃运动旗舰店",
+        "name": "日常缓震跑鞋",
+        "category_l2": "RUNNING_SHOES",
+        "brand": "Test",
+        "description": "适合日常路跑",
+        "price": 899,
+        "stock": 10,
+        "attributes": {"gender": "unisex", "sizeRange": [36, 46], "terrain": "road"},
+        "selling_points": ["缓震舒适"],
+        "image_urls": [],
+    }
+
+    async def load_catalog(
+        _: str, __: bool, ___: dict[str, object]
+    ) -> list[dict[str, object]]:
+        return [product]
+
+    context = ShoppingWorkflowContext(catalog_loader=load_catalog)
+    first = await shopping_workflow.ainvoke(
+        {
+            "utterance": "我要买一双鞋。",
+            "slots": {},
+            "model_enabled": False,
+            "user_profile_snapshot": {},
+            "required_slots_by_category": {"RUNNING_SHOES": ["gender", "size", "terrain"]},
+            "allowed_slots_by_category": {
+                "RUNNING_SHOES": ["gender", "size", "terrain", "cushion", "footType"]
+            },
+        },
+        context=context,
+    )
+    second = await shopping_workflow.ainvoke(
+        {
+            **first,
+            "utterance": "我想要中性款时尚尺码的鞋。",
+            "model_enabled": False,
+            "product_cards": [],
+            "previous_product_cards": [],
+        },
+        context=context,
+    )
+    third = await shopping_workflow.ainvoke(
+        {
+            **second,
+            "utterance": "我需要42尺码，然后是公路的鞋。",
+            "model_enabled": False,
+            "product_cards": [],
+            "previous_product_cards": [],
+        },
+        context=context,
+    )
+
+    assert second["slots"] == {"gender": "unisex"}
+    assert second["pending_question"]["slots"] == ["size", "terrain"]
+    assert third["clarification_status"] == "READY"
+    assert third["slots"] == {"gender": "unisex", "size": 42.0, "terrain": "road"}
+    assert third["product_cards"][0]["productId"] == product["id"]
+
+
 def test_state_persistence_keeps_only_cross_turn_conversation_facts() -> None:
     state = {
         "session_id": "session-1",

@@ -73,6 +73,7 @@ class TurnState(TypedDict, total=False):
     utterance: str
     conversation_history: list[str]
     model_enabled: bool
+    starts_new_product_request: bool
 
 
 class ConversationState(TypedDict, total=False):

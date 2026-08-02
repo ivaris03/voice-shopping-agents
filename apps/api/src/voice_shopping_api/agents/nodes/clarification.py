@@ -224,15 +224,22 @@ async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
     taxonomy_definitions = state.get("taxonomy_slot_definitions_by_category", {}).get(
         category or "", state.get("taxonomy_slot_definitions", {})
     )
+    starts_new_request = bool(
+        state.get("category_changed") or state.get("starts_new_product_request")
+    )
     existing_slots = (
         {}
-        if state.get("category_changed")
+        if starts_new_request
         else _validated_agent_slots(state.get("slots", {}), allowed_slots, taxonomy_definitions)
     )
     pending_slot = (
-        None if state.get("category_changed") else (state.get("pending_question") or {}).get("slot")
+        None if starts_new_request else (state.get("pending_question") or {}).get("slot")
     )
-    slots = _extract_slots(state.get("utterance", ""), existing_slots, pending_slot)
+    slots = _validated_agent_slots(
+        _extract_slots(state.get("utterance", ""), existing_slots, pending_slot),
+        allowed_slots,
+        taxonomy_definitions,
+    )
     pending_definition = _effective_slot_definition(pending_slot or "", taxonomy_definitions)
     if pending_slot and pending_definition and slots.get(pending_slot) in (None, ""):
         value_type = pending_definition["type"]
@@ -270,7 +277,7 @@ async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
                 category,
                 required_slots,
                 slots,
-                state.get("pending_question") if not state.get("category_changed") else None,
+                state.get("pending_question") if not starts_new_request else None,
                 relevant_definitions,
                 state.get("conversation_history", []),
             )
