@@ -11,7 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from voice_shopping_api.agents.checkpointer import get_checkpointer
 from voice_shopping_api.agents.model import embed_query
-from voice_shopping_api.agents.state import ShoppingState, ShoppingWorkflowContext
+from voice_shopping_api.agents.state import (
+    ShoppingState,
+    ShoppingWorkflowContext,
+    carry_forward_state,
+    state_for_persistence,
+)
 from voice_shopping_api.agents.workflow import build_workflow, is_compliant, shopping_workflow
 from voice_shopping_api.core.config import get_settings
 from voice_shopping_api.core.queries import PRODUCT_COLUMNS, rows
@@ -262,23 +267,7 @@ async def _persist(
         ),
         {"id": session_id, "user_id": user_id, "turn_id": turn_id},
     )
-    persistable = {
-        key: value
-        for key, value in state.items()
-        if key
-        not in {
-            "catalog_products",
-            "conversation_history",
-            "previous_product_cards",
-            "required_slots_by_category",
-            "allowed_slots_by_category",
-            "taxonomy_slot_definitions",
-            "taxonomy_slot_definitions_by_category",
-            "taxonomy_slot_questions",
-            "taxonomy_category_names",
-            "taxonomy_categories",
-        }
-    }
+    persistable = state_for_persistence(state)
     payload = json.dumps(persistable, ensure_ascii=False, default=_json_default)
     profile = json.dumps(state.get("user_profile_snapshot", {}), ensure_ascii=False)
     pending = state.get("pending_order") or {}
@@ -397,12 +386,11 @@ async def process_turn(
     session_id = stable_uuid(session_key)
     turn_id = stable_uuid(f"{session_key}:{turn_key}")
     previous = await _load_previous(session, session_id)
-    previous.pop("intents", None)
-    previous.pop("action_queue", None)
+    carried_forward = carry_forward_state(previous)
     model_enabled = bool(settings.dashscope_api_key)
     taxonomy_context = await _taxonomy_context(session)
     state_input: ShoppingState = {
-        **previous,
+        **carried_forward,
         **taxonomy_context,
         "session_id": session_key,
         "turn_id": turn_key,
@@ -413,7 +401,7 @@ async def process_turn(
         "intent": {},
         "catalog_products": [],
         "user_profile_snapshot": await profile_snapshot(session, user_id),
-        "previous_product_cards": previous.get("product_cards", []),
+        "previous_product_cards": carried_forward.get("product_cards", []),
         "product_cards": [],
         "reasons": [],
         "speech_text": "",

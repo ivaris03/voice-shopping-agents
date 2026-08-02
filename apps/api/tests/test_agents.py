@@ -3,7 +3,12 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from voice_shopping_api.agents import model as model_module
 from voice_shopping_api.agents import workflow as workflow_module
-from voice_shopping_api.agents.state import IntentResult, ShoppingWorkflowContext
+from voice_shopping_api.agents.state import (
+    IntentResult,
+    ShoppingWorkflowContext,
+    carry_forward_state,
+    state_for_persistence,
+)
 from voice_shopping_api.agents.workflow import (
     COMPLIANCE_FALLBACK,
     build_workflow,
@@ -20,6 +25,38 @@ async def test_intent_selects_the_first_expressed_request() -> None:
 
     assert result["intent"]["type"] == "PRODUCT_RECOMMENDATION"
     assert result["intent"]["product_category"] == "HEADPHONES"
+
+
+def test_state_persistence_keeps_only_cross_turn_conversation_facts() -> None:
+    state = {
+        "session_id": "session-1",
+        "utterance": "帮我推荐耳机",
+        "conversation_history": ["user: 帮我推荐耳机"],
+        "intent": {"type": "PRODUCT_RECOMMENDATION", "confidence": 0.98},
+        "product_category": "HEADPHONES",
+        "slots": {"form": "in-ear"},
+        "pending_question": {"slot": "connectivity"},
+        "catalog_products": [{"id": "candidate-1"}],
+        "user_profile_snapshot": {"dynamic": {}},
+        "product_cards": [{"productId": "product-1"}],
+        "emotion_style": "warm-professional",
+        "pending_order": {"id": "order-1"},
+        "final_reply": "这是我的推荐。",
+        "intents": [{"type": "CHAT"}],
+        "action_queue": [],
+    }
+
+    expected = {
+        "product_category": "HEADPHONES",
+        "slots": {"form": "in-ear"},
+        "pending_question": {"slot": "connectivity"},
+        "product_cards": [{"productId": "product-1"}],
+        "emotion_style": "warm-professional",
+        "pending_order": {"id": "order-1"},
+    }
+
+    assert state_for_persistence(state) == expected
+    assert carry_forward_state(state) == expected
 
 
 @pytest.mark.asyncio
