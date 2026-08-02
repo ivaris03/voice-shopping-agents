@@ -9,6 +9,7 @@ from voice_shopping_api.agents.nodes.clarification import clarify_requirements
 from voice_shopping_api.agents.nodes.constants import COMPLIANCE_FALLBACK
 from voice_shopping_api.agents.nodes.intent import recognize_intent
 from voice_shopping_api.agents.nodes.response import compliance_check
+from voice_shopping_api.agents.service import _handle_order
 from voice_shopping_api.agents.state import (
     IntentResult,
     ShoppingWorkflowContext,
@@ -152,6 +153,57 @@ async def test_order_node_executes_the_context_order_handler() -> None:
 
     assert handled_states[0]["intent"]["type"] == "PRODUCT_ORDER"
     assert result["pending_order"]["id"] == "order-1"
+
+
+@pytest.mark.asyncio
+async def test_model_order_without_recommendations_returns_to_requirement_clarification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_recognize_with_model(
+        utterance: str,
+        conversation_history: list[str],
+        taxonomy_categories: list[dict[str, object]],
+    ) -> IntentResult:
+        return IntentResult(
+            type="PRODUCT_ORDER",
+            action="CREATE",
+            confidence=0.95,
+            product_category="RUNNING_SHOES",
+        )
+
+    monkeypatch.setattr(intent_module, "recognize_with_model", fake_recognize_with_model)
+    result = await shopping_workflow.ainvoke(
+        {
+            "utterance": "我想买一双通勤鞋",
+            # A reused session may know the category but still have no displayed products.
+            "product_category": "RUNNING_SHOES",
+            "previous_product_cards": [],
+            "slots": {},
+            "model_enabled": True,
+        }
+    )
+
+    assert result["intent"]["type"] == "PRODUCT_RECOMMENDATION"
+    assert result["clarification_status"] == "ASK"
+    assert result["pending_question"]["slots"] == ["gender", "size"]
+
+
+@pytest.mark.asyncio
+async def test_order_handler_does_not_request_a_product_position_without_cards() -> None:
+    expected_reply = "我还没有给你展示推荐商品。请先告诉我想买什么，我会为你筛选合适的商品。"
+    result = await _handle_order(
+        None,  # type: ignore[arg-type]
+        {
+            "intent": {"type": "PRODUCT_ORDER", "action": "CREATE"},
+            "utterance": "下单",
+            "previous_product_cards": [],
+        },
+        None,  # type: ignore[arg-type]
+        None,  # type: ignore[arg-type]
+        None,  # type: ignore[arg-type]
+    )
+
+    assert result["final_reply"] == expected_reply
 
 
 @pytest.mark.asyncio

@@ -26,13 +26,20 @@ def _normalize_category(value: str | None) -> str | None:
 
 
 def _has_order_target(state: ShoppingState, utterance: str) -> bool:
+    cards = state.get("previous_product_cards") or state.get("product_cards") or []
+    if not cards:
+        return False
     if any(
         marker in utterance
         for marker in ("下单", "第一", "第二", "第三", "这款", "那款", "就要", "就买")
     ):
         return True
-    cards = state.get("previous_product_cards") or state.get("product_cards") or []
     return any(card.get("name") and str(card["name"]) in utterance for card in cards)
+
+
+def _has_recommendation_cards(state: ShoppingState) -> bool:
+    """Orders may only be created after this conversation has shown products."""
+    return bool(state.get("previous_product_cards") or state.get("product_cards"))
 
 
 def _order_action(utterance: str) -> str:
@@ -70,10 +77,12 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
             category = explicit_category or model_intent.product_category or previous_category
             category_changed = bool(category and category != previous_category)
             if (
-                category_changed
-                and model_intent.type == "PRODUCT_ORDER"
+                model_intent.type == "PRODUCT_ORDER"
                 and model_intent.action == "CREATE"
-                and not _has_order_target(state, utterance)
+                and (
+                    not _has_recommendation_cards(state)
+                    or (category_changed and not _has_order_target(state, utterance))
+                )
             ):
                 model_intent = IntentResult(
                     type="PRODUCT_RECOMMENDATION",

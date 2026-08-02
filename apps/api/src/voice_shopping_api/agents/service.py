@@ -202,11 +202,15 @@ async def _handle_order(
     intent = state.get("intent") or {}
     action = intent.get("action", "CREATE")
     pending = state.get("pending_order") or {}
+    previous_cards = state.get("previous_product_cards", [])
+    if action == "CREATE" and not previous_cards:
+        reply = "我还没有给你展示推荐商品。请先告诉我想买什么，我会为你筛选合适的商品。"
+        return {"speech_text": reply, "final_reply": reply}
     order_id = UUID(str(pending["id"])) if pending.get("id") else None
     order_id = order_id or await _latest_pending_order_id(session, user_id, session_id)
     if action == "CREATE":
         product_id = _selected_product_id(
-            state.get("utterance", ""), state.get("previous_product_cards", [])
+            state.get("utterance", ""), previous_cards
         )
         if product_id is None:
             reply = "请告诉我要购买推荐结果中的第几款商品。"
