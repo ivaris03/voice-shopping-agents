@@ -5,6 +5,7 @@ from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
+from langgraph.runtime import Runtime
 
 from voice_shopping_api.agents.model import (
     clarify_with_model,
@@ -19,6 +20,7 @@ from voice_shopping_api.agents.state import (
     ProductReason,
     ProductRecommendationResult,
     ShoppingState,
+    ShoppingWorkflowContext,
 )
 from voice_shopping_api.core.taxonomy import REQUIRED_ATTRIBUTE_KEYS_BY_CATEGORY
 
@@ -791,6 +793,21 @@ async def recommend_products(state: ShoppingState) -> dict[str, Any]:
     return result.model_dump()
 
 
+async def retrieve_catalog(
+    state: ShoppingState, runtime: Runtime[ShoppingWorkflowContext]
+) -> dict[str, Any]:
+    """Fetch candidates only after the customer's required slots are complete."""
+
+    context = runtime.context
+    if context is None:
+        return {"catalog_products": state.get("catalog_products", [])}
+    return {
+        "catalog_products": await context.catalog_loader(
+            state.get("utterance", ""), bool(state.get("model_enabled"))
+        )
+    }
+
+
 async def order_response(_: ShoppingState) -> dict[str, Any]:
     return {"speech_text": "正在处理你的订单请求。", "final_reply": "正在处理你的订单请求。"}
 
@@ -870,13 +887,14 @@ def _route_intent(state: ShoppingState) -> str:
 
 
 def _route_clarification(state: ShoppingState) -> str:
-    return "recommend" if state.get("clarification_status") == "READY" else "respond"
+    return "retrieve" if state.get("clarification_status") == "READY" else "respond"
 
 
 def build_workflow(*, checkpointer: BaseCheckpointSaver | None = None):
-    graph = StateGraph(ShoppingState)
+    graph = StateGraph(ShoppingState, context_schema=ShoppingWorkflowContext)
     graph.add_node("intent_agent", recognize_intent)
     graph.add_node("clarification_agent", clarify_requirements)
+    graph.add_node("catalog_retrieval", retrieve_catalog)
     graph.add_node("recommendation_agent", recommend_products)
     graph.add_node("order_node", order_response)
     graph.add_node("emotional_agent", emotional_response)
@@ -895,8 +913,9 @@ def build_workflow(*, checkpointer: BaseCheckpointSaver | None = None):
     graph.add_conditional_edges(
         "clarification_agent",
         _route_clarification,
-        {"recommend": "recommendation_agent", "respond": "emotional_agent"},
+        {"retrieve": "catalog_retrieval", "respond": "emotional_agent"},
     )
+    graph.add_edge("catalog_retrieval", "recommendation_agent")
     graph.add_edge("recommendation_agent", "emotional_agent")
     graph.add_edge("order_node", "compliance_check")
     graph.add_edge("emotional_agent", "compliance_check")

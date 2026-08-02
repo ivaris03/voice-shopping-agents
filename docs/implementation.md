@@ -16,13 +16,13 @@
 
 ## Agent 工作流
 
-`intent_agent → clarification_agent → recommendation_agent → emotional_agent → compliance_check`
+`intent_agent → clarification_agent → catalog_retrieval → recommendation_agent → emotional_agent → compliance_check`
 由 LangGraph 条件边驱动。订单意图路由到普通 Python 事务节点，再进入合规检查。
 
 - 意图识别读取当前话语和最近三轮消息，并把 `category_l2` 中全部二级分类的必填、选填
   槽位动态注入 System Prompt，输出六类标准意图、置信度、订单 action 和多意图队列。
 - 澄清规则从平台品类表加载必填槽位；先抽取当前话语已有信息，再询问前一到两个缺失槽位。
-- 推荐先执行品类、预算和属性硬约束，使用 1024 维查询向量计算 PGVector 相似度并截取
+- 仅当需求澄清返回 `READY` 后，商品召回节点才使用 1024 维查询向量计算 PGVector 相似度并截取
   Top 20，再按 `0.4 × Reranker + 0.4 × 动态画像 + 0.2 × 静态画像` 选 Top 3。
 - 推荐节点只产生商品卡和情绪风格；情感节点为每个事实商品产生一条理由和完整话术。
 - 增量推送和完整话术都经过正则规则；完整命中时改为固定兜底文本，不再提交原文 TTS。

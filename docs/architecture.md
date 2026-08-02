@@ -80,7 +80,8 @@ flowchart TD
     I --> R{"代码条件路由"}
     R -->|推荐| C["需求澄清 Agent：加载品类槽位配置"]
     C -->|ASK| E["情感应答 Agent"]
-    C -->|READY| P["商品推荐 Agent"]
+    C -->|READY| G["商品召回节点"]
+    G --> P["商品推荐 Agent"]
     R -->|对比/查询| P
     R -->|订单| O["订单节点"]
     R -->|聊天/不支持| E

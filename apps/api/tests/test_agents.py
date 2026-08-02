@@ -3,7 +3,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from voice_shopping_api.agents import model as model_module
 from voice_shopping_api.agents import workflow as workflow_module
-from voice_shopping_api.agents.state import IntentResult
+from voice_shopping_api.agents.state import IntentResult, ShoppingWorkflowContext
 from voice_shopping_api.agents.workflow import (
     COMPLIANCE_FALLBACK,
     build_workflow,
@@ -46,6 +46,49 @@ async def test_workflow_restores_state_with_a_checkpointer() -> None:
     assert first["pending_question"]["slots"] == ["gender", "size"]
     assert second["slots"]["gender"] == "male"
     assert second["slots"]["size"] == 42.0
+
+
+@pytest.mark.asyncio
+async def test_catalog_retrieval_runs_only_after_clarification_is_ready() -> None:
+    product = {
+        "id": "20000000-0000-4000-8000-000000000101",
+        "merchant_id": "10000000-0000-4000-8000-000000000004",
+        "merchant_name": "飞跃运动旗舰店",
+        "name": "日常缓震跑鞋",
+        "category_l2": "RUNNING_SHOES",
+        "brand": "Test",
+        "description": "适合日常路跑",
+        "price": 899,
+        "stock": 10,
+        "attributes": {
+            "gender": "unisex",
+            "size": [36, 46],
+            "terrain": "road",
+            "cushion": "high",
+            "footType": ["neutral"],
+        },
+        "selling_points": ["缓震舒适"],
+        "image_urls": [],
+    }
+    retrievals: list[tuple[str, bool]] = []
+
+    async def load_catalog(query: str, model_enabled: bool) -> list[dict[str, object]]:
+        retrievals.append((query, model_enabled))
+        return [product]
+
+    result = await shopping_workflow.ainvoke(
+        {
+            "utterance": "我想买跑鞋，男款，42码，公路，高缓震，正常足",
+            "slots": {},
+            "user_profile_snapshot": {},
+            "model_enabled": False,
+        },
+        context=ShoppingWorkflowContext(catalog_loader=load_catalog),
+    )
+
+    assert retrievals == [("我想买跑鞋，男款，42码，公路，高缓震，正常足", False)]
+    assert result["clarification_status"] == "READY"
+    assert result["product_cards"][0]["productId"] == product["id"]
 
 
 @pytest.mark.asyncio

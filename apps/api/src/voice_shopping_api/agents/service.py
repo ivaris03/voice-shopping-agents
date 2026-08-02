@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from voice_shopping_api.agents.checkpointer import get_checkpointer
 from voice_shopping_api.agents.model import embed_query
-from voice_shopping_api.agents.state import ShoppingState
+from voice_shopping_api.agents.state import ShoppingState, ShoppingWorkflowContext
 from voice_shopping_api.agents.workflow import build_workflow, is_compliant, shopping_workflow
 from voice_shopping_api.core.config import get_settings
 from voice_shopping_api.core.queries import PRODUCT_COLUMNS, rows
@@ -412,7 +412,7 @@ async def process_turn(
         "model_enabled": model_enabled,
         "intents": [],
         "action_queue": [],
-        "catalog_products": await _catalog(session, utterance, model_enabled),
+        "catalog_products": [],
         "user_profile_snapshot": await profile_snapshot(session, user_id),
         "previous_product_cards": previous.get("product_cards", []),
         "product_cards": [],
@@ -451,7 +451,12 @@ async def process_turn(
         next_sequence += 1
     workflow = await _workflow_for_turn()
     async for update in workflow.astream(
-        state_input, config=run_config, stream_mode="updates"
+        state_input,
+        config=run_config,
+        context=ShoppingWorkflowContext(
+            catalog_loader=lambda query, enabled: _catalog(session, query, enabled)
+        ),
+        stream_mode="updates",
     ):
         for node_name, partial in update.items():
             result.update(partial)

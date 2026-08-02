@@ -1,3 +1,5 @@
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any, Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -55,6 +57,16 @@ class Intent(TypedDict, total=False):
     confidence: float
     action: OrderAction
     product_category: str
+
+
+CatalogLoader = Callable[[str, bool], Awaitable[list[dict[str, Any]]]]
+
+
+@dataclass(frozen=True)
+class ShoppingWorkflowContext:
+    """Non-persisted dependencies available to workflow nodes for one turn."""
+
+    catalog_loader: CatalogLoader
 
 
 class ShoppingState(TypedDict, total=False):
