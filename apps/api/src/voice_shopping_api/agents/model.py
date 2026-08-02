@@ -5,6 +5,7 @@ from typing import Any
 
 import dashscope
 import httpx
+from langsmith import get_current_run_tree, traceable
 
 from voice_shopping_api.agents.prompts import (
     CLARIFICATION_SYSTEM_PROMPT,
@@ -26,6 +27,26 @@ def _parse_json(content: str) -> Any:
     return json.loads(cleaned)
 
 
+def _mark_model_run(model: str, usage: dict[str, Any] | None = None) -> None:
+    run = get_current_run_tree()
+    if run is None:
+        return
+    run.add_metadata({"ls_provider": "dashscope", "ls_model_name": model})
+    if not usage:
+        return
+    input_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+    output_tokens = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+    total_tokens = int(usage.get("total_tokens") or input_tokens + output_tokens)
+    run.set(
+        usage_metadata={
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+        }
+    )
+
+
+@traceable(name="dashscope-chat", run_type="llm", tags=["dashscope", "chat"])
 async def _chat_json(system_prompt: str, payload: dict[str, Any]) -> Any:
     settings = get_settings()
     if not settings.dashscope_api_key:
@@ -45,10 +66,13 @@ async def _chat_json(system_prompt: str, payload: dict[str, Any]) -> Any:
             },
         )
         response.raise_for_status()
-    content = response.json()["choices"][0]["message"]["content"]
+    response_data = response.json()
+    _mark_model_run(settings.agent_model, response_data.get("usage"))
+    content = response_data["choices"][0]["message"]["content"]
     return _parse_json(content)
 
 
+@traceable(name="dashscope-embedding", run_type="embedding", tags=["dashscope", "embedding"])
 async def embed_query(query: str) -> list[float]:
     settings = get_settings()
     async with httpx.AsyncClient(timeout=20) as client:
@@ -63,9 +87,12 @@ async def embed_query(query: str) -> list[float]:
             },
         )
         response.raise_for_status()
-    return [float(value) for value in response.json()["data"][0]["embedding"]]
+    response_data = response.json()
+    _mark_model_run(settings.embedding_model, response_data.get("usage"))
+    return [float(value) for value in response_data["data"][0]["embedding"]]
 
 
+@traceable(name="dashscope-rerank", run_type="retriever", tags=["dashscope", "rerank"])
 async def rerank_products(query: str, products: list[dict[str, Any]]) -> dict[str, float]:
     settings = get_settings()
     documents = [
@@ -97,6 +124,7 @@ async def rerank_products(query: str, products: list[dict[str, Any]]) -> dict[st
     response = await asyncio.to_thread(call)
     if response.status_code != 200:
         raise RuntimeError(response.message)
+    _mark_model_run(settings.reranker_model)
     scores: dict[str, float] = {}
     for item in response.output.get("results", []):
         product = products[int(item["index"])]

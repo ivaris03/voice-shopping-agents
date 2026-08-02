@@ -355,10 +355,11 @@ async def process_turn(
     user_id: UUID,
     on_events: Callable[[list[dict[str, Any]]], Awaitable[None]] | None = None,
 ) -> tuple[ShoppingState, list[dict[str, Any]]]:
+    settings = get_settings()
     session_id = stable_uuid(session_key)
     turn_id = stable_uuid(f"{session_key}:{turn_key}")
     previous = await _load_previous(session, session_id)
-    model_enabled = bool(get_settings().dashscope_api_key)
+    model_enabled = bool(settings.dashscope_api_key)
     taxonomy_context = await _taxonomy_context(session)
     state_input: ShoppingState = {
         **previous,
@@ -382,10 +383,14 @@ async def process_turn(
     }
     run_config = {
         "run_name": "voice-shopping-turn",
+        "tags": [settings.environment, f"model:{settings.agent_model}"],
         "metadata": {
-            "sessionId": session_key,
-            "turnId": turn_key,
-            "environment": "voice-shopping",
+            "thread_id": session_key,
+            "turn_id": turn_key,
+            "environment": settings.environment,
+            "agent_model": settings.agent_model,
+            "embedding_model": settings.embedding_model,
+            "reranker_model": settings.reranker_model,
         },
     }
     result: ShoppingState = dict(state_input)
