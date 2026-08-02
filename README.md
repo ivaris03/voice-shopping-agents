@@ -84,7 +84,8 @@ Reranker、ASR 和 TTS 模型。
 可从 Redis 重放遗漏事件。
 
 音频连接：`/ws/audio/{session_id}?userId={user_id}`。上行顺序为 `audio.start`、PCM16
-二进制分片、`audio.commit`；下行顺序为 `audio.start`、WAV 二进制分片、`audio.end`。
+二进制分片、`audio.commit`；下行按回复短句重复发送 `audio.start`、该句的 WAV
+二进制分片、`audio.end`，控制消息中的 `sentenceIndex` 和 `sentenceCount` 用于标识顺序。
 
 ## 验证
 

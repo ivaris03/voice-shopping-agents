@@ -13,6 +13,38 @@ from voice_shopping_api.core.observability import finish_trace, start_trace
 
 logger = logging.getLogger(__name__)
 
+_SENTENCE_ENDINGS = frozenset("。！？!?；;\n")
+_SENTENCE_CLOSERS = frozenset("。！？!?；;)]}》」』”’\"'")
+
+
+def split_sentences(text_value: str) -> list[str]:
+    """Split reply text into speakable sentences while preserving punctuation."""
+    text = text_value.strip()
+    if not text:
+        return []
+
+    sentences: list[str] = []
+    start = 0
+    for index, character in enumerate(text):
+        is_boundary = character in _SENTENCE_ENDINGS or (
+            character == "."
+            and (index + 1 == len(text) or text[index + 1].isspace())
+        )
+        if not is_boundary:
+            continue
+        end = index + 1
+        while end < len(text) and text[end] in _SENTENCE_CLOSERS:
+            end += 1
+        sentence = text[start:end].strip()
+        if sentence:
+            sentences.append(sentence)
+        start = end
+
+    remainder = text[start:].strip()
+    if remainder:
+        sentences.append(remainder)
+    return sentences
+
 
 class _AsrCallback(RecognitionCallback):
     def __init__(self, owner: "StreamingAsr") -> None:

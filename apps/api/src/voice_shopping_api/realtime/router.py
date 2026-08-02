@@ -16,7 +16,7 @@ from voice_shopping_api.agents.service import process_turn
 from voice_shopping_api.core.config import get_settings
 from voice_shopping_api.core.database import async_session_factory
 from voice_shopping_api.core.identity import DEFAULT_CUSTOMER_ID
-from voice_shopping_api.realtime.speech import StreamingAsr, synthesize_chunks
+from voice_shopping_api.realtime.speech import StreamingAsr, split_sentences, synthesize_chunks
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -94,52 +94,60 @@ class RealtimeHub:
     async def publish_audio(self, session_id: str, turn_id: str, text_value: str) -> None:
         if not self.audio_connections[session_id]:
             return
-        stream = synthesize_chunks(text_value, session_id=session_id, turn_id=turn_id)
-        first_chunk = await anext(stream, None)
-        use_fallback = first_chunk is None
-        start = {
-            "type": "audio.start",
-            "sessionId": session_id,
-            "turnId": turn_id,
-            "seq": 1,
-            "payload": {
-                "format": "wav",
-                "sampleRate": 16000 if use_fallback else 24000,
-                "fallback": use_fallback,
-                "text": text_value,
-            },
-        }
-        end = {
-            "type": "audio.end",
-            "sessionId": session_id,
-            "turnId": turn_id,
-            "seq": 2,
-            "payload": {},
-        }
-        for connection in tuple(self.audio_connections[session_id]):
-            try:
-                await connection.send_json(start)
-            except (RuntimeError, WebSocketDisconnect):
-                self.audio_connections[session_id].discard(connection)
-
-        async def send_chunk(chunk: bytes | None) -> None:
-            if chunk is None:
-                return
+        sentences = split_sentences(text_value)
+        for sentence_index, sentence in enumerate(sentences, start=1):
+            stream = synthesize_chunks(sentence, session_id=session_id, turn_id=turn_id)
+            first_chunk = await anext(stream, None)
+            use_fallback = first_chunk is None
+            start = {
+                "type": "audio.start",
+                "sessionId": session_id,
+                "turnId": turn_id,
+                "seq": sentence_index * 2 - 1,
+                "payload": {
+                    "format": "wav",
+                    "sampleRate": 16000 if use_fallback else 24000,
+                    "fallback": use_fallback,
+                    "text": sentence,
+                    "sentenceIndex": sentence_index,
+                    "sentenceCount": len(sentences),
+                },
+            }
+            end = {
+                "type": "audio.end",
+                "sessionId": session_id,
+                "turnId": turn_id,
+                "seq": sentence_index * 2,
+                "payload": {
+                    "sentenceIndex": sentence_index,
+                    "sentenceCount": len(sentences),
+                    "final": sentence_index == len(sentences),
+                },
+            }
             for connection in tuple(self.audio_connections[session_id]):
                 try:
-                    await connection.send_bytes(chunk)
+                    await connection.send_json(start)
                 except (RuntimeError, WebSocketDisconnect):
                     self.audio_connections[session_id].discard(connection)
 
-        await send_chunk(_silent_wav() if use_fallback else first_chunk)
-        if not use_fallback:
-            async for chunk in stream:
-                await send_chunk(chunk)
-        for connection in tuple(self.audio_connections[session_id]):
-            try:
-                await connection.send_json(end)
-            except (RuntimeError, WebSocketDisconnect):
-                self.audio_connections[session_id].discard(connection)
+            async def send_chunk(chunk: bytes | None) -> None:
+                if chunk is None:
+                    return
+                for connection in tuple(self.audio_connections[session_id]):
+                    try:
+                        await connection.send_bytes(chunk)
+                    except (RuntimeError, WebSocketDisconnect):
+                        self.audio_connections[session_id].discard(connection)
+
+            await send_chunk(_silent_wav() if use_fallback else first_chunk)
+            if not use_fallback:
+                async for chunk in stream:
+                    await send_chunk(chunk)
+            for connection in tuple(self.audio_connections[session_id]):
+                try:
+                    await connection.send_json(end)
+                except (RuntimeError, WebSocketDisconnect):
+                    self.audio_connections[session_id].discard(connection)
 
     async def run_turn(
         self,

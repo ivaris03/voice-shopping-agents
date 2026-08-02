@@ -172,7 +172,7 @@ PGVector 字段保存在 `products`；订单成交快照保存在 `orders`。Red
 | `/ws/text/{session_id}` | 商品卡、推荐理由/话术增量、完整文本、流程状态 |
 | `/ws/audio/{session_id}` | 上行用户录音；下行 TTS 控制消息和二进制音频分片 |
 
-文本连接依次发送 `recommendation.cards`、`text.delta`、`text.completed`。事件统一包含 `type`、`sessionId`、`turnId`、`seq` 和 `payload`，使用 `sessionId + turnId + seq` 唯一定位并排序。语音连接依次发送 `audio.start`、二进制音频分片、`audio.end`。两个连接使用 `sessionId + turnId` 关联并支持重连。
+文本连接依次发送 `recommendation.cards`、`text.delta`、`text.completed`。事件统一包含 `type`、`sessionId`、`turnId`、`seq` 和 `payload`，使用 `sessionId + turnId + seq` 唯一定位并排序。语音连接按短句依次发送 `audio.start`、该句的二进制音频分片、`audio.end`，控制消息使用 `sentenceIndex` 和 `sentenceCount` 标识句子顺序。两个连接使用 `sessionId + turnId` 关联并支持重连。
 
 主要 HTTP API：
 

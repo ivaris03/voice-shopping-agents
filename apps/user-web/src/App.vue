@@ -40,6 +40,21 @@ interface PendingAsrStart {
   timer: number
 }
 
+interface IncomingAudioSegment {
+  turnId: string
+  text: string
+  fallback: boolean
+  suppressed: boolean
+  chunks: Blob[]
+}
+
+interface QueuedAudioSegment {
+  turnId: string
+  text: string
+  fallback: boolean
+  audio?: Blob
+}
+
 interface AudioInputOption {
   deviceId: string
   label: string
@@ -82,13 +97,11 @@ let audioContext: AudioContext | null = null
 let audioSource: MediaStreamAudioSourceNode | null = null
 let audioProcessor: ScriptProcessorNode | null = null
 let audioGain: GainNode | null = null
-let audioChunks: Blob[] = []
-let audioFallbackActive = false
 let activeAssistantAudio: HTMLAudioElement | null = null
 let activeAssistantAudioUrl: string | null = null
 let activeAssistantSpeech: SpeechSynthesisUtterance | null = null
-let incomingAudioTurnId = ''
-let suppressIncomingAudio = false
+let incomingAudioSegment: IncomingAudioSegment | null = null
+const audioQueue: QueuedAudioSegment[] = []
 let capturedAudioBytes = 0
 let capturedAudioPeak = 0
 let recordingStartedAt = 0
@@ -181,41 +194,91 @@ function handleAudioDeviceChange() {
   void refreshAudioInputs()
 }
 
-function speak(text: string) {
-  if (!('speechSynthesis' in window) || !text) return
-  window.speechSynthesis.cancel()
-  const speech = new SpeechSynthesisUtterance(text)
-  speech.lang = 'zh-CN'
-  activeAssistantSpeech = speech
-  isAssistantSpeaking.value = true
-  isAssistantSpeechPaused.value = false
-  const clearSpeech = () => {
-    if (activeAssistantSpeech !== speech) return
-    activeAssistantSpeech = null
+function pumpAudioQueue() {
+  if (activeAssistantAudio || activeAssistantSpeech) return
+  const next = audioQueue.shift()
+  if (!next) {
     isAssistantSpeaking.value = false
     isAssistantSpeechPaused.value = false
+    return
   }
-  speech.onend = clearSpeech
-  speech.onerror = clearSpeech
-  window.speechSynthesis.speak(speech)
+
+  if (next.fallback) {
+    if (!('speechSynthesis' in window)) {
+      pumpAudioQueue()
+      return
+    }
+    const speech = new SpeechSynthesisUtterance(next.text)
+    speech.lang = 'zh-CN'
+    activeAssistantSpeech = speech
+    isAssistantSpeaking.value = true
+    isAssistantSpeechPaused.value = false
+    const finishSpeech = () => {
+      if (activeAssistantSpeech !== speech) return
+      activeAssistantSpeech = null
+      isAssistantSpeaking.value = false
+      isAssistantSpeechPaused.value = false
+      pumpAudioQueue()
+    }
+    speech.onend = finishSpeech
+    speech.onerror = finishSpeech
+    window.speechSynthesis.speak(speech)
+    return
+  }
+
+  if (!next.audio) {
+    pumpAudioQueue()
+    return
+  }
+  const url = URL.createObjectURL(next.audio)
+  const audio = new Audio(url)
+  activeAssistantAudio = audio
+  activeAssistantAudioUrl = url
+  isAssistantSpeaking.value = true
+  isAssistantSpeechPaused.value = false
+  let finished = false
+  const finishAudio = () => {
+    if (finished) return
+    finished = true
+    if (activeAssistantAudio === audio) {
+      activeAssistantAudio = null
+      if (activeAssistantAudioUrl === url) activeAssistantAudioUrl = null
+      isAssistantSpeaking.value = false
+      isAssistantSpeechPaused.value = false
+    }
+    URL.revokeObjectURL(url)
+    pumpAudioQueue()
+  }
+  audio.onended = finishAudio
+  audio.onerror = finishAudio
+  void audio.play().catch(finishAudio)
+}
+
+function speak(text: string, turnId = '') {
+  if (!text) return
+  audioQueue.push({ turnId, text, fallback: true })
+  pumpAudioQueue()
 }
 
 function stopAssistantSpeech() {
   if ('speechSynthesis' in window) window.speechSynthesis.cancel()
+  if (incomingAudioSegment?.turnId) mutedSpeechTurnIds.add(incomingAudioSegment.turnId)
+  for (const segment of audioQueue) {
+    if (segment.turnId) mutedSpeechTurnIds.add(segment.turnId)
+  }
   activeAssistantSpeech = null
   isAssistantSpeaking.value = false
   isAssistantSpeechPaused.value = false
-  if (incomingAudioTurnId) mutedSpeechTurnIds.add(incomingAudioTurnId)
   for (const turnId of pendingSpeechByTurn.keys()) mutedSpeechTurnIds.add(turnId)
   pendingSpeechByTurn.clear()
-  audioChunks = []
-  audioFallbackActive = false
-  suppressIncomingAudio = true
-  if (!activeAssistantAudio) return
-  activeAssistantAudio.pause()
-  activeAssistantAudio.removeAttribute('src')
-  activeAssistantAudio.load()
-  activeAssistantAudio = null
+  audioQueue.length = 0
+  incomingAudioSegment = null
+  if (activeAssistantAudio) {
+    activeAssistantAudio.pause()
+    activeAssistantAudio.removeAttribute('src')
+    activeAssistantAudio.load()
+    activeAssistantAudio = null
+  }
   if (activeAssistantAudioUrl) URL.revokeObjectURL(activeAssistantAudioUrl)
   activeAssistantAudioUrl = null
 }
@@ -340,15 +403,16 @@ function connectAudio(): Promise<void> {
       if (isRecording.value) cleanupRecording()
       for (const text of pendingSpeechByTurn.values()) speak(text)
       pendingSpeechByTurn.clear()
-      audioChunks = []
-      audioFallbackActive = false
+      incomingAudioSegment = null
       pendingPcmFrames = []
       asrReady = false
       stopRequested = false
     }
     socket.onmessage = (message) => {
       if (message.data instanceof Blob) {
-        if (!audioFallbackActive) audioChunks.push(message.data)
+        if (incomingAudioSegment && !incomingAudioSegment.fallback && !incomingAudioSegment.suppressed) {
+          incomingAudioSegment.chunks.push(message.data)
+        }
         return
       }
       const event = JSON.parse(String(message.data)) as {
@@ -413,15 +477,22 @@ function connectAudio(): Promise<void> {
         flowStatus.value = '语音识别失败，请重试'
       }
       if (event.type === 'audio.start') {
-        audioChunks = []
-        incomingAudioTurnId = event.turnId ?? ''
-        suppressIncomingAudio = Boolean(event.turnId && mutedSpeechTurnIds.has(event.turnId))
-        audioFallbackActive = event.payload?.fallback === true
         const pendingText = event.turnId ? pendingSpeechByTurn.get(event.turnId) : undefined
         if (event.turnId) pendingSpeechByTurn.delete(event.turnId)
-        if (suppressIncomingAudio) return
-        if (audioFallbackActive) {
-          speak(String(event.payload?.text ?? pendingText ?? ''))
+        const turnId = event.turnId ?? ''
+        const text = String(event.payload?.text ?? pendingText ?? '')
+        const fallback = event.payload?.fallback === true
+        const suppressed = Boolean(turnId && mutedSpeechTurnIds.has(turnId))
+        incomingAudioSegment = {
+          turnId,
+          text,
+          fallback,
+          suppressed,
+          chunks: [],
+        }
+        if (suppressed) return
+        if (fallback) {
+          speak(text, turnId)
         } else if ('speechSynthesis' in window) {
           window.speechSynthesis.cancel()
           activeAssistantSpeech = null
@@ -430,36 +501,17 @@ function connectAudio(): Promise<void> {
         }
       }
       if (event.type === 'audio.end') {
-        if (!suppressIncomingAudio && !audioFallbackActive && audioChunks.length) {
-          const url = URL.createObjectURL(new Blob(audioChunks, { type: 'audio/wav' }))
-          const audio = new Audio(url)
-          activeAssistantAudio = audio
-          activeAssistantAudioUrl = url
-          isAssistantSpeaking.value = true
-          isAssistantSpeechPaused.value = false
-          audio.onended = () => {
-            if (activeAssistantAudio === audio) {
-              activeAssistantAudio = null
-              activeAssistantAudioUrl = null
-              isAssistantSpeaking.value = false
-              isAssistantSpeechPaused.value = false
-            }
-            URL.revokeObjectURL(url)
-          }
-          void audio.play().catch(() => {
-            if (activeAssistantAudio === audio) {
-              activeAssistantAudio = null
-              activeAssistantAudioUrl = null
-              isAssistantSpeaking.value = false
-              isAssistantSpeechPaused.value = false
-            }
-            URL.revokeObjectURL(url)
+        const segment = incomingAudioSegment
+        incomingAudioSegment = null
+        if (segment && !segment.suppressed && !segment.fallback && segment.chunks.length) {
+          audioQueue.push({
+            turnId: segment.turnId,
+            text: segment.text,
+            fallback: false,
+            audio: new Blob(segment.chunks, { type: 'audio/wav' }),
           })
+          pumpAudioQueue()
         }
-        audioChunks = []
-        audioFallbackActive = false
-        incomingAudioTurnId = ''
-        suppressIncomingAudio = false
       }
     }
   })

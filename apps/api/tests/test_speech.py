@@ -1,5 +1,6 @@
 import pytest
 
+from voice_shopping_api.realtime import router as realtime_router
 from voice_shopping_api.realtime import speech
 
 
@@ -21,6 +22,67 @@ class _FakeTtsChunk:
     def __init__(self, audio_data: bytes | None = None, audio_url: str | None = None) -> None:
         self.audio_data = audio_data
         self.audio_url = audio_url
+
+
+class _FakeAudioConnection:
+    def __init__(self) -> None:
+        self.messages: list[tuple[str, object]] = []
+
+    async def send_json(self, message: object) -> None:
+        self.messages.append(("json", message))
+
+    async def send_bytes(self, message: bytes) -> None:
+        self.messages.append(("bytes", message))
+
+
+def test_split_sentences_preserves_sentence_punctuation() -> None:
+    assert speech.split_sentences("第一句。第二句！第三句？") == [
+        "第一句。",
+        "第二句！",
+        "第三句？",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_publish_audio_synthesizes_and_pushes_each_sentence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    async def fake_synthesize_chunks(text_value: str, **kwargs):
+        calls.append(text_value)
+        yield f"audio:{text_value}".encode()
+
+    monkeypatch.setattr(realtime_router, "synthesize_chunks", fake_synthesize_chunks)
+    connection = _FakeAudioConnection()
+    hub = realtime_router.RealtimeHub.__new__(realtime_router.RealtimeHub)
+    hub.audio_connections = {"session-1": {connection}}
+
+    await hub.publish_audio("session-1", "turn-1", "第一句。第二句！")
+
+    assert calls == ["第一句。", "第二句！"]
+    assert [kind for kind, _ in connection.messages] == [
+        "json",
+        "bytes",
+        "json",
+        "json",
+        "bytes",
+        "json",
+    ]
+    starts = [
+        message
+        for kind, message in connection.messages
+        if kind == "json" and message["type"] == "audio.start"
+    ]
+    ends = [
+        message
+        for kind, message in connection.messages
+        if kind == "json" and message["type"] == "audio.end"
+    ]
+    assert [message["payload"]["sentenceIndex"] for message in starts] == [1, 2]
+    assert [message["payload"]["sentenceIndex"] for message in ends] == [1, 2]
+    assert starts[0]["payload"]["sentenceCount"] == 2
+    assert ends[-1]["payload"]["final"] is True
 
 
 @pytest.mark.asyncio
