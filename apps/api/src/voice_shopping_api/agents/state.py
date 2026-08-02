@@ -126,7 +126,15 @@ class ResponseState(TypedDict, total=False):
     speech_streamed: bool
 
 
-CatalogLoader = Callable[[str, bool], Awaitable[list[dict[str, Any]]]]
+class CatalogFilters(TypedDict, total=False):
+    """Deterministic recall constraints pushed into the catalog SQL."""
+
+    category: str | None
+    slots: dict[str, Any]
+    required_slots: list[str]
+
+
+CatalogLoader = Callable[[str, bool, CatalogFilters], Awaitable[list[dict[str, Any]]]]
 OrderHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 SpeechDeltaPublisher = Callable[[str], Awaitable[None]]
 

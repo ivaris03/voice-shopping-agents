@@ -1,6 +1,5 @@
 import logging
 import re
-from decimal import Decimal
 from typing import Any
 
 from langgraph.runtime import Runtime
@@ -8,6 +7,7 @@ from langgraph.runtime import Runtime
 from voice_shopping_api.agents.model import rerank_products
 from voice_shopping_api.agents.nodes.constants import REQUIRED_SLOTS
 from voice_shopping_api.agents.state import (
+    CatalogFilters,
     ProductRecommendationResult,
     ShoppingState,
     ShoppingWorkflowContext,
@@ -15,16 +15,22 @@ from voice_shopping_api.agents.state import (
 
 logger = logging.getLogger(__name__)
 
+# 画像快照规则二次排序的调整分：品牌命中加分，超价/复购扣分。
+RULE_BRAND_HIT = 0.2
+RULE_PRICE_OVER_AVG = -0.15
+RULE_REPEAT_PURCHASE = -0.3
+AVG_ORDER_VALUE_MULTIPLIER = 1.5
 
-def _score_product(
-    product: dict[str, Any], state: ShoppingState, reranker_score: float | None = None
-) -> tuple[float, dict[str, float]]:
-    profile = state.get("user_profile_snapshot", {})
-    static = profile.get("static", {})
-    dynamic = profile.get("dynamic", {})
-    category = str(product.get("category_l2", ""))
-    brand = str(product.get("brand") or "")
-    product_id = str(product.get("id", ""))
+
+def _reranker_score(
+    product: dict[str, Any],
+    state: ShoppingState,
+    reranker_scores: dict[str, float],
+) -> float:
+    """LLM TextReRank 分；模型不可用或失败时退回词法命中兜底。"""
+    score = reranker_scores.get(str(product.get("id")))
+    if score is not None:
+        return min(1.0, max(0.0, score))
     facts = " ".join(
         [
             str(product.get("name", "")),
@@ -37,50 +43,28 @@ def _score_product(
         word for word in re.split(r"[，。\s、]+", state.get("utterance", "")) if len(word) >= 2
     ]
     lexical_hits = sum(1 for word in keywords if word in facts)
-    reranker = (
-        min(1.0, max(0.0, reranker_score))
-        if reranker_score is not None
-        else min(1.0, 0.52 + lexical_hits * 0.1)
-    )
-    dynamic_category = float(dynamic.get("categoryScores", {}).get(category, 0))
-    dynamic_product = float(dynamic.get("productScores", {}).get(product_id, 0))
-    dynamic_score = min(1.0, dynamic_category * 0.6 + dynamic_product * 0.4)
-    static_category = float(static.get("categoryScores", {}).get(category, 0))
-    static_brand = float(static.get("brandScores", {}).get(brand, 0))
-    static_score = min(1.0, static_category * 0.6 + static_brand * 0.4)
-    score = 0.4 * reranker + 0.4 * dynamic_score + 0.2 * static_score
-    return score, {
-        "reranker": round(reranker, 4),
-        "dynamicProfile": round(dynamic_score, 4),
-        "staticProfile": round(static_score, 4),
-    }
+    return min(1.0, 0.52 + lexical_hits * 0.1)
 
 
-def _attribute_matches(key: str, product_value: Any, requested_value: Any) -> bool:
-    if product_value is None:
-        return False
-    if key == "gender" and product_value == "unisex":
-        return requested_value in {"male", "female", "unisex"}
-    if key == "size" and isinstance(product_value, list) and len(product_value) == 2:
-        return float(product_value[0]) <= float(requested_value) <= float(product_value[1])
-    if key in {"batteryHours", "pressureBar", "waterTankMl", "capacityL"}:
-        return float(product_value) >= float(requested_value)
-    if key == "waterResistance":
-        matched = re.search(r"\d+", str(product_value))
-        return bool(matched and int(matched.group()) >= int(requested_value))
-    return (
-        requested_value in product_value
-        if isinstance(product_value, list)
-        else product_value == requested_value
-    )
-
-
-def _product_attribute_value(attributes: dict[str, Any], slot: str) -> Any:
-    return (
-        attributes.get("size", attributes.get("sizeRange"))
-        if slot == "size"
-        else attributes.get(slot)
-    )
+def _rule_adjustments(
+    product: dict[str, Any], profile: dict[str, Any]
+) -> tuple[float, dict[str, float]]:
+    """画像快照规则：命中用户偏好品牌加分，价格超平均客单价 1.5 倍、
+    最近买过同款商品则扣分。"""
+    static = profile.get("static", {})
+    brand = str(product.get("brand") or "")
+    parts: dict[str, float] = {}
+    if float(static.get("brandScores", {}).get(brand, 0)) > 0:
+        parts["brandHit"] = RULE_BRAND_HIT
+    avg_order_value = profile.get("avgOrderValue")
+    if (
+        avg_order_value is not None
+        and float(product.get("price", 0)) > float(avg_order_value) * AVG_ORDER_VALUE_MULTIPLIER
+    ):
+        parts["priceOverAvgOrderValue"] = RULE_PRICE_OVER_AVG
+    if str(product.get("id", "")) in profile.get("recentlyPurchasedProductIds", []):
+        parts["repeatPurchase"] = RULE_REPEAT_PURCHASE
+    return sum(parts.values()), parts
 
 
 async def recommend_products(state: ShoppingState) -> dict[str, Any]:
@@ -98,43 +82,33 @@ async def recommend_products(state: ShoppingState) -> dict[str, Any]:
         return ProductRecommendationResult(
             product_cards=selected[:3], emotion_style="analytical-professional"
         ).model_dump()
-    category = state.get("product_category")
-    slots = state.get("slots", {})
-    budget = slots.get("budgetMax")
-    required_slots = state.get("required_slots_by_category", REQUIRED_SLOTS).get(category or "", [])
-    products = []
-    for product in state.get("catalog_products", []):
-        if category and product.get("category_l2") != category:
-            continue
-        if budget is not None and Decimal(str(product.get("price", 0))) > Decimal(str(budget)):
-            continue
-        attributes = product.get("attributes", {})
-        if any(
-            not _attribute_matches(
-                slot, _product_attribute_value(attributes, slot), slots.get(slot)
-            )
-            for slot in required_slots
-            if slots.get(slot) is not None
-        ):
-            continue
-        products.append(product)
-    products = sorted(
-        products, key=lambda product: float(product.get("vector_score") or 0), reverse=True
-    )[:20]
+    # SQL 已按已填槽位过滤并按向量相似度截断为最多 20 条。
+    products = state.get("catalog_products", [])
     reranker_scores: dict[str, float] = {}
     if state.get("model_enabled") and products:
         try:
             reranker_scores = await rerank_products(state.get("utterance", ""), products)
         except Exception as exc:
             logger.warning("Reranker failed; using lexical fallback: %s", exc)
-    ranked = sorted(
+    # 第一阶段：reranker 精排，取 3 个候选。
+    rerank_ranked = sorted(
         (
-            (*_score_product(product, state, reranker_scores.get(str(product.get("id")))), product)
+            (product, _reranker_score(product, state, reranker_scores))
             for product in products
         ),
-        key=lambda item: (item[0], int(item[2].get("stock", 0))),
+        key=lambda item: (item[1], int(item[0].get("stock", 0))),
         reverse=True,
     )[:3]
+    # 第二阶段：画像快照规则（品牌偏好 / 平均客单价 / 最近购买）二次排序。
+    profile = state.get("user_profile_snapshot", {})
+    ranked = sorted(
+        (
+            (*_rule_adjustments(product, profile), reranker, product)
+            for product, reranker in rerank_ranked
+        ),
+        key=lambda item: (item[0], item[1]),
+        reverse=True,
+    )
     cards = [
         {
             "productId": str(product["id"]),
@@ -147,10 +121,10 @@ async def recommend_products(state: ShoppingState) -> dict[str, Any]:
             "imageUrl": (product.get("image_urls") or [None])[0],
             "sellingPoints": product.get("selling_points", []),
             "attributes": product.get("attributes", {}),
-            "matchScore": round(score, 4),
-            "scoreBreakdown": score_parts,
+            "matchScore": round(rule_score, 4),
+            "scoreBreakdown": {"reranker": round(reranker, 4), **rule_parts},
         }
-        for score, score_parts, product in ranked
+        for rule_score, rule_parts, reranker, product in ranked
     ]
     return ProductRecommendationResult(
         product_cards=cards, emotion_style="warm-professional" if cards else "helpful-apologetic"
@@ -164,8 +138,16 @@ async def retrieve_catalog(
     context = runtime.context
     if context is None:
         return {"catalog_products": state.get("catalog_products", [])}
+    category = state.get("product_category")
+    filters: CatalogFilters = {
+        "category": category,
+        "slots": state.get("slots", {}),
+        "required_slots": state.get("required_slots_by_category", REQUIRED_SLOTS).get(
+            category or "", []
+        ),
+    }
     return {
         "catalog_products": await context.catalog_loader(
-            state.get("utterance", ""), bool(state.get("model_enabled"))
+            state.get("utterance", ""), bool(state.get("model_enabled")), filters
         )
     }

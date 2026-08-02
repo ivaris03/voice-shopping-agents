@@ -14,6 +14,7 @@ from voice_shopping_api.agents.graph import build_workflow, shopping_workflow
 from voice_shopping_api.agents.model import embed_query
 from voice_shopping_api.agents.nodes.response import is_compliant
 from voice_shopping_api.agents.state import (
+    CatalogFilters,
     ShoppingState,
     ShoppingWorkflowContext,
     carry_forward_state,
@@ -78,8 +79,117 @@ async def _load_previous(session: AsyncSession, session_id: UUID) -> ShoppingSta
     return dict(value) if value else {}
 
 
+# 数值属性槽位：商品侧取值 >= 槽位要求即命中（键缺失的行被 NULL 排除）。
+NUMERIC_SLOTS = frozenset({"batteryHours", "pressureBar", "waterTankMl", "capacityL"})
+
+
+def _attribute_condition(slot: str, value: object, params: dict[str, str]) -> str:
+    """按槽位键把 attributes(JSONB) 过滤拼成一条 SQL 条件。
+
+    键来自平台 taxonomy（可信），内联进 SQL；值来自槽位抽取，一律参数化。
+    键缺失时 JSONB 表达式求值为 NULL，WHERE 把该行排除——与旧的 Python 侧
+    _attribute_matches 语义一致。
+    """
+    param = f"slots_{slot}"
+    if slot == "gender":
+        params[param] = str(value)
+        return f"(p.attributes->>'gender' = 'unisex' OR p.attributes->>'gender' = :{param})"
+    if slot == "size":
+        # 与 _product_attribute_value 一致：优先 size 键（2 元素数组按区间，
+        # 其他数组按包含，标量按等值），缺失时回退 sizeRange 区间。
+        # 等值分支用文本参数，区间分支用独立数值参数：Postgres 会把出现在
+        # CAST(... AS float8) / float8 比较里的参数定型为 float8，asyncpg
+        # 因而要求 Python 数字，不能与 text 等值共用同一个参数。
+        params[param] = str(value)
+        params[f"{param}_num"] = float(value)
+        params[f"{param}_json"] = json.dumps(str(value))
+        return f"""
+            (
+                (p.attributes ? 'size' AND jsonb_typeof(p.attributes->'size') = 'array'
+                 AND jsonb_array_length(p.attributes->'size') = 2
+                 AND (p.attributes->'size'->>0)::float8 <= :{param}_num
+                 AND (p.attributes->'size'->>1)::float8 >= :{param}_num)
+                OR (p.attributes ? 'size' AND jsonb_typeof(p.attributes->'size') = 'array'
+                 AND p.attributes->'size' @> CAST(:{param}_json AS jsonb))
+                OR (p.attributes ? 'size' AND jsonb_typeof(p.attributes->'size') <> 'array'
+                 AND p.attributes->>'size' = :{param})
+                OR (NOT p.attributes ? 'size' AND p.attributes ? 'sizeRange'
+                 AND (p.attributes->'sizeRange'->>0)::float8 <= :{param}_num
+                 AND (p.attributes->'sizeRange'->>1)::float8 >= :{param}_num)
+            )
+        """
+    if slot == "waterResistance":
+        # 商品值可能是 "100m" 或 "IPX5"，只取数字部分比较；无数字 → NULL → 排除。
+        params[param] = float(value)
+        return (
+            "NULLIF(regexp_replace(p.attributes->>'waterResistance', '[^0-9]', '', 'g'), '')"
+            f"::float8 >= :{param}"
+        )
+    if slot in NUMERIC_SLOTS:
+        params[param] = float(value)
+        return f"(p.attributes->>'{slot}')::float8 >= :{param}"
+    # 默认：枚举标量等值、列表包含统一用 @>（可命中 attributes GIN 索引）。
+    params[f"{param}_json"] = json.dumps(str(value))
+    return f"p.attributes->'{slot}' @> CAST(:{param}_json AS jsonb)"
+
+
+def _build_catalog_query(
+    filters: CatalogFilters, *, embedding: str | None
+) -> tuple[str, dict[str, str | None]]:
+    """按已填槽位动态拼一条召回 SQL：过滤 + 排序 + LIMIT 20。
+
+    向量可用时走 HNSW 形态：ORDER BY 原始余弦距离表达式，并显式补
+    p.embedding IS NOT NULL 以证明部分索引谓词；embedding 为 None 时降级为
+    确定性的 created_at 排序（embedding 缺失的商品仍参与）。
+    """
+    conditions = [
+        "p.deleted_at IS NULL",
+        "p.status = 'on_sale'",
+        "p.stock > 0",
+        "m.deleted_at IS NULL",
+        "m.is_enabled",
+    ]
+    params: dict[str, str | None] = {}
+    category = filters.get("category")
+    if category:
+        params["category"] = category
+        conditions.append("p.category_l2 = :category")
+    slots = filters.get("slots", {})
+    budget = slots.get("budgetMax")
+    if budget is not None:
+        params["budget"] = str(budget)
+        conditions.append("p.price <= CAST(:budget AS numeric)")
+    for slot in filters.get("required_slots", []):
+        value = slots.get(slot)
+        if value is None:
+            continue
+        conditions.append(_attribute_condition(slot, value, params))
+    if embedding is not None:
+        params["embedding"] = embedding
+        conditions.append("p.embedding IS NOT NULL")
+        order_by = "p.embedding <=> CAST(:embedding AS vector)"
+    else:
+        params["embedding"] = None
+        order_by = "p.created_at DESC"
+    return (
+        f"""
+            SELECT {PRODUCT_COLUMNS},
+                CASE WHEN CAST(:embedding AS vector) IS NULL OR p.embedding IS NULL THEN 0
+                     ELSE 1 - (p.embedding <=> CAST(:embedding AS vector)) END AS vector_score
+            FROM products p JOIN merchants m ON m.id = p.merchant_id
+            WHERE {" AND ".join(conditions)}
+            ORDER BY {order_by}
+            LIMIT 20
+        """,
+        params,
+    )
+
+
 async def _catalog(
-    session: AsyncSession, utterance: str, model_enabled: bool
+    session: AsyncSession,
+    utterance: str,
+    model_enabled: bool,
+    filters: CatalogFilters,
 ) -> list[dict[str, Any]]:
     embedding: str | None = None
     if model_enabled:
@@ -87,19 +197,8 @@ async def _catalog(
             embedding = json.dumps(await embed_query(utterance))
         except Exception:
             embedding = None
-    result = await session.execute(
-        text(
-            f"""
-            SELECT {PRODUCT_COLUMNS},
-                CASE WHEN CAST(:embedding AS vector) IS NULL OR p.embedding IS NULL THEN 0
-                     ELSE 1 - (p.embedding <=> CAST(:embedding AS vector)) END AS vector_score
-            FROM products p JOIN merchants m ON m.id = p.merchant_id
-            WHERE p.deleted_at IS NULL AND p.status = 'on_sale' AND p.stock > 0
-              AND m.deleted_at IS NULL AND m.is_enabled
-            """
-        ),
-        {"embedding": embedding},
-    )
+    sql, params = _build_catalog_query(filters, embedding=embedding)
+    result = await session.execute(text(sql), params)
     return rows(result)
 
 
@@ -466,7 +565,9 @@ async def process_turn(
         state_input,
         config=run_config,
         context=ShoppingWorkflowContext(
-            catalog_loader=lambda query, enabled: _catalog(session, query, enabled),
+            catalog_loader=lambda query, enabled, filters: _catalog(
+                session, query, enabled, filters
+            ),
             order_handler=lambda current_state: _handle_order(
                 session, current_state, user_id, session_id, turn_id
             ),

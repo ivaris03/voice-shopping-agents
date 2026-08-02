@@ -146,7 +146,15 @@ async def profile_snapshot(session: AsyncSession, user_id: UUID) -> dict[str, ob
                 s.category_scores AS static_categories,
                 s.brand_scores, s.attribute_preferences, s.price_min, s.price_max,
                 d.category_scores AS dynamic_categories,
-                d.product_scores, d.session_interests, d.expires_at
+                d.product_scores, d.session_interests, d.expires_at,
+                (SELECT avg(o.total_amount) FROM orders o
+                 WHERE o.user_id = u.id AND o.status = 'success') AS avg_order_value,
+                COALESCE((
+                    SELECT array_agg(DISTINCT o.product_id)
+                    FROM orders o
+                    WHERE o.user_id = u.id AND o.status = 'success'
+                      AND o.created_at >= now() - interval '90 days'
+                ), '{}'::uuid[]) AS recently_purchased_ids
             FROM users u
             LEFT JOIN user_static_profiles s ON s.user_id = u.id
             LEFT JOIN user_dynamic_profiles d ON d.user_id = u.id
@@ -174,5 +182,12 @@ async def profile_snapshot(session: AsyncSession, user_id: UUID) -> dict[str, ob
             "productScores": dict(row["product_scores"] or {}) if dynamic_valid else {},
             "sessionInterests": dict(row["session_interests"] or {}) if dynamic_valid else {},
         },
+        # 推荐二次排序的规则输入：平均客单价（success 订单均价）与最近买过的商品。
+        "avgOrderValue": (
+            float(row["avg_order_value"]) if row["avg_order_value"] is not None else None
+        ),
+        "recentlyPurchasedProductIds": [
+            str(product_id) for product_id in (row["recently_purchased_ids"] or [])
+        ],
         "capturedAt": datetime.now(UTC).isoformat(),
     }

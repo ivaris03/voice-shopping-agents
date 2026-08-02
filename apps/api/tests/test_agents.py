@@ -6,7 +6,7 @@ from voice_shopping_api.agents.graph import build_workflow, shopping_workflow
 from voice_shopping_api.agents.nodes import clarification as clarification_module
 from voice_shopping_api.agents.nodes import intent as intent_module
 from voice_shopping_api.agents.nodes.clarification import clarify_requirements
-from voice_shopping_api.agents.nodes.constants import COMPLIANCE_FALLBACK
+from voice_shopping_api.agents.nodes.constants import COMPLIANCE_FALLBACK, REQUIRED_SLOTS
 from voice_shopping_api.agents.nodes.intent import recognize_intent
 from voice_shopping_api.agents.nodes.response import compliance_check
 from voice_shopping_api.agents.service import _handle_order
@@ -102,10 +102,12 @@ async def test_catalog_retrieval_runs_only_after_clarification_is_ready() -> Non
         "selling_points": ["缓震舒适"],
         "image_urls": [],
     }
-    retrievals: list[tuple[str, bool]] = []
+    retrievals: list[tuple[str, bool, dict[str, object]]] = []
 
-    async def load_catalog(query: str, model_enabled: bool) -> list[dict[str, object]]:
-        retrievals.append((query, model_enabled))
+    async def load_catalog(
+        query: str, model_enabled: bool, filters: dict[str, object]
+    ) -> list[dict[str, object]]:
+        retrievals.append((query, model_enabled, filters))
         return [product]
 
     result = await shopping_workflow.ainvoke(
@@ -118,7 +120,12 @@ async def test_catalog_retrieval_runs_only_after_clarification_is_ready() -> Non
         context=ShoppingWorkflowContext(catalog_loader=load_catalog),
     )
 
-    assert retrievals == [("我想买跑鞋，男款，42码，公路，高缓震，正常足", False)]
+    query, model_enabled, filters = retrievals[0]
+    assert query == "我想买跑鞋，男款，42码，公路，高缓震，正常足"
+    assert model_enabled is False
+    assert filters["category"] == "RUNNING_SHOES"
+    assert filters["required_slots"] == list(REQUIRED_SLOTS["RUNNING_SHOES"])
+    assert set(filters["slots"]) >= {"gender", "size", "terrain"}
     assert result["clarification_status"] == "READY"
     assert result["product_cards"][0]["productId"] == product["id"]
 
@@ -127,7 +134,7 @@ async def test_catalog_retrieval_runs_only_after_clarification_is_ready() -> Non
 async def test_order_node_executes_the_context_order_handler() -> None:
     handled_states: list[dict[str, object]] = []
 
-    async def load_catalog(_: str, __: bool) -> list[dict[str, object]]:
+    async def load_catalog(_: str, __: bool, _filters: object) -> list[dict[str, object]]:
         return []
 
     async def handle_order(state: dict[str, object]) -> dict[str, object]:
