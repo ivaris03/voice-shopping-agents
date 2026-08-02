@@ -91,63 +91,103 @@ class RealtimeHub:
     async def close(self) -> None:
         await self.redis.aclose()
 
-    async def publish_audio(self, session_id: str, turn_id: str, text_value: str) -> None:
-        if not self.audio_connections[session_id]:
+    async def _send_audio_event(self, session_id: str, event: dict[str, Any]) -> None:
+        for connection in tuple(self.audio_connections[session_id]):
+            try:
+                await connection.send_json(event)
+            except (RuntimeError, WebSocketDisconnect):
+                self.audio_connections[session_id].discard(connection)
+
+    async def _send_audio_chunk(self, session_id: str, chunk: bytes | None) -> None:
+        if chunk is None:
             return
-        sentences = split_sentences(text_value)
-        for sentence_index, sentence in enumerate(sentences, start=1):
-            stream = synthesize_chunks(sentence, session_id=session_id, turn_id=turn_id)
-            first_chunk = await anext(stream, None)
-            use_fallback = first_chunk is None
-            start = {
+        for connection in tuple(self.audio_connections[session_id]):
+            try:
+                await connection.send_bytes(chunk)
+            except (RuntimeError, WebSocketDisconnect):
+                self.audio_connections[session_id].discard(connection)
+
+    async def publish_audio_sentence(
+        self,
+        session_id: str,
+        turn_id: str,
+        sentence: str,
+        sentence_index: int,
+        sentence_count: int | None = None,
+    ) -> None:
+        sentence = sentence.strip()
+        if not self.audio_connections[session_id] or not sentence:
+            return
+        stream = synthesize_chunks(sentence, session_id=session_id, turn_id=turn_id)
+        first_chunk = await anext(stream, None)
+        use_fallback = first_chunk is None
+        start_payload: dict[str, Any] = {
+            "format": "wav",
+            "sampleRate": 16000 if use_fallback else 24000,
+            "fallback": use_fallback,
+            "text": sentence,
+            "sentenceIndex": sentence_index,
+        }
+        end_payload: dict[str, Any] = {"sentenceIndex": sentence_index}
+        if sentence_count is not None:
+            start_payload["sentenceCount"] = sentence_count
+            end_payload.update(
+                {
+                    "sentenceCount": sentence_count,
+                    "final": sentence_index == sentence_count,
+                }
+            )
+        await self._send_audio_event(
+            session_id,
+            {
                 "type": "audio.start",
                 "sessionId": session_id,
                 "turnId": turn_id,
                 "seq": sentence_index * 2 - 1,
-                "payload": {
-                    "format": "wav",
-                    "sampleRate": 16000 if use_fallback else 24000,
-                    "fallback": use_fallback,
-                    "text": sentence,
-                    "sentenceIndex": sentence_index,
-                    "sentenceCount": len(sentences),
-                },
-            }
-            end = {
+                "payload": start_payload,
+            },
+        )
+        await self._send_audio_chunk(session_id, _silent_wav() if use_fallback else first_chunk)
+        if not use_fallback:
+            async for chunk in stream:
+                await self._send_audio_chunk(session_id, chunk)
+        await self._send_audio_event(
+            session_id,
+            {
                 "type": "audio.end",
                 "sessionId": session_id,
                 "turnId": turn_id,
                 "seq": sentence_index * 2,
-                "payload": {
-                    "sentenceIndex": sentence_index,
-                    "sentenceCount": len(sentences),
-                    "final": sentence_index == len(sentences),
-                },
-            }
-            for connection in tuple(self.audio_connections[session_id]):
-                try:
-                    await connection.send_json(start)
-                except (RuntimeError, WebSocketDisconnect):
-                    self.audio_connections[session_id].discard(connection)
+                "payload": end_payload,
+            },
+        )
 
-            async def send_chunk(chunk: bytes | None) -> None:
-                if chunk is None:
-                    return
-                for connection in tuple(self.audio_connections[session_id]):
-                    try:
-                        await connection.send_bytes(chunk)
-                    except (RuntimeError, WebSocketDisconnect):
-                        self.audio_connections[session_id].discard(connection)
+    async def publish_audio_done(
+        self, session_id: str, turn_id: str, sentence_count: int
+    ) -> None:
+        if not self.audio_connections[session_id]:
+            return
+        await self._send_audio_event(
+            session_id,
+            {
+                "type": "audio.done",
+                "sessionId": session_id,
+                "turnId": turn_id,
+                "seq": sentence_count * 2 + 1,
+                "payload": {"sentenceCount": sentence_count},
+            },
+        )
 
-            await send_chunk(_silent_wav() if use_fallback else first_chunk)
-            if not use_fallback:
-                async for chunk in stream:
-                    await send_chunk(chunk)
-            for connection in tuple(self.audio_connections[session_id]):
-                try:
-                    await connection.send_json(end)
-                except (RuntimeError, WebSocketDisconnect):
-                    self.audio_connections[session_id].discard(connection)
+    async def publish_audio(self, session_id: str, turn_id: str, text_value: str) -> None:
+        sentences = split_sentences(text_value)
+        for sentence_index, sentence in enumerate(sentences, start=1):
+            await self.publish_audio_sentence(
+                session_id,
+                turn_id,
+                sentence,
+                sentence_index,
+                len(sentences),
+            )
 
     async def run_turn(
         self,
@@ -156,6 +196,18 @@ class RealtimeHub:
         utterance: str,
         user_id: UUID,
     ) -> None:
+        streamed_sentence_count = 0
+
+        async def publish_streamed_sentence(sentence: str) -> None:
+            nonlocal streamed_sentence_count
+            streamed_sentence_count += 1
+            await self.publish_audio_sentence(
+                session_id,
+                turn_id,
+                sentence,
+                streamed_sentence_count,
+            )
+
         async with self.locks[session_id], async_session_factory() as db_session:
             state, events = await process_turn(
                 db_session,
@@ -164,10 +216,14 @@ class RealtimeHub:
                 utterance,
                 user_id,
                 on_events=lambda batch: self.publish_text(session_id, batch),
+                on_speech_sentence=publish_streamed_sentence,
             )
         if events:
             await self.publish_text(session_id, events)
-        await self.publish_audio(session_id, turn_id, state.get("final_reply", ""))
+        if state.get("speech_audio_streamed") and streamed_sentence_count:
+            await self.publish_audio_done(session_id, turn_id, streamed_sentence_count)
+        else:
+            await self.publish_audio(session_id, turn_id, state.get("final_reply", ""))
 
 
 hub = RealtimeHub()

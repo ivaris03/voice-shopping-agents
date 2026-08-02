@@ -513,6 +513,9 @@ function connectAudio(): Promise<void> {
           pumpAudioQueue()
         }
       }
+      if (event.type === 'audio.done' && event.turnId) {
+        pendingSpeechByTurn.delete(event.turnId)
+      }
     }
   })
   return audioConnectPromise

@@ -10,40 +10,11 @@ from dashscope.audio.http_tts.http_speech_synthesizer import HttpSpeechSynthesiz
 
 from voice_shopping_api.core.config import get_settings
 from voice_shopping_api.core.observability import finish_trace, start_trace
+from voice_shopping_api.core.text import split_sentences, take_completed_sentences
 
 logger = logging.getLogger(__name__)
 
-_SENTENCE_ENDINGS = frozenset("。！？!?；;\n")
-_SENTENCE_CLOSERS = frozenset("。！？!?；;)]}》」』”’\"'")
-
-
-def split_sentences(text_value: str) -> list[str]:
-    """Split reply text into speakable sentences while preserving punctuation."""
-    text = text_value.strip()
-    if not text:
-        return []
-
-    sentences: list[str] = []
-    start = 0
-    for index, character in enumerate(text):
-        is_boundary = character in _SENTENCE_ENDINGS or (
-            character == "."
-            and (index + 1 == len(text) or text[index + 1].isspace())
-        )
-        if not is_boundary:
-            continue
-        end = index + 1
-        while end < len(text) and text[end] in _SENTENCE_CLOSERS:
-            end += 1
-        sentence = text[start:end].strip()
-        if sentence:
-            sentences.append(sentence)
-        start = end
-
-    remainder = text[start:].strip()
-    if remainder:
-        sentences.append(remainder)
-    return sentences
+__all__ = ["StreamingAsr", "split_sentences", "synthesize_chunks"]
 
 
 class _AsrCallback(RecognitionCallback):
@@ -60,13 +31,16 @@ class _AsrCallback(RecognitionCallback):
     def on_event(self, result: RecognitionResult) -> None:
         self.owner.request_id = result.get_request_id() or self.owner.request_id
         sentence = result.get_sentence()
+        if not isinstance(sentence, dict):
+            return
         transcript = str(sentence.get("text") or "").strip()
         if not transcript:
             return
         self.owner.latest = transcript
-        if RecognitionResult.is_sentence_end(sentence):
+        sentence_final = RecognitionResult.is_sentence_end(sentence)
+        self.owner.accept_transcript(transcript, sentence_final=sentence_final)
+        if sentence_final:
             self.owner.record_usage(result.get_usage(sentence))
-            self.owner.add_completed_sentence(transcript)
 
 
 class StreamingAsr:
@@ -77,6 +51,8 @@ class StreamingAsr:
         self.turn_id = turn_id
         self.latest = ""
         self.completed: list[str] = []
+        self._pending_transcript = ""
+        self._latest_hypothesis = ""
         self.error = ""
         self.received_bytes = 0
         self.request_id = ""
@@ -152,8 +128,33 @@ class StreamingAsr:
 
     def add_completed_sentence(self, transcript: str) -> None:
         """Receive a sentence-final ASR result from DashScope's worker thread."""
+        transcript = transcript.strip()
+        if not transcript or (self.completed and self.completed[-1] == transcript):
+            return
         self.completed.append(transcript)
         self._loop.call_soon_threadsafe(self._completed_sentences.put_nowait, transcript)
+
+    def accept_transcript(self, transcript: str, *, sentence_final: bool) -> None:
+        """Split ASR hypotheses at punctuation and emit each segment once."""
+        previous = self._latest_hypothesis
+        if transcript.startswith(previous):
+            delta = transcript[len(previous) :]
+        elif previous.startswith(transcript):
+            delta = ""
+        else:
+            delta = transcript
+        self._pending_transcript += delta
+        completed, self._pending_transcript = take_completed_sentences(self._pending_transcript)
+        for item in completed:
+            self.add_completed_sentence(item)
+        if sentence_final:
+            remainder = self._pending_transcript.strip()
+            if remainder:
+                self.add_completed_sentence(remainder)
+            self._pending_transcript = ""
+            self._latest_hypothesis = ""
+        else:
+            self._latest_hypothesis = transcript
 
     def record_usage(self, usage: dict[str, Any] | None) -> None:
         """Accumulate per-sentence ASR billing units for the whole turn."""
@@ -199,6 +200,10 @@ class StreamingAsr:
             await asyncio.to_thread(self.recognition.stop)
             if self.error:
                 raise RuntimeError(self.error)
+            remainder = self._pending_transcript.strip()
+            if remainder:
+                self.add_completed_sentence(remainder)
+            self._pending_transcript = ""
             transcript = "".join(self.completed) or self.latest
             self._finish_trace(transcript=transcript)
             return transcript

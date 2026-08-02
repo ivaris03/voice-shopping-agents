@@ -43,6 +43,7 @@ async def emotional_response(
                     state["product_cards"],
                     state.get("emotion_style", "warm-professional"),
                     runtime.context.speech_delta_publisher if runtime.context else None,
+                    runtime.context.speech_sentence_publisher if runtime.context else None,
                 )
                 return {
                     "reasons": [reason.model_dump() for reason in model_result.reasons],
@@ -50,6 +51,9 @@ async def emotional_response(
                     "final_reply": model_result.speech_text,
                     "speech_streamed": bool(
                         runtime.context and runtime.context.speech_delta_publisher
+                    ),
+                    "speech_audio_streamed": bool(
+                        runtime.context and runtime.context.speech_sentence_publisher
                     ),
                 }
             except Exception as exc:

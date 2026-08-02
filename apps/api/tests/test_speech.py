@@ -98,6 +98,22 @@ async def test_streaming_asr_exposes_sentence_final_results(monkeypatch) -> None
 
 
 @pytest.mark.asyncio
+async def test_asr_splits_punctuation_and_flushes_only_the_unfinished_tail(monkeypatch) -> None:
+    monkeypatch.setattr(speech, "Recognition", _FakeRecognition)
+    asr = speech.StreamingAsr()
+
+    asr.accept_transcript("我想买一双，", sentence_final=False)
+    asr.accept_transcript("我想买一双，通勤鞋？", sentence_final=True)
+    asr.accept_transcript("预算五百", sentence_final=False)
+
+    assert await asr.next_completed_sentence() == "我想买一双，"
+    assert await asr.next_completed_sentence() == "通勤鞋？"
+    assert await asr.stop() == "我想买一双，通勤鞋？预算五百"
+    assert await asr.next_completed_sentence() == "预算五百"
+    assert await asr.next_completed_sentence() is None
+
+
+@pytest.mark.asyncio
 async def test_asr_trace_records_safe_usage_summary(monkeypatch) -> None:
     started: list[tuple[str, dict]] = []
     finished: list[dict] = []

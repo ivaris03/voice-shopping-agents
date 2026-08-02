@@ -30,6 +30,7 @@ from voice_shopping_api.core.observability import (
     response_usage,
     start_trace,
 )
+from voice_shopping_api.core.text import take_completed_sentences
 
 
 def _parse_json(content: str) -> Any:
@@ -244,9 +245,10 @@ async def clarify_with_model(
 async def _stream_chat_json(
     system_prompt: str,
     payload: dict[str, Any],
-    on_speech_delta: Callable[[str], Awaitable[None]],
+    on_speech_delta: Callable[[str], Awaitable[None]] | None = None,
+    on_speech_sentence: Callable[[str], Awaitable[None]] | None = None,
 ) -> Any:
-    """Stream a JSON response and expose the ``speech_text`` value as it arrives."""
+    """Stream ``speech_text`` and publish each completed short sentence."""
     settings = get_settings()
 
     content_parts: list[str] = []
@@ -254,10 +256,11 @@ async def _stream_chat_json(
     speech_ended = False
     speech_offset = 0
     speech_buffer = ""
+    sentence_buffer = ""
     usage: dict[str, Any] | None = None
 
     async def publish_available_speech() -> None:
-        nonlocal speech_started, speech_ended, speech_offset, speech_buffer
+        nonlocal speech_started, speech_ended, speech_offset, speech_buffer, sentence_buffer
         content = "".join(content_parts)
         if not speech_started:
             match = re.search(r'"speech_text"\s*:\s*"', content)
@@ -304,7 +307,13 @@ async def _stream_chat_json(
         if speech_buffer:
             delta = speech_buffer
             speech_buffer = ""
-            await on_speech_delta(delta)
+            if on_speech_delta:
+                await on_speech_delta(delta)
+            if on_speech_sentence:
+                sentence_buffer += delta
+                sentences, sentence_buffer = take_completed_sentences(sentence_buffer)
+                for sentence in sentences:
+                    await on_speech_sentence(sentence)
 
     async for chunk in _chat_model().astream(
         [
@@ -320,6 +329,8 @@ async def _stream_chat_json(
         await publish_available_speech()
     if not speech_ended:
         raise ValueError("Streamed model response did not contain a complete speech_text field")
+    if on_speech_sentence and sentence_buffer.strip():
+        await on_speech_sentence(sentence_buffer.strip())
     _mark_model_run(settings.agent_model, usage)
     return _parse_json("".join(content_parts))
 
@@ -329,13 +340,20 @@ async def respond_with_model(
     product_cards: list[dict[str, Any]],
     emotion_style: str,
     on_speech_delta: Callable[[str], Awaitable[None]] | None = None,
+    on_speech_sentence: Callable[[str], Awaitable[None]] | None = None,
 ) -> EmotionalResponseResult:
     payload = {"utterance": utterance, "emotionStyle": emotion_style, "productCards": product_cards}
-    result = (
-        await _stream_chat_json(EMOTIONAL_RESPONSE_SYSTEM_PROMPT, payload, on_speech_delta)
-        if on_speech_delta
-        else await _chat_json(EMOTIONAL_RESPONSE_SYSTEM_PROMPT, payload)
-    )
+    if on_speech_sentence:
+        result = await _stream_chat_json(
+            EMOTIONAL_RESPONSE_SYSTEM_PROMPT,
+            payload,
+            on_speech_delta,
+            on_speech_sentence,
+        )
+    elif on_speech_delta:
+        result = await _stream_chat_json(EMOTIONAL_RESPONSE_SYSTEM_PROMPT, payload, on_speech_delta)
+    else:
+        result = await _chat_json(EMOTIONAL_RESPONSE_SYSTEM_PROMPT, payload)
     response = EmotionalResponseResult.model_validate(result)
     expected_ids = {card["productId"] for card in product_cards}
     actual_ids = {reason.product_id for reason in response.reasons}

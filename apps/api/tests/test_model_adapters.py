@@ -28,7 +28,7 @@ class _FakeChatModel:
     async def astream(self, messages: list[tuple[str, str]]) -> Any:
         assert messages[0][0] == "system"
         assert messages[1][0] == "human"
-        for content in ['{"speech_text":"正在', '筛选。","reasons":[]}']:
+        for content in ['{"speech_text":"正在，', '筛选。","reasons":[]}']:
             yield type("MessageChunk", (), {"content": content, "usage_metadata": None})()
         yield type(
             "UsageChunk",
@@ -106,14 +106,21 @@ async def test_streaming_chat_qwen_exposes_speech_text_deltas(
 ) -> None:
     monkeypatch.setattr(model_module, "ChatQwen", _FakeChatModel)
     deltas: list[str] = []
+    sentences: list[str] = []
 
     async def collect(delta: str) -> None:
         deltas.append(delta)
 
-    result = await model_module._stream_chat_json("system prompt", {}, collect)
+    async def collect_sentence(sentence: str) -> None:
+        sentences.append(sentence)
 
-    assert result == {"speech_text": "正在筛选。", "reasons": []}
-    assert "".join(deltas) == "正在筛选。"
+    result = await model_module._stream_chat_json(
+        "system prompt", {}, collect, collect_sentence
+    )
+
+    assert result == {"speech_text": "正在，筛选。", "reasons": []}
+    assert "".join(deltas) == "正在，筛选。"
+    assert sentences == ["正在，", "筛选。"]
 
 
 @pytest.mark.asyncio

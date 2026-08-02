@@ -490,6 +490,7 @@ async def process_turn(
     utterance: str,
     user_id: UUID,
     on_events: Callable[[list[dict[str, Any]]], Awaitable[None]] | None = None,
+    on_speech_sentence: Callable[[str], Awaitable[None]] | None = None,
 ) -> tuple[ShoppingState, list[dict[str, Any]]]:
     settings = get_settings()
     session_id = stable_uuid(session_key)
@@ -516,6 +517,7 @@ async def process_turn(
         "speech_text": "",
         "final_reply": "",
         "speech_streamed": False,
+        "speech_audio_streamed": False,
         "compliance_blocked": False,
     }
     run_config = {
@@ -576,6 +578,7 @@ async def process_turn(
                 session, current_state, user_id, session_id, turn_id
             ),
             speech_delta_publisher=publish_speech_delta if on_events else None,
+            speech_sentence_publisher=on_speech_sentence if on_events else None,
         ),
         stream_mode="updates",
     ):
