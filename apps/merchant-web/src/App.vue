@@ -25,6 +25,7 @@ const loading = ref(true)
 const saving = ref(false)
 const error = ref('')
 const selectedProduct = ref<Product | null>(null)
+const selectedStoreId = ref('')
 const storeForm = reactive({ name: '', slug: '', description: '' })
 const productForm = reactive({
   merchantId: '',
@@ -44,6 +45,10 @@ const selectedCategory = computed<Category | undefined>(() =>
   categories.value.find((item) => item.categoryL2 === productForm.categoryL2),
 )
 const selectedSlots = computed(() => selectedCategory.value?.slots ?? [])
+const selectedStore = computed(() => stores.value.find((store) => store.id === selectedStoreId.value))
+const visibleProducts = computed(() =>
+  selectedStoreId.value ? products.value.filter((product) => product.merchantId === selectedStoreId.value) : [],
+)
 
 const pendingOrders = computed(() => orders.value.filter((item) => item.status === 'pending').length)
 const revenue = computed(() =>
@@ -64,6 +69,10 @@ async function loadData() {
     products.value = productData.items
     orders.value = orderData.items
     categories.value = categoryData.items
+    if (selectedStoreId.value && !stores.value.some((store) => store.id === selectedStoreId.value)) {
+      selectedStoreId.value = ''
+      selectedProduct.value = null
+    }
     if (!productForm.merchantId && stores.value[0]) productForm.merchantId = stores.value[0].id
     if (!productForm.categoryL2 && categories.value[0]) {
       productForm.categoryL2 = categories.value[0].categoryL2
@@ -95,6 +104,10 @@ async function createStore() {
 async function deleteStore(store: Merchant) {
   if (!window.confirm(`确认软删除店铺“${store.name}”及其商品吗？`)) return
   await requestJson(`/merchant/stores/${store.id}`, { method: 'DELETE' })
+  if (selectedStoreId.value === store.id) {
+    selectedStoreId.value = ''
+    selectedProduct.value = null
+  }
   await loadData()
 }
 
@@ -177,6 +190,24 @@ function closeProductDetails() {
   selectedProduct.value = null
 }
 
+function selectStore(store: Merchant) {
+  selectedStoreId.value = store.id
+  productForm.merchantId = store.id
+  selectedProduct.value = null
+  document.querySelector('#products')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+function handleStoreKeydown(event: KeyboardEvent, store: Merchant) {
+  if (event.key !== 'Enter' && event.key !== ' ') return
+  event.preventDefault()
+  selectStore(store)
+}
+
+function clearSelectedStore() {
+  selectedStoreId.value = ''
+  selectedProduct.value = null
+}
+
 onMounted(() => void loadData())
 </script>
 
@@ -212,16 +243,17 @@ onMounted(() => void loadData())
           <button class="primary-button" type="submit" :disabled="saving">新增店铺</button>
         </form>
         <div class="store-grid" style="margin-top: 18px">
-          <article v-for="store in stores" :key="store.id" class="store-card">
+          <article v-for="store in stores" :key="store.id" class="store-card selectable-card" :class="{ 'store-card--selected': selectedStoreId === store.id }" role="button" tabindex="0" :aria-pressed="selectedStoreId === store.id" :aria-label="`查看${store.name}商品`" @click="selectStore(store)" @keydown="handleStoreKeydown($event, store)">
             <span class="badge" :class="{ 'badge--disabled': !store.isEnabled }">{{ store.isEnabled ? '营业中' : '已禁用' }}</span>
             <h3>{{ store.name }}</h3><p>{{ store.description }}</p>
-            <div class="card-footer"><span class="muted">{{ store.productCount }} 件商品</span><button class="danger-button small-button" @click="deleteStore(store)">软删除</button></div>
+            <div class="card-footer"><span class="muted">{{ store.productCount }} 件商品</span><div class="section-actions"><span class="select-hint">点击查看</span><button class="danger-button small-button" @click.stop="deleteStore(store)">软删除</button></div></div>
           </article>
         </div>
       </section>
 
       <section id="products" class="section-panel">
-        <div class="section-heading"><div><h2>商品与库存</h2><p>维护供 Agent 检索的商品事实，上架后才会出现在用户端。</p></div></div>
+        <div class="section-heading"><div><h2>{{ selectedStore ? `${selectedStore.name} · 商品与库存` : '商品与库存' }}</h2><p>{{ selectedStore ? '维护当前店铺供 Agent 检索的商品事实，上架后才会出现在用户端。' : '请先点击上方的店铺，再查看和维护该店铺下的商品。' }}</p></div><button v-if="selectedStore" class="ghost-button" type="button" @click="clearSelectedStore">返回店铺</button></div>
+        <template v-if="selectedStore">
         <form class="form-grid" @submit.prevent="createProduct">
           <label class="form-field">所属店铺<select v-model="productForm.merchantId" class="select" required><option v-for="store in stores" :key="store.id" :value="store.id">{{ store.name }}</option></select></label>
           <label class="form-field">SKU<input v-model="productForm.sku" class="input" required /></label>
@@ -249,12 +281,15 @@ onMounted(() => void loadData())
           <button class="primary-button" type="submit" :disabled="saving || !stores.length">新增商品</button>
         </form>
         <p v-if="loading" class="empty-state">正在加载…</p>
+        <p v-else-if="!visibleProducts.length" class="empty-state">该店铺暂无商品。</p>
         <div v-else class="table-wrap" style="margin-top: 20px">
           <table class="data-table">
             <thead><tr><th>商品</th><th>店铺</th><th>价格</th><th>库存</th><th>状态</th><th>操作</th></tr></thead>
-            <tbody><tr v-for="product in products" :key="product.id" class="product-row" tabindex="0" :aria-label="`查看${product.name}详情`" @click="openProduct(product)" @keydown="handleProductKeydown($event, product)"><td><strong>{{ product.name }}</strong><br><span class="muted">{{ product.sku }}</span></td><td>{{ product.merchantName }}</td><td>¥{{ product.price }}</td><td>{{ product.stock }}</td><td><span class="badge" :class="{ 'badge--disabled': product.status !== 'on_sale' }">{{ product.status }}</span></td><td><div class="section-actions"><button class="ghost-button small-button" @click.stop="editInventory(product)">价格/库存</button><button class="secondary-button small-button" @click.stop="toggleSale(product)">{{ product.status === 'on_sale' ? '下架' : '上架' }}</button><button class="danger-button small-button" @click.stop="deleteProduct(product)">删除</button></div></td></tr></tbody>
+            <tbody><tr v-for="product in visibleProducts" :key="product.id" class="product-row" tabindex="0" :aria-label="`查看${product.name}详情`" @click="openProduct(product)" @keydown="handleProductKeydown($event, product)"><td><strong>{{ product.name }}</strong><br><span class="muted">{{ product.sku }}</span></td><td>{{ product.merchantName }}</td><td>¥{{ product.price }}</td><td>{{ product.stock }}</td><td><span class="badge" :class="{ 'badge--disabled': product.status !== 'on_sale' }">{{ product.status }}</span></td><td><div class="section-actions"><button class="ghost-button small-button" @click.stop="editInventory(product)">价格/库存</button><button class="secondary-button small-button" @click.stop="toggleSale(product)">{{ product.status === 'on_sale' ? '下架' : '上架' }}</button><button class="danger-button small-button" @click.stop="deleteProduct(product)">删除</button></div></td></tr></tbody>
           </table>
         </div>
+        </template>
+        <p v-else class="empty-state">请先点击“我的店铺”中的店铺，查看该店铺下的商品情况。</p>
       </section>
 
       <section id="orders" class="section-panel">

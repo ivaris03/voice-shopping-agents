@@ -17,9 +17,17 @@ const navItems = [
   { label: '平台概览', href: '#overview' },
   { label: '品类管理', href: '#categories' },
   { label: '商家治理', href: '#merchants' },
+  { label: '店铺总览', href: '#stores' },
   { label: '商品总览', href: '#products' },
   { label: '全量订单', href: '#orders' },
 ]
+
+interface MerchantGroup {
+  ownerUserId: string
+  ownerDisplayName: string
+  stores: Merchant[]
+}
+
 const merchants = ref<Merchant[]>([])
 const products = ref<Product[]>([])
 const orders = ref<Order[]>([])
@@ -31,15 +39,37 @@ const categoryForm = reactive({ categoryL1Id: '', categoryL2: '' })
 const slotForm = reactive({ categoryId: '', key: '', isRequired: true, enumValues: '' })
 const error = ref('')
 const selectedProduct = ref<Product | null>(null)
+const selectedMerchantKey = ref('')
+const selectedStoreId = ref('')
 const productQuery = ref('')
 const orderStatus = ref('')
-const enabledMerchants = computed(() => merchants.value.filter((item) => item.isEnabled).length)
+const merchantGroups = computed<MerchantGroup[]>(() => {
+  const groups = new Map<string, MerchantGroup>()
+  for (const store of merchants.value) {
+    const existing = groups.get(store.ownerUserId)
+    if (existing) {
+      existing.stores.push(store)
+      continue
+    }
+    groups.set(store.ownerUserId, {
+      ownerUserId: store.ownerUserId,
+      ownerDisplayName: store.ownerDisplayName || `商家账号 ${store.ownerUserId.slice(0, 8)}…`,
+      stores: [store],
+    })
+  }
+  return [...groups.values()]
+})
+const selectedMerchant = computed(() => merchantGroups.value.find((merchant) => merchant.ownerUserId === selectedMerchantKey.value))
+const selectedStore = computed(() => selectedMerchant.value?.stores.find((store) => store.id === selectedStoreId.value))
+const enabledStores = computed(() => merchants.value.filter((item) => item.isEnabled).length)
 const successfulOrders = computed(() => orders.value.filter((item) => item.status === 'success'))
 const grossMerchandiseValue = computed(() => successfulOrders.value.reduce((sum, item) => sum + Number(item.totalAmount), 0))
 const visibleProducts = computed(() => {
+  if (!selectedStoreId.value) return []
   const query = productQuery.value.trim().toLowerCase()
-  if (!query) return products.value
-  return products.value.filter((item) => `${item.name} ${item.brand ?? ''} ${item.merchantName ?? ''}`.toLowerCase().includes(query))
+  const storeProducts = products.value.filter((item) => item.merchantId === selectedStoreId.value)
+  if (!query) return storeProducts
+  return storeProducts.filter((item) => `${item.name} ${item.brand ?? ''} ${item.merchantName ?? ''}`.toLowerCase().includes(query))
 })
 const visibleOrders = computed(() =>
   orderStatus.value ? orders.value.filter((item) => item.status === orderStatus.value) : orders.value,
@@ -59,6 +89,14 @@ async function loadData() {
     orders.value = orderData.items
     categories.value = categoryData.items
     categoryLevelOnes.value = categoryL1Data.items
+    if (selectedMerchantKey.value && !merchantGroups.value.some((merchant) => merchant.ownerUserId === selectedMerchantKey.value)) {
+      selectedMerchantKey.value = ''
+      selectedStoreId.value = ''
+      selectedProduct.value = null
+    } else if (selectedStoreId.value && !selectedMerchant.value?.stores.some((store) => store.id === selectedStoreId.value)) {
+      selectedStoreId.value = ''
+      selectedProduct.value = null
+    }
     if (!categoryForm.categoryL1Id && categoryLevelOnes.value[0]) {
       categoryForm.categoryL1Id = categoryLevelOnes.value[0].id
     }
@@ -199,6 +237,46 @@ function closeProductDetails() {
   selectedProduct.value = null
 }
 
+function selectMerchant(merchant: MerchantGroup) {
+  selectedMerchantKey.value = merchant.ownerUserId
+  selectedStoreId.value = ''
+  selectedProduct.value = null
+  productQuery.value = ''
+  document.querySelector('#stores')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+function handleMerchantKeydown(event: KeyboardEvent, merchant: MerchantGroup) {
+  if (event.key !== 'Enter' && event.key !== ' ') return
+  event.preventDefault()
+  selectMerchant(merchant)
+}
+
+function selectStore(store: Merchant) {
+  selectedStoreId.value = store.id
+  selectedProduct.value = null
+  productQuery.value = ''
+  document.querySelector('#products')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+function handleStoreKeydown(event: KeyboardEvent, store: Merchant) {
+  if (event.key !== 'Enter' && event.key !== ' ') return
+  event.preventDefault()
+  selectStore(store)
+}
+
+function clearSelectedMerchant() {
+  selectedMerchantKey.value = ''
+  selectedStoreId.value = ''
+  selectedProduct.value = null
+  productQuery.value = ''
+}
+
+function clearSelectedStore() {
+  selectedStoreId.value = ''
+  selectedProduct.value = null
+  productQuery.value = ''
+}
+
 onMounted(() => void loadData())
 </script>
 
@@ -212,12 +290,12 @@ onMounted(() => void loadData())
   >
     <template #headline>看清平台全局，<br />守住交易边界。</template>
     <template #hero-action><a class="primary-button" href="#overview">打开运营总览</a></template>
-    <template #hero-panel><div class="hero-panel"><span class="hero-panel__label">平台健康度</span><div><p class="hero-panel__value">{{ enabledMerchants }}/{{ merchants.length }} 商家启用</p><p class="hero-panel__note">商家禁用后，其在售商品会立即从用户浏览和 Agent 推荐候选中移除。</p></div></div></template>
+    <template #hero-panel><div class="hero-panel"><span class="hero-panel__label">平台健康度</span><div><p class="hero-panel__value">{{ enabledStores }}/{{ merchants.length }} 店铺启用</p><p class="hero-panel__note">店铺禁用后，其在售商品会立即从用户浏览和 Agent 推荐候选中移除。</p></div></div></template>
 
     <div class="workspace">
       <p v-if="error" class="error-banner">{{ error }}</p>
       <section id="overview" class="stat-grid">
-        <article class="stat-card"><span class="stat-label">全部商家</span><span class="stat-value">{{ merchants.length }}</span></article>
+        <article class="stat-card"><span class="stat-label">全部商家</span><span class="stat-value">{{ merchantGroups.length }}</span></article>
         <article class="stat-card"><span class="stat-label">全部商品</span><span class="stat-value">{{ products.length }}</span></article>
         <article class="stat-card"><span class="stat-label">成功订单</span><span class="stat-value">{{ successfulOrders.length }}</span></article>
         <article class="stat-card"><span class="stat-label">平台成交额</span><span class="stat-value">¥{{ grossMerchandiseValue }}</span></article>
@@ -269,20 +347,37 @@ onMounted(() => void loadData())
       </section>
 
       <section id="merchants" class="section-panel">
-        <div class="section-heading"><div><h2>商家治理</h2><p>禁用必须记录原因；恢复启用后供给会重新可见。</p></div></div>
+        <div class="section-heading"><div><h2>商家治理</h2><p>先选择商家，再进入该商家下的店铺；禁用必须记录原因。</p></div></div>
         <div class="store-grid">
-          <article v-for="merchant in merchants" :key="merchant.id" class="store-card">
-            <span class="badge" :class="{ 'badge--disabled': !merchant.isEnabled }">{{ merchant.isEnabled ? '已启用' : '已禁用' }}</span>
-            <h3>{{ merchant.name }}</h3><p>{{ merchant.description }}</p>
-            <p v-if="merchant.disabledReason" class="reason">禁用原因：{{ merchant.disabledReason }}</p>
-            <div class="card-footer"><span class="muted">{{ merchant.productCount }} 件商品</span><button :class="merchant.isEnabled ? 'danger-button' : 'secondary-button'" class="small-button" @click="toggleMerchant(merchant)">{{ merchant.isEnabled ? '禁用商家' : '恢复启用' }}</button></div>
+          <article v-for="merchant in merchantGroups" :key="merchant.ownerUserId" class="store-card selectable-card" :class="{ 'store-card--selected': selectedMerchantKey === merchant.ownerUserId }" role="button" tabindex="0" :aria-pressed="selectedMerchantKey === merchant.ownerUserId" :aria-label="`查看${merchant.ownerDisplayName}的店铺`" @click="selectMerchant(merchant)" @keydown="handleMerchantKeydown($event, merchant)">
+            <span class="badge">{{ merchant.stores.length }} 家店铺</span>
+            <h3>{{ merchant.ownerDisplayName }}</h3><p>商家账号下的店铺与商品供给</p>
+            <div class="card-footer"><span class="muted">{{ merchant.stores.reduce((count, store) => count + store.productCount, 0) }} 件商品</span><span class="select-hint">点击查看店铺</span></div>
           </article>
         </div>
       </section>
 
+      <section id="stores" class="section-panel">
+        <template v-if="selectedMerchant">
+          <div class="section-heading"><div><h2>{{ selectedMerchant.ownerDisplayName }} · 店铺</h2><p>请选择一个店铺，查看该店铺下的商品情况。</p></div><button class="ghost-button" type="button" @click="clearSelectedMerchant">返回商家</button></div>
+          <div class="store-grid">
+            <article v-for="store in selectedMerchant.stores" :key="store.id" class="store-card selectable-card" :class="{ 'store-card--selected': selectedStoreId === store.id }" role="button" tabindex="0" :aria-pressed="selectedStoreId === store.id" :aria-label="`查看${store.name}商品`" @click="selectStore(store)" @keydown="handleStoreKeydown($event, store)">
+              <span class="badge" :class="{ 'badge--disabled': !store.isEnabled }">{{ store.isEnabled ? '已启用' : '已禁用' }}</span>
+              <h3>{{ store.name }}</h3><p>{{ store.description }}</p>
+              <p v-if="store.disabledReason" class="reason">禁用原因：{{ store.disabledReason }}</p>
+              <div class="card-footer"><span class="muted">{{ store.productCount }} 件商品</span><div class="section-actions"><span class="select-hint">点击查看商品</span><button :class="store.isEnabled ? 'danger-button' : 'secondary-button'" class="small-button" @click.stop="toggleMerchant(store)">{{ store.isEnabled ? '禁用店铺' : '恢复启用' }}</button></div></div>
+            </article>
+          </div>
+        </template>
+        <p v-else class="empty-state">请先点击上方“商家治理”中的商家，再选择店铺。</p>
+      </section>
+
       <section id="products" class="section-panel">
-        <div class="section-heading"><div><h2>商品总览</h2><p>跨商家检查价格、库存、品类与上下架状态。</p></div><input v-model="productQuery" class="input" style="width: 260px" placeholder="搜索商品、品牌或店铺" /></div>
-        <div class="table-wrap"><table class="data-table"><thead><tr><th>商品</th><th>店铺</th><th>标准品类</th><th>价格</th><th>库存</th><th>状态</th></tr></thead><tbody><tr v-for="product in visibleProducts" :key="product.id" class="product-row" tabindex="0" :aria-label="`查看${product.name}详情`" @click="openProduct(product)" @keydown="handleProductKeydown($event, product)"><td><strong>{{ product.name }}</strong><br><span class="muted">{{ product.brand || '无品牌' }}</span></td><td>{{ product.merchantName }}</td><td>{{ product.categoryL2 }}</td><td>¥{{ product.price }}</td><td>{{ product.stock }}</td><td><span class="badge" :class="{ 'badge--disabled': product.status !== 'on_sale' }">{{ product.status }}</span></td></tr></tbody></table></div>
+        <div class="section-heading"><div><h2>{{ selectedStore ? `${selectedStore.name} · 商品总览` : '商品总览' }}</h2><p>{{ selectedStore ? '当前仅展示所选店铺的商品；点击商品行可查看完整详情。' : '请依次选择商家和店铺，再查看商品详情。' }}</p></div><div v-if="selectedStore" class="section-actions"><input v-model="productQuery" class="input" style="width: 260px" placeholder="搜索当前店铺商品" /><button class="ghost-button" type="button" @click="clearSelectedStore">返回店铺</button></div></div>
+        <p v-if="!selectedMerchant" class="empty-state">请先点击上方“商家治理”中的商家。</p>
+        <p v-else-if="!selectedStore" class="empty-state">已选择商家，请在上方店铺列表中继续选择一个店铺。</p>
+        <p v-else-if="!visibleProducts.length" class="empty-state">该店铺暂无匹配商品。</p>
+        <div v-else class="table-wrap"><table class="data-table"><thead><tr><th>商品</th><th>店铺</th><th>标准品类</th><th>价格</th><th>库存</th><th>状态</th></tr></thead><tbody><tr v-for="product in visibleProducts" :key="product.id" class="product-row" tabindex="0" :aria-label="`查看${product.name}详情`" @click="openProduct(product)" @keydown="handleProductKeydown($event, product)"><td><strong>{{ product.name }}</strong><br><span class="muted">{{ product.brand || '无品牌' }}</span></td><td>{{ product.merchantName }}</td><td>{{ product.categoryL2 }}</td><td>¥{{ product.price }}</td><td>{{ product.stock }}</td><td><span class="badge" :class="{ 'badge--disabled': product.status !== 'on_sale' }">{{ product.status }}</span></td></tr></tbody></table></div>
       </section>
 
       <section id="orders" class="section-panel">

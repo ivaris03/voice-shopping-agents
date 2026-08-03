@@ -12,6 +12,12 @@ MERCHANT_COLUMNS = """
     count(p.id)::int AS product_count
 """
 
+PLATFORM_MERCHANT_COLUMNS = """
+    m.id, m.owner_user_id, u.display_name AS owner_display_name, m.name, m.slug,
+    m.description, m.logo_url, m.contact_phone, m.is_enabled, m.disabled_reason,
+    m.created_at, m.updated_at, count(p.id)::int AS product_count
+"""
+
 PRODUCT_COLUMNS = """
     p.id, p.merchant_id, m.name AS merchant_name, p.sku, p.name, p.category_l1,
     p.category_l2, p.brand, p.description, p.price, p.stock, p.attributes,

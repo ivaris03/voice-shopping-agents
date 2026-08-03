@@ -169,6 +169,11 @@ button:disabled { opacity: 0.48; cursor: not-allowed; }
 .store-card, .product-card { padding: 18px; border: 1px solid rgba(24, 34, 28, 0.11); border-radius: 17px; background: #fffdfa; }
 .store-card h3, .product-card h3 { margin: 8px 0; font-size: 18px; }
 .store-card p, .product-card p { color: #68736b; line-height: 1.55; }
+.selectable-card { cursor: pointer; transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+.selectable-card:hover { transform: translateY(-2px); border-color: rgba(31, 91, 60, 0.34); box-shadow: 0 12px 28px rgba(31, 58, 43, 0.1); }
+.selectable-card:focus-visible { outline: 3px solid #e6a95c; outline-offset: 3px; }
+.store-card--selected { border-color: #1f5b3c; box-shadow: 0 0 0 3px rgba(31, 91, 60, 0.13); }
+.select-hint { color: #1f5b3c; font-size: 12px; font-weight: 700; white-space: nowrap; }
 .product-card { cursor: pointer; transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
 .product-card:hover { transform: translateY(-2px); border-color: rgba(31, 91, 60, 0.34); box-shadow: 0 12px 28px rgba(31, 58, 43, 0.1); }
 .product-card:focus-visible { outline: 3px solid #e6a95c; outline-offset: 3px; }

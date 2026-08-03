@@ -19,6 +19,7 @@ export interface ProductCard {
 export interface Merchant {
   id: string
   ownerUserId: string
+  ownerDisplayName?: string
   name: string
   slug: string
   description?: string

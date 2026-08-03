@@ -10,8 +10,8 @@ from voice_shopping_api.core.database import get_db_session
 from voice_shopping_api.core.embeddings import embed_product_text
 from voice_shopping_api.core.product_embedding import embedding_text_for_product
 from voice_shopping_api.core.queries import (
-    MERCHANT_COLUMNS,
     ORDER_COLUMNS,
+    PLATFORM_MERCHANT_COLUMNS,
     PRODUCT_COLUMNS,
     commit_or_conflict,
     row_or_404,
@@ -249,9 +249,10 @@ async def list_all_merchants(session: Db) -> dict[str, object]:
     result = await session.execute(
         text(
             f"""
-            SELECT {MERCHANT_COLUMNS} FROM merchants m
+            SELECT {PLATFORM_MERCHANT_COLUMNS} FROM merchants m
+            JOIN users u ON u.id = m.owner_user_id
             LEFT JOIN products p ON p.merchant_id = m.id AND p.deleted_at IS NULL
-            WHERE m.deleted_at IS NULL GROUP BY m.id ORDER BY m.created_at
+            WHERE m.deleted_at IS NULL GROUP BY m.id, u.display_name ORDER BY m.created_at
             """
         )
     )
@@ -278,9 +279,10 @@ async def set_merchant_status(
     current = await session.execute(
         text(
             f"""
-            SELECT {MERCHANT_COLUMNS} FROM merchants m
+            SELECT {PLATFORM_MERCHANT_COLUMNS} FROM merchants m
+            JOIN users u ON u.id = m.owner_user_id
             LEFT JOIN products p ON p.merchant_id = m.id AND p.deleted_at IS NULL
-            WHERE m.id = :id GROUP BY m.id
+            WHERE m.id = :id GROUP BY m.id, u.display_name
             """
         ),
         {"id": merchant_id},

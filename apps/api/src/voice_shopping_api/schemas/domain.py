@@ -18,6 +18,7 @@ class ApiModel(BaseModel):
 class MerchantOut(ApiModel):
     id: UUID
     owner_user_id: UUID
+    owner_display_name: str | None = None
     name: str
     slug: str
     description: str | None = None
