@@ -22,7 +22,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     if settings.langsmith_api_key:
         os.environ.setdefault("LANGSMITH_API_KEY", settings.langsmith_api_key)
         os.environ.setdefault("LANGSMITH_PROJECT", settings.langsmith_project)
-        os.environ.setdefault("LANGSMITH_TRACING_V2", "true")
+        os.environ.setdefault("LANGSMITH_TRACING", "true")
     yield
     await close_checkpointer()
     await realtime_hub.close()
