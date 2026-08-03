@@ -67,7 +67,9 @@ def _rule_adjustments(
     return sum(parts.values()), parts
 
 
-async def recommend_products(state: ShoppingState) -> dict[str, Any]:
+async def recommend_products(
+    state: ShoppingState, runtime: Runtime[ShoppingWorkflowContext]
+) -> dict[str, Any]:
     intent = (state.get("intent") or {}).get("type")
     previous_cards = state.get("previous_product_cards", [])
     if intent in ("PRODUCT_COMPARE", "PRODUCT_QUERY") and previous_cards:
@@ -83,7 +85,7 @@ async def recommend_products(state: ShoppingState) -> dict[str, Any]:
             product_cards=selected[:3], emotion_style="analytical-professional"
         ).model_dump()
     # SQL 已按已填槽位过滤并按向量相似度截断为最多 20 条。
-    products = state.get("catalog_products", [])
+    products = await _retrieve_catalog(state, runtime)
     reranker_scores: dict[str, float] = {}
     if state.get("model_enabled") and products:
         try:
@@ -127,18 +129,19 @@ async def recommend_products(state: ShoppingState) -> dict[str, Any]:
         }
         for rule_score, rule_parts, reranker, product in ranked
     ]
-    return ProductRecommendationResult(
+    result = ProductRecommendationResult(
         product_cards=cards, emotion_style="warm-professional" if cards else "helpful-apologetic"
     ).model_dump()
+    return {"catalog_products": products, **result}
 
 
-async def retrieve_catalog(
+async def _retrieve_catalog(
     state: ShoppingState, runtime: Runtime[ShoppingWorkflowContext]
-) -> dict[str, Any]:
-    """Fetch candidates only after the customer's required slots are complete."""
+) -> list[dict[str, Any]]:
+    """Fetch candidates for the recommendation node's ranking phase."""
     context = runtime.context
     if context is None:
-        return {"catalog_products": state.get("catalog_products", [])}
+        return state.get("catalog_products", [])
     category = state.get("product_category")
     filters: CatalogFilters = {
         "category": category,
@@ -147,8 +150,6 @@ async def retrieve_catalog(
             category or "", []
         ),
     }
-    return {
-        "catalog_products": await context.catalog_loader(
-            state.get("utterance", ""), bool(state.get("model_enabled")), filters
-        )
-    }
+    return await context.catalog_loader(
+        state.get("utterance", ""), bool(state.get("model_enabled")), filters
+    )

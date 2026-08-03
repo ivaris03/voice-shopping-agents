@@ -146,9 +146,12 @@ async def test_slot_answers_keep_memory_and_recommend_when_requirements_are_comp
         "image_urls": [],
     }
 
+    retrievals: list[dict[str, object]] = []
+
     async def load_catalog(
-        _: str, __: bool, ___: dict[str, object]
+        _: str, __: bool, filters: dict[str, object]
     ) -> list[dict[str, object]]:
+        retrievals.append(filters)
         return [product]
 
     context = ShoppingWorkflowContext(catalog_loader=load_catalog)
@@ -175,6 +178,7 @@ async def test_slot_answers_keep_memory_and_recommend_when_requirements_are_comp
         },
         context=context,
     )
+    assert retrievals == []
     third = await shopping_workflow.ainvoke(
         {
             **second,
@@ -191,6 +195,7 @@ async def test_slot_answers_keep_memory_and_recommend_when_requirements_are_comp
     assert third["clarification_status"] == "READY"
     assert third["slots"] == {"gender": "unisex", "size": 42.0, "terrain": "road"}
     assert third["product_cards"][0]["productId"] == product["id"]
+    assert len(retrievals) == 1
 
 
 def test_state_persistence_keeps_only_cross_turn_conversation_facts() -> None:
@@ -248,7 +253,7 @@ async def test_workflow_restores_state_with_a_checkpointer() -> None:
 
 
 @pytest.mark.asyncio
-async def test_catalog_retrieval_runs_only_after_clarification_is_ready() -> None:
+async def test_recommendation_agent_retrieves_after_clarification_is_ready() -> None:
     product = {
         "id": "20000000-0000-4000-8000-000000000101",
         "merchant_id": "10000000-0000-4000-8000-000000000004",

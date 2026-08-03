@@ -179,8 +179,7 @@ const quickPrompts = ['通勤降噪耳机，预算一千以内', '适合日常�
 const workflowNodeLabels: Record<string, string> = {
   intent_agent: '意图识别 Agent 运行中',
   clarification_agent: '需求澄清 Agent 运行中',
-  catalog_retrieval: '商品召回中',
-  recommendation_agent: '推荐 Agent 运行中',
+  recommendation_agent: '商品召回与推荐 Agent 运行中',
   order_node: '订单处理节点运行中',
   emotional_agent: '回复 Agent 运行中',
   compliance_check: '合规检查节点运行中',

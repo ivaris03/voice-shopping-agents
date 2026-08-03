@@ -1,7 +1,7 @@
 """商品推荐 Agent 端到端效果测试。
 
-范围：``catalog_retrieval``（召回 SQL）→ ``recommendation_agent``（LLM 精排 +
-画像规则二次排序）。为隔离"推荐"这一环节，用例直接给出已填槽位，绕过意图识别
+范围：``recommendation_agent`` 内部的召回 SQL → LLM 精排 +
+画像规则二次排序。为隔离"推荐"这一环节，用例直接给出已填槽位，绕过意图识别
 与澄清；意图相关节点（响应、下单）不在本套件覆盖内。
 
 依赖：本地演示库（``.env`` 中的 VOICE_SHOPPING_DATABASE_URL）与可选 DashScope Key。
@@ -25,7 +25,7 @@ from langgraph.runtime import Runtime
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
-from voice_shopping_api.agents.nodes.recommendation import recommend_products, retrieve_catalog
+from voice_shopping_api.agents.nodes.recommendation import recommend_products
 from voice_shopping_api.agents.service import _catalog
 from voice_shopping_api.agents.state import ShoppingState, ShoppingWorkflowContext
 from voice_shopping_api.core.config import get_settings
@@ -172,7 +172,7 @@ async def run_scenario(
     profile: dict[str, Any] | None = None,
     model_enabled: bool = True,
 ) -> dict[str, Any]:
-    """直接驱动 召回 → 精排 两个节点（推荐 Agent 本体），返回运行结果。"""
+    """直接驱动推荐 Agent（召回 + 精排），返回运行结果。"""
     snapshot = profile if profile is not None else await profile_snapshot(session, user_id)
     runtime = Runtime(
         context=ShoppingWorkflowContext(
@@ -190,9 +190,8 @@ async def run_scenario(
         "user_profile_snapshot": snapshot,
     }
     started = time.perf_counter()
-    retrieved = await retrieve_catalog(state, runtime)
-    candidates = retrieved["catalog_products"]
-    result = await recommend_products({**state, **retrieved})
+    result = await recommend_products(state, runtime)
+    candidates = result["catalog_products"]
     return {
         "candidates": candidates,
         "cards": result.get("product_cards", []),

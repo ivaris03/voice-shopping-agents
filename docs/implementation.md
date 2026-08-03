@@ -16,16 +16,16 @@
 
 ## Agent 工作流
 
-`intent_agent → clarification_agent → catalog_retrieval → recommendation_agent → emotional_agent → compliance_check`
+`intent_agent → clarification_agent → recommendation_agent → emotional_agent → compliance_check`
 由 LangGraph 条件边驱动。订单意图路由到图内订单事务节点，再进入合规检查。
 
 - 意图识别读取当前话语和最近三轮消息，并把 `category_l2` 中全部二级分类的必填、选填
   槽位动态注入 System Prompt，输出单个标准意图、置信度和订单 action。
 - 澄清规则从平台品类表加载必填槽位；先抽取当前话语已有信息，再询问前一到两个缺失槽位。
-- 仅当需求澄清返回 `READY` 后，商品召回节点用单条 SQL 过滤+排序：品类、预算与**全部已填
+- 仅当需求澄清返回 `READY` 后，推荐 Agent 内部用单条 SQL 过滤+排序：品类、预算与**全部已填
   槽位（含可选槽位）**拼成硬过滤条件，再使用 1024 维查询向量按 PGVector 余弦距离截取
   Top 20（向量不可用降级为 `created_at` 排序）。
-- 推荐节点分两阶段：先按 `qwen3-rerank` 精排取 Top 3，再用画像快照规则（品牌偏好 +0.2、
+- 推荐 Agent 先召回候选商品，再分两阶段精排：先按 `qwen3-rerank` 精排取 Top 3，再用画像快照规则（品牌偏好 +0.2、
   超价 > 1.5 倍客单价 -0.15、最近复购 -0.3）在 Top 3 内部二次排序，输出商品卡与
   `matchScore`（精排分 + 规则分）及逐项 `scoreBreakdown`。
 - 商品向量在商品创建/更新时生成：结构化字段先拼成带中文标签的"商品卡片"（品类、槽位、
