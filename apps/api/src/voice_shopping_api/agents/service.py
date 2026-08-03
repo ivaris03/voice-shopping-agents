@@ -15,6 +15,7 @@ from voice_shopping_api.agents.model import embed_query
 from voice_shopping_api.agents.nodes.response import is_compliant
 from voice_shopping_api.agents.state import (
     CatalogFilters,
+    ProductReason,
     ShoppingState,
     ShoppingWorkflowContext,
     carry_forward_state,
@@ -457,16 +458,17 @@ def state_events(
                 "emotionStyle": state.get("emotion_style"),
             },
         )
-    for reason in state.get("reasons", []):
-        if is_compliant(reason["reason"]):
-            add(
-                "text.delta",
-                {
-                    "scope": "reason",
-                    "productId": reason["product_id"],
-                    "delta": reason["reason"],
-                },
-            )
+    if not state.get("reasons_streamed"):
+        for reason in state.get("reasons", []):
+            if is_compliant(reason["reason"]):
+                add(
+                    "text.delta",
+                    {
+                        "scope": "reason",
+                        "productId": reason["product_id"],
+                        "delta": reason["reason"],
+                    },
+                )
     reply = state.get("final_reply", "")
     if not state.get("speech_streamed"):
         for start in range(0, len(reply), 12):
@@ -516,6 +518,7 @@ async def process_turn(
         "reasons": [],
         "speech_text": "",
         "final_reply": "",
+        "reasons_streamed": False,
         "speech_streamed": False,
         "speech_audio_streamed": False,
         "compliance_blocked": False,
@@ -535,36 +538,42 @@ async def process_turn(
     }
     result: ShoppingState = dict(state_input)
     next_sequence = 1
+    event_lock = asyncio.Lock()
+
+    async def publish_event(event_type: str, payload: dict[str, Any]) -> None:
+        nonlocal next_sequence
+        if not on_events:
+            return
+        async with event_lock:
+            event = {
+                "type": event_type,
+                "sessionId": session_key,
+                "turnId": turn_key,
+                "seq": next_sequence,
+                "payload": payload,
+            }
+            next_sequence += 1
+            await on_events([event])
+
     if on_events:
-        await on_events(
-            [
-                {
-                    "type": "flow.status",
-                    "sessionId": session_key,
-                    "turnId": turn_key,
-                    "seq": next_sequence,
-                    "payload": {"status": "processing"},
-                }
-            ]
-        )
-        next_sequence += 1
+        await publish_event("flow.status", {"status": "processing"})
 
     async def publish_speech_delta(delta: str) -> None:
-        nonlocal next_sequence
         if not on_events or not delta or not is_compliant(delta):
             return
-        await on_events(
-            [
-                {
-                    "type": "text.delta",
-                    "sessionId": session_key,
-                    "turnId": turn_key,
-                    "seq": next_sequence,
-                    "payload": {"scope": "speech", "delta": delta},
-                }
-            ]
+        await publish_event("text.delta", {"scope": "speech", "delta": delta})
+
+    async def publish_reason(reason: ProductReason) -> None:
+        if not on_events or not is_compliant(reason.reason):
+            return
+        await publish_event(
+            "text.delta",
+            {
+                "scope": "reason",
+                "productId": reason.product_id,
+                "delta": reason.reason,
+            },
         )
-        next_sequence += 1
 
     workflow = await _workflow_for_turn()
     async for update in workflow.astream(
@@ -577,6 +586,7 @@ async def process_turn(
             order_handler=lambda current_state: _handle_order(
                 session, current_state, user_id, session_id, turn_id
             ),
+            reason_publisher=publish_reason if on_events else None,
             speech_delta_publisher=publish_speech_delta if on_events else None,
             speech_sentence_publisher=on_speech_sentence if on_events else None,
         ),
@@ -585,21 +595,13 @@ async def process_turn(
         for node_name, partial in update.items():
             result.update(partial)
             if on_events and node_name == "recommendation_agent" and result.get("product_cards"):
-                await on_events(
-                    [
-                        {
-                            "type": "recommendation.cards",
-                            "sessionId": session_key,
-                            "turnId": turn_key,
-                            "seq": next_sequence,
-                            "payload": {
-                                "productCards": result["product_cards"],
-                                "emotionStyle": result.get("emotion_style"),
-                            },
-                        }
-                    ]
+                await publish_event(
+                    "recommendation.cards",
+                    {
+                        "productCards": result["product_cards"],
+                        "emotionStyle": result.get("emotion_style"),
+                    },
                 )
-                next_sequence += 1
     await _persist(session, result, user_id, session_id, turn_id)
     await session.commit()
     events = state_events(

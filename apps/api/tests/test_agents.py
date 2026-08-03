@@ -1,17 +1,22 @@
+import asyncio
+
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.runtime import Runtime
 
 from voice_shopping_api.agents import model as model_module
 from voice_shopping_api.agents.graph import build_workflow, shopping_workflow
 from voice_shopping_api.agents.nodes import clarification as clarification_module
 from voice_shopping_api.agents.nodes import intent as intent_module
+from voice_shopping_api.agents.nodes import response as response_module
 from voice_shopping_api.agents.nodes.clarification import clarify_requirements
 from voice_shopping_api.agents.nodes.constants import COMPLIANCE_FALLBACK, REQUIRED_SLOTS
 from voice_shopping_api.agents.nodes.intent import recognize_intent
-from voice_shopping_api.agents.nodes.response import compliance_check
-from voice_shopping_api.agents.service import _handle_order
+from voice_shopping_api.agents.nodes.response import compliance_check, emotional_response
+from voice_shopping_api.agents.service import _handle_order, state_events
 from voice_shopping_api.agents.state import (
     IntentResult,
+    ProductReason,
     ShoppingWorkflowContext,
     carry_forward_state,
     state_for_persistence,
@@ -820,3 +825,102 @@ async def test_response_model_uses_streaming_json_when_a_delta_handler_is_provid
 
     assert received == ["正在为你筛选。"]
     assert result.speech_text == "正在为你筛选。"
+
+
+@pytest.mark.asyncio
+async def test_product_reason_model_uses_one_product_card_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_chat_json(system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
+        captured["system_prompt"] = system_prompt
+        captured["payload"] = payload
+        return {"product_id": "product-1", "reason": "适合你的通勤场景。"}
+
+    monkeypatch.setattr(model_module, "_chat_json", fake_chat_json)
+    result = await model_module.generate_product_reason(
+        "推荐通勤耳机",
+        {"productId": "product-1", "name": "通勤耳机"},
+        "warm-professional",
+    )
+
+    assert result == ProductReason(product_id="product-1", reason="适合你的通勤场景。")
+    assert "productCard" in str(captured["payload"])
+    assert "一张商品卡" in str(captured["system_prompt"])
+
+
+@pytest.mark.asyncio
+async def test_product_reasons_are_generated_concurrently_and_published_by_product(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active = 0
+    max_active = 0
+    started: list[str] = []
+    published: list[str] = []
+
+    async def fake_generate_product_reason(
+        utterance: str, card: dict[str, object], emotion_style: str
+    ) -> ProductReason:
+        nonlocal active, max_active
+        product_id = str(card["productId"])
+        started.append(product_id)
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return ProductReason(product_id=product_id, reason=f"理由-{product_id}")
+
+    async def publish_reason(reason: ProductReason) -> None:
+        published.append(reason.product_id)
+
+    async def load_catalog(
+        query: str, model_enabled: bool, filters: dict[str, object]
+    ) -> list[dict[str, object]]:
+        return []
+
+    monkeypatch.setattr(response_module, "generate_product_reason", fake_generate_product_reason)
+    cards = [
+        {"productId": "product-1", "name": "商品一"},
+        {"productId": "product-2", "name": "商品二"},
+        {"productId": "product-3", "name": "商品三"},
+    ]
+    result = await emotional_response(
+        {
+            "model_enabled": True,
+            "utterance": "推荐通勤耳机",
+            "emotion_style": "warm-professional",
+            "product_cards": cards,
+        },
+        Runtime(
+            context=ShoppingWorkflowContext(
+                catalog_loader=load_catalog,
+                reason_publisher=publish_reason,
+            )
+        ),
+    )
+
+    assert set(started) == {"product-1", "product-2", "product-3"}
+    assert max_active == 3
+    assert [reason["product_id"] for reason in result["reasons"]] == [
+        "product-1",
+        "product-2",
+        "product-3",
+    ]
+    assert set(published) == set(started)
+    assert result["reasons_streamed"] is True
+
+
+def test_state_events_does_not_duplicate_streamed_reasons() -> None:
+    events = state_events(
+        {
+            "product_cards": [{"productId": "product-1"}],
+            "reasons": [{"product_id": "product-1", "reason": "适合通勤。"}],
+            "reasons_streamed": True,
+            "final_reply": "已为你筛选。",
+        },
+        "session-1",
+        "turn-1",
+    )
+
+    assert not any(event["payload"].get("scope") == "reason" for event in events)

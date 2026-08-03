@@ -13,6 +13,7 @@ from langsmith import get_current_run_tree, traceable
 from voice_shopping_api.agents.prompts import (
     CLARIFICATION_SYSTEM_PROMPT,
     EMOTIONAL_RESPONSE_SYSTEM_PROMPT,
+    PRODUCT_REASON_SYSTEM_PROMPT,
     RECOMMENDATION_RERANK_INSTRUCTION,
     build_intent_system_prompt,
 )
@@ -363,3 +364,26 @@ async def respond_with_model(
         reasons=[ProductReason.model_validate(reason) for reason in response.reasons],
         speech_text=response.speech_text,
     )
+
+
+async def generate_product_reason(
+    utterance: str,
+    product_card: dict[str, Any],
+    emotion_style: str,
+) -> ProductReason:
+    """Generate and validate one reason for one immutable product card."""
+    product_id = str(product_card["productId"])
+    result = await _chat_json(
+        PRODUCT_REASON_SYSTEM_PROMPT,
+        {
+            "utterance": utterance,
+            "emotionStyle": emotion_style,
+            "productCard": product_card,
+        },
+    )
+    reason = ProductReason.model_validate(result)
+    if reason.product_id != product_id:
+        raise ValueError("模型返回的商品 ID 与输入商品事实不一致")
+    if not reason.reason.strip():
+        raise ValueError("模型返回的推荐理由为空")
+    return reason

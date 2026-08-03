@@ -124,6 +124,7 @@ class ResponseState(TypedDict, total=False):
     speech_text: str
     final_reply: str
     compliance_blocked: bool
+    reasons_streamed: bool
     speech_streamed: bool
     speech_audio_streamed: bool
 
@@ -140,6 +141,7 @@ CatalogLoader = Callable[[str, bool, CatalogFilters], Awaitable[list[dict[str, A
 OrderHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 SpeechDeltaPublisher = Callable[[str], Awaitable[None]]
 SpeechSentencePublisher = Callable[[str], Awaitable[None]]
+ReasonPublisher = Callable[[ProductReason], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -148,6 +150,7 @@ class ShoppingWorkflowContext:
 
     catalog_loader: CatalogLoader
     order_handler: OrderHandler | None = None
+    reason_publisher: ReasonPublisher | None = None
     speech_delta_publisher: SpeechDeltaPublisher | None = None
     speech_sentence_publisher: SpeechSentencePublisher | None = None
 

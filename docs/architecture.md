@@ -143,7 +143,7 @@ matchScore = 0.4 × rerankerScore
 
 推荐前从 `user_static_profiles`、`user_dynamic_profiles` 生成只读 `userProfileSnapshot`；同一轮推荐只读取该快照。商品点击和正式下单更新两张画像表，下单权重更高。具体画像字段和有效期在建表时确定。
 
-`PRODUCT_COMPARE` 和 `PRODUCT_QUERY` 同样由商品推荐 Agent 处理，但不重新召回商品。情感应答 Agent 为每张商品卡生成一条推荐理由；文本增量携带 `productId`，前端据此填入对应卡片。
+`PRODUCT_COMPARE` 和 `PRODUCT_QUERY` 同样由商品推荐 Agent 处理，但不重新召回商品。情感应答 Agent 为每张商品卡并发调用一次只生成理由的模型请求；文本增量携带 `productId`，前端据此填入对应卡片。单卡调用失败时只对该卡降级，不影响其他卡片。
 
 ### 3.5 语音订单
 
