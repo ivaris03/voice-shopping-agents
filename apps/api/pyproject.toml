@@ -38,6 +38,11 @@ packages = ["src/voice_shopping_api"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = [
+  "contract: HTTP API contract tests",
+  "service: business service tests",
+  "e2e: end-to-end tests requiring external services",
+]
 # 数据库集成测试：模块级 fixture 与用例共享同一个事件循环，
 # 避免 asyncpg 连接跨循环使用报 "another operation is in progress"。
 asyncio_default_fixture_loop_scope = "module"

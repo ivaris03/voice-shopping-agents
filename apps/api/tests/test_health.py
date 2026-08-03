@@ -1,8 +1,10 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from voice_shopping_api.main import app
 
 
+@pytest.mark.contract
 def test_health() -> None:
     with TestClient(app) as client:
         response = client.get("/health")
@@ -15,6 +17,7 @@ def test_health() -> None:
     }
 
 
+@pytest.mark.contract
 def test_text_websocket_handshake() -> None:
     with (
         TestClient(app) as client,
