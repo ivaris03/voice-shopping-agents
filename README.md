@@ -13,6 +13,7 @@
 | [需求文档](docs/requirements.md) | MVP 产品范围、Agent 契约和验收口径 |
 | [架构文档](docs/architecture.md) | 系统模块、数据边界、工作流和技术选型 |
 | [实现说明](docs/implementation.md) | 代码地图、关键实现、降级策略和测试覆盖 |
+| [接口文档](docs/api.md) | HTTP API、请求/响应结构和 WebSocket 协议 |
 | [任务文档](docs/tasks.md) | 已完成基线、生产化任务、依赖和验收标准 |
 
 ## 已实现能力
