@@ -130,6 +130,7 @@ class ResponseState(TypedDict, total=False):
     speech_text: str
     final_reply: str
     compliance_blocked: bool
+    violation_sentence: str | None
     reasons_streamed: bool
     speech_streamed: bool
     speech_audio_streamed: bool

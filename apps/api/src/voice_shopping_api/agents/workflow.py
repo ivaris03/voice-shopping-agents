@@ -8,7 +8,11 @@ from voice_shopping_api.agents.graph import build_workflow, shopping_workflow
 from voice_shopping_api.agents.nodes.clarification import clarify_requirements
 from voice_shopping_api.agents.nodes.constants import COMPLIANCE_FALLBACK, REQUIRED_SLOTS
 from voice_shopping_api.agents.nodes.intent import recognize_intent
-from voice_shopping_api.agents.nodes.response import compliance_check, is_compliant
+from voice_shopping_api.agents.nodes.response import (
+    compliance_check,
+    is_compliant,
+    violation_response,
+)
 
 __all__ = [
     "COMPLIANCE_FALLBACK",
@@ -19,4 +23,5 @@ __all__ = [
     "is_compliant",
     "recognize_intent",
     "shopping_workflow",
+    "violation_response",
 ]

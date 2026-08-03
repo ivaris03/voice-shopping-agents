@@ -494,6 +494,8 @@ WORKFLOW_NODE_LABELS: dict[str, str] = {
     "order_node": "订单处理节点运行中",
     "emotional_agent": "回复 Agent 运行中",
     "compliance_check": "合规检查节点运行中",
+    "violation_response": "违规回复节点运行中",
+    "publish_response": "安全回复发布中",
 }
 
 
@@ -569,6 +571,7 @@ async def process_turn(
         "speech_streamed": False,
         "speech_audio_streamed": False,
         "compliance_blocked": False,
+        "violation_sentence": None,
     }
     result: ShoppingState = dict(state_input)
     next_sequence = 1
@@ -593,7 +596,7 @@ async def process_turn(
         await publish_event("flow.status", {"status": "processing"})
 
     async def publish_speech_delta(delta: str) -> None:
-        if not on_events or not delta or not is_compliant(delta):
+        if not on_events or not delta:
             return
         await publish_event("text.delta", {"scope": "speech", "delta": delta})
 

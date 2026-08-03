@@ -8,6 +8,8 @@ from voice_shopping_api.agents.nodes.response import (
     compliance_check,
     emotional_response,
     order_response,
+    publish_response,
+    violation_response,
 )
 from voice_shopping_api.agents.state import ShoppingRuntimeDependencies, ShoppingState
 
@@ -29,6 +31,10 @@ def _route_clarification(state: ShoppingState) -> str:
     return "recommend" if state.get("clarification_status") == "READY" else "respond"
 
 
+def _route_compliance(state: ShoppingState) -> str:
+    return "violation" if state.get("compliance_blocked") else "publish"
+
+
 def build_workflow(*, checkpointer: BaseCheckpointSaver | None = None):
     """Assemble the graph; business rules remain inside the individual nodes."""
     graph = StateGraph(ShoppingState, context_schema=ShoppingRuntimeDependencies)
@@ -38,6 +44,8 @@ def build_workflow(*, checkpointer: BaseCheckpointSaver | None = None):
     graph.add_node("order_node", order_response)
     graph.add_node("emotional_agent", emotional_response)
     graph.add_node("compliance_check", compliance_check)
+    graph.add_node("violation_response", violation_response)
+    graph.add_node("publish_response", publish_response)
     graph.add_edge(START, "intent_agent")
     graph.add_conditional_edges(
         "intent_agent",
@@ -57,7 +65,13 @@ def build_workflow(*, checkpointer: BaseCheckpointSaver | None = None):
     graph.add_edge("recommendation_agent", "emotional_agent")
     graph.add_edge("order_node", "compliance_check")
     graph.add_edge("emotional_agent", "compliance_check")
-    graph.add_edge("compliance_check", END)
+    graph.add_conditional_edges(
+        "compliance_check",
+        _route_compliance,
+        {"violation": "violation_response", "publish": "publish_response"},
+    )
+    graph.add_edge("violation_response", "publish_response")
+    graph.add_edge("publish_response", END)
     return graph.compile(checkpointer=checkpointer)
 
 

@@ -5,6 +5,7 @@ import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.runtime import Runtime
 
+from voice_shopping_api.agents import graph as graph_module
 from voice_shopping_api.agents import model as model_module
 from voice_shopping_api.agents import service as service_module
 from voice_shopping_api.agents.graph import build_workflow, shopping_workflow
@@ -14,7 +15,12 @@ from voice_shopping_api.agents.nodes import response as response_module
 from voice_shopping_api.agents.nodes.clarification import clarify_requirements
 from voice_shopping_api.agents.nodes.constants import COMPLIANCE_FALLBACK, REQUIRED_SLOTS
 from voice_shopping_api.agents.nodes.intent import recognize_intent
-from voice_shopping_api.agents.nodes.response import compliance_check, emotional_response
+from voice_shopping_api.agents.nodes.response import (
+    compliance_check,
+    emotional_response,
+    publish_response,
+    violation_response,
+)
 from voice_shopping_api.agents.service import _handle_order, state_events
 from voice_shopping_api.agents.state import (
     IntentResult,
@@ -938,11 +944,99 @@ async def test_dynamic_enum_slot_can_be_answered_without_model() -> None:
 
 
 @pytest.mark.asyncio
-async def test_full_text_compliance_uses_fixed_fallback() -> None:
+async def test_sentence_compliance_routes_to_violation_response() -> None:
     result = await compliance_check({"speech_text": "这款商品百分百有效"})
 
     assert result["compliance_blocked"] is True
+    assert result["violation_sentence"] == "这款商品百分百有效"
+    violation = await violation_response(result)
+    assert violation["final_reply"] == COMPLIANCE_FALLBACK
+
+
+@pytest.mark.asyncio
+async def test_sentence_compliance_checks_each_completed_sentence() -> None:
+    result = await compliance_check({"speech_text": "第一句安全。第二句百分百有效。第三句安全。"})
+
+    assert result["compliance_blocked"] is True
+    assert result["violation_sentence"] == "第二句百分百有效。"
+
+
+@pytest.mark.asyncio
+async def test_graph_routes_violation_before_publishing_original_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_emotional_response(
+        state: dict[str, object], runtime: Runtime[ShoppingRuntimeDependencies]
+    ) -> dict[str, object]:
+        assert runtime.context is not None
+        return {
+            "speech_text": "第一句安全。第二句百分百有效。",
+            "final_reply": "第一句安全。第二句百分百有效。",
+        }
+
+    async def load_catalog(
+        _: str, __: bool, ___: dict[str, object]
+    ) -> list[dict[str, object]]:
+        return []
+
+    deltas: list[str] = []
+    sentences: list[str] = []
+
+    async def publish_delta(value: str) -> None:
+        deltas.append(value)
+
+    async def publish_sentence(value: str) -> None:
+        sentences.append(value)
+
+    monkeypatch.setattr(graph_module, "emotional_response", fake_emotional_response)
+    workflow = build_workflow()
+    result = await workflow.ainvoke(
+        {"utterance": "你好", "model_enabled": False},
+        context=ShoppingRuntimeDependencies(
+            catalog_loader=load_catalog,
+            speech_delta_publisher=publish_delta,
+            speech_sentence_publisher=publish_sentence,
+        ),
+    )
+
+    assert result["compliance_blocked"] is True
+    assert result["violation_sentence"] == "第二句百分百有效。"
     assert result["final_reply"] == COMPLIANCE_FALLBACK
+    assert "百分百" not in "".join(deltas)
+    assert "".join(sentences) == COMPLIANCE_FALLBACK
+
+
+@pytest.mark.asyncio
+async def test_publish_response_only_publishes_the_post_compliance_text() -> None:
+    deltas: list[str] = []
+    sentences: list[str] = []
+
+    async def load_catalog(
+        _: str, __: bool, ___: dict[str, object]
+    ) -> list[dict[str, object]]:
+        return []
+
+    async def publish_delta(value: str) -> None:
+        deltas.append(value)
+
+    async def publish_sentence(value: str) -> None:
+        sentences.append(value)
+
+    violation = await violation_response({"speech_text": "第二句百分百有效。"})
+    result = await publish_response(
+        violation,
+        Runtime(
+            context=ShoppingRuntimeDependencies(
+                catalog_loader=load_catalog,
+                speech_delta_publisher=publish_delta,
+                speech_sentence_publisher=publish_sentence,
+            )
+        ),
+    )
+
+    assert result["final_reply"] == COMPLIANCE_FALLBACK
+    assert "百分百" not in "".join(deltas)
+    assert "".join(sentences) == COMPLIANCE_FALLBACK
 
 
 @pytest.mark.asyncio

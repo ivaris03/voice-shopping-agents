@@ -104,9 +104,9 @@ async def _publish_speech(
     if context.speech_delta_publisher:
         for start in range(0, len(speech), 12):
             delta = speech[start : start + 12]
-            if is_compliant(delta):
+            if delta:
                 await context.speech_delta_publisher(delta)
-        speech_streamed = True
+        speech_streamed = bool(speech)
     speech_audio_streamed = False
     if context.speech_sentence_publisher:
         for sentence in split_sentences(speech):
@@ -136,15 +136,12 @@ async def emotional_response(
         reason_publisher = context.reason_publisher if context else None
         reasons = await _generate_reasons(state, reason_publisher)
         speech = _build_speech(reasons)
-        speech_streamed, speech_audio_streamed = await _publish_speech(speech, context)
         result = EmotionalResponseResult(reasons=reasons, speech_text=speech)
         return {
             "reasons": [reason.model_dump() for reason in result.reasons],
             "speech_text": result.speech_text,
             "final_reply": result.speech_text,
             "reasons_streamed": bool(reason_publisher),
-            "speech_streamed": speech_streamed,
-            "speech_audio_streamed": speech_audio_streamed,
         }
     else:
         intent = (state.get("intent") or {}).get("type")
@@ -162,13 +159,42 @@ async def emotional_response(
     }
 
 
-async def compliance_check(state: ShoppingState) -> dict[str, Any]:
-    speech = state.get("speech_text", "")
-    if is_compliant(speech):
-        return {"compliance_blocked": False, "final_reply": speech}
+async def publish_response(
+    state: ShoppingState, runtime: Runtime[ShoppingRuntimeDependencies]
+) -> dict[str, Any]:
+    """Publish only the response that has passed the compliance branch."""
+    context = runtime.context
+    speech = state.get("speech_text") or state.get("final_reply", "")
+    speech_streamed, speech_audio_streamed = await _publish_speech(speech, context)
     return {
-        "compliance_blocked": True,
+        "final_reply": speech,
+        "speech_streamed": speech_streamed,
+        "speech_audio_streamed": speech_audio_streamed,
+    }
+
+
+async def violation_response(state: ShoppingState) -> dict[str, Any]:
+    """Replace a response containing a forbidden expression with a safe reply."""
+    return {
         "reasons": [],
         "speech_text": COMPLIANCE_FALLBACK,
         "final_reply": COMPLIANCE_FALLBACK,
+        "compliance_blocked": True,
+        "speech_streamed": False,
+        "speech_audio_streamed": False,
+    }
+
+
+async def compliance_check(state: ShoppingState) -> dict[str, Any]:
+    speech = state.get("speech_text", "")
+    for sentence in split_sentences(speech):
+        if not is_compliant(sentence):
+            return {
+                "compliance_blocked": True,
+                "violation_sentence": sentence,
+            }
+    return {
+        "compliance_blocked": False,
+        "violation_sentence": None,
+        "final_reply": speech,
     }

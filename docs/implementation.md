@@ -59,9 +59,12 @@ START
      -> recommendation_agent      (PRODUCT_COMPARE / PRODUCT_QUERY)
      -> order_node                (PRODUCT_ORDER)
      -> emotional_agent            (CHAT / UNSUPPORTED_REQUEST)
-  -> emotional_agent
-  -> compliance_check
-  -> END
+   -> emotional_agent
+   -> compliance_check
+      -> publish_response       (全部短句通过)
+      -> violation_response     (任一短句违规)
+         -> publish_response     (只发布固定违规提示)
+   -> END
 ```
 
 `UNSUPPORTED_REQUEST` 在有 `pending_question` 时会回到澄清节点，允许用户直接回答上一轮问题；否则进入固定不支持回复。`recommendation_agent` 和 `order_node` 都是图节点，订单事务由 context 中的 `order_handler` 执行。
@@ -76,7 +79,7 @@ START
 - `ProfileState`：会话内 `user_profile_updates`。
 - `RecommendationState`：只读画像快照、候选商品、当前/上一轮商品卡和情绪风格。
 - `OrderState`：本轮订单结果；待确认订单详情仍以 `orders` 为事实源。
-- `ResponseState`：理由、完整回复、合规状态以及是否已经流式发送的标记。
+- `ResponseState`：理由、完整回复、违规短句、合规状态以及是否已经流式发送的标记。
 
 `ShoppingRuntimeDependencies` 注入数据库商品 loader、订单 handler、逐卡理由发布器、话术增量发布器和 TTS 短句发布器。节点因此可以在测试中脱离 FastAPI 和数据库连接运行。
 
@@ -206,8 +209,9 @@ product.id in recentPurchased          -0.30
 3. 单卡模型失败、返回商品 ID 不一致或理由不合规时，只对该卡使用确定性 fallback。
 4. 通过校验的理由通过 `reason_publisher` 按 `productId` 增量推送。
 5. `_build_speech()` 将理由组装为完整话术；当前不是让模型一次性生成完整业务话术。
-6. 话术通过 `speech_delta_publisher` 每 12 个字符切片发布，并通过 `speech_sentence_publisher` 按标点切成 TTS 短句。
-7. `compliance_check()` 对完整 `speech_text` 再做一次正则检查；命中时将 `reasons` 清空并替换 `speech_text`、`final_reply` 为 `COMPLIANCE_FALLBACK`。
+6. `_build_speech()` 只负责生成完整话术；话术在 `compliance_check()` 中通过 `split_sentences()` 拆成短句逐一检查。
+7. 全部短句通过后进入 `publish_response`，通过 `speech_delta_publisher` 每 12 个字符切片，并通过 `speech_sentence_publisher` 按标点发送 TTS。
+8. 任一短句命中正则后路由到 `violation_response`，清空理由并替换 `speech_text`、`final_reply` 为 `COMPLIANCE_FALLBACK`，然后只发布固定违规提示。
 
 `state_events()` 会根据 `reasons_streamed` 和 `speech_streamed` 避免在流式已发送后重复生成历史增量；最终始终发送 `text.completed`。
 

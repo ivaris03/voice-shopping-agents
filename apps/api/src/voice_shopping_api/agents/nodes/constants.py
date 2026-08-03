@@ -128,4 +128,4 @@ COMPLIANCE_PATTERNS = tuple(
     re.compile(pattern, re.IGNORECASE)
     for pattern in (r"百分百", r"绝对(?:有效|安全)", r"包治", r"国家级", r"稳赚不赔")
 )
-COMPLIANCE_FALLBACK = "抱歉，这段推荐话术未通过合规检查。你可以查看商品事实后再做选择。"
+COMPLIANCE_FALLBACK = "抱歉，你刚才的内容包含违规表达，我无法继续处理。"
