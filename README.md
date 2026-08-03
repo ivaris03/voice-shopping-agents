@@ -6,6 +6,15 @@
 [实现说明](docs/implementation.md)，后续开发拆解见
 [任务文档](docs/tasks.md)。
 
+## 文档导航
+
+| 文档 | 内容 |
+| --- | --- |
+| [需求文档](docs/requirements.md) | MVP 产品范围、Agent 契约和验收口径 |
+| [架构文档](docs/architecture.md) | 系统模块、数据边界、工作流和技术选型 |
+| [实现说明](docs/implementation.md) | 代码地图、关键实现、降级策略和测试覆盖 |
+| [任务文档](docs/tasks.md) | 已完成基线、生产化任务、依赖和验收标准 |
+
 ## 已实现能力
 
 - 用户端：启用店铺与在售商品浏览、文字/语音导购、流式商品卡与理由、待确认订单、
@@ -15,10 +24,17 @@
 - Agent：六类单意图、品类动态槽位、每轮单问题澄清、PGVector 召回分数、
   `qwen3-rerank` 与静态/动态画像加权精排、逐商品理由、增量与完整话术合规检查。
 - 语音：浏览器 PCM16 上行、`qwen-audio-3.0-asr-flash-streaming` 流式识别、
-  `qwen-audio-3.0-tts-plus` 分片下行；未配置模型时自动降级到浏览器语音能力。
+  `qwen-audio-3.0-tts-plus` 分片下行；文本 Agent 和 TTS 未配置模型时可确定性降级，
+  服务端 ASR 仍需要可用的 ASR 模型。
 - 订单：十五分钟待确认、价格/商家/商品/库存二次校验、事务扣库存、幂等键和成交快照。
 - 会话：`sessionId + turnId + seq` 事件排序、LangGraph Checkpointer 工作流恢复、
   `session_states` 业务状态投影、Redis 一小时事件日志重放，以及可选 LangSmith Trace。
+
+## 当前状态
+
+当前版本是可本地运行和验收的电商导购 MVP，不是生产部署版本。生产上线前至少需要完成真实认证与角色授权、将完整合规结果前移为 TTS 闸门、异步化商品向量重建，并补充敏感信息治理和多实例实时可靠性。完整任务拆解见 [任务文档](docs/tasks.md)。
+
+当前明确不包含支付、退款、物流、售后和真实电商平台对接。
 
 ## 工程结构
 
@@ -30,7 +46,7 @@ apps/
   platform-web/    平台端 Vue 应用（端口 5175）
 packages/web-ui/   三端共享组件、样式、API 类型与客户端
 sql/               PostgreSQL + PGVector Schema 和演示数据
-docs/              需求、架构和实现说明
+docs/              需求、架构、实现和任务文档
 ```
 
 ## 本地启动
@@ -56,8 +72,8 @@ PostgreSQL 与 Redis 默认使用宿主机 `5432`、`6379` 端口。首次使用
 无需重复导入。
 
 复制 `.env.example` 为 `.env` 后可接入 DashScope 和 LangSmith。无 DashScope Key 时，
-Agent 保持确定性可运行，语音端使用浏览器降级；配置 Key 后启用文档指定的文本、Embedding、
-Reranker、ASR 和 TTS 模型。
+文本 Agent 保持确定性可运行，TTS 使用浏览器语音降级；服务端 ASR、Embedding、Reranker
+和模型生成的文本/TTS 需要配置对应能力后才会启用。
 
 ## 演示身份
 
@@ -101,4 +117,4 @@ pnpm test:api
 pnpm lint:api
 ```
 
-第一版不包含支付、退款、物流、售后和真实电商平台对接。
+API 集成测试依赖本机 PostgreSQL/PGVector 和 Redis；未配置 DashScope Key 时，确定性 Agent 测试仍可运行，依赖真实模型的 ASR、Embedding、Reranker 和 TTS 测试需要相应配置。Windows/Python 版本差异导致的 asyncpg 事件循环问题属于测试环境治理事项，见 [任务文档](docs/tasks.md) 的 `TASK-007`。
