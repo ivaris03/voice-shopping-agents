@@ -98,11 +98,11 @@ def _selected_recommendation_order(state: ShoppingState, utterance: str) -> Inte
 
 
 async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
-    """Recognize the current turn without consulting durable conversation facts.
+    """Recognize and finalize the current turn's intent in one node.
 
-    Conversation state is synchronized by ``apply_intent_context`` after this
-    node. Keeping that step separate prevents an old pending question or
-    product card from short-circuiting intent recognition for a new turn.
+    Classification remains fresh for every turn.  The returned update also
+    contains deterministic category normalization and order-safety guards so
+    the router sees the final intent without a second graph node.
     """
     utterance = state.get("utterance", "").strip()
     dynamic_category_names = state.get("taxonomy_category_names", {})
@@ -112,10 +112,7 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
     ) or _category(utterance)
     selected_order = _selected_recommendation_order(state, utterance)
     if selected_order:
-        return {
-            "intent": selected_order.model_dump(exclude_none=True),
-            "starts_new_product_request": False,
-        }
+        return _finalize_intent(state, selected_order.model_dump(exclude_none=True), False)
     if state.get("model_enabled"):
         try:
             model_intent = await recognize_with_model(
@@ -125,12 +122,11 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
             )
             category = explicit_category or _normalize_category(model_intent.product_category)
             model_intent = model_intent.model_copy(update={"product_category": category})
-            return {
-                "intent": model_intent.model_dump(exclude_none=True),
-                "starts_new_product_request": _starts_new_product_request(
-                    utterance, explicit_category, model_intent.type
-                ),
-            }
+            return _finalize_intent(
+                state,
+                model_intent.model_dump(exclude_none=True),
+                _starts_new_product_request(utterance, explicit_category, model_intent.type),
+            )
         except Exception as exc:
             logger.warning("Intent model failed; using deterministic fallback: %s", exc)
     detections: list[tuple[int, IntentResult]] = []
@@ -171,24 +167,29 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
     if not detections:
         detections.append((0, IntentResult(type="UNSUPPORTED_REQUEST", confidence=0.86)))
     selected = min(detections, key=lambda item: item[0])[1]
-    return {
-        "intent": selected.model_dump(exclude_none=True),
-        "starts_new_product_request": _starts_new_product_request(
-            utterance, explicit_category, selected.type
-        ),
-    }
+    return _finalize_intent(
+        state,
+        selected.model_dump(exclude_none=True),
+        _starts_new_product_request(utterance, explicit_category, selected.type),
+    )
 
 
-async def apply_intent_context(state: ShoppingState) -> dict[str, Any]:
-    """Apply the current intent to conversation state after recognition.
+def _finalize_intent(
+    state: ShoppingState,
+    recognized_intent: dict[str, Any],
+    starts_new_product_request: bool,
+) -> dict[str, Any]:
+    """Normalize the recognized intent and apply deterministic safety guards.
 
-    This node owns stateful guards such as order safety and category changes;
-    the intent Agent itself remains a fresh classification for every turn.
+    This is a pure helper used by ``recognize_intent``; it is deliberately not
+    a separate graph node.  State merging and checkpointing remain the
+    responsibility of LangGraph.
     """
-    intent = dict(state.get("intent") or {})
+    intent = dict(recognized_intent)
     category = _normalize_category(intent.get("product_category"))
     previous_category = _normalize_category(state.get("product_category"))
     updates: dict[str, Any] = {
+        "starts_new_product_request": starts_new_product_request,
         "category_changed": bool(category and category != previous_category),
     }
     if category:
@@ -200,7 +201,7 @@ async def apply_intent_context(state: ShoppingState) -> dict[str, Any]:
         and intent.get("action") == "CREATE"
         and (
             (
-                state.get("starts_new_product_request")
+                starts_new_product_request
                 and not _has_order_target(state, state.get("utterance", ""))
             )
             or not _has_recommendation_cards(state)
@@ -216,7 +217,7 @@ async def apply_intent_context(state: ShoppingState) -> dict[str, Any]:
             product_category=category,
         ).model_dump(exclude_none=True)
         updates["starts_new_product_request"] = bool(
-            category or state.get("starts_new_product_request")
+            category or starts_new_product_request
         )
 
     updates["intent"] = intent

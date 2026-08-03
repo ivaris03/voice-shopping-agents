@@ -2,7 +2,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 
 from voice_shopping_api.agents.nodes.clarification import clarify_requirements
-from voice_shopping_api.agents.nodes.intent import apply_intent_context, recognize_intent
+from voice_shopping_api.agents.nodes.intent import recognize_intent
 from voice_shopping_api.agents.nodes.recommendation import recommend_products, retrieve_catalog
 from voice_shopping_api.agents.nodes.response import (
     compliance_check,
@@ -33,7 +33,6 @@ def build_workflow(*, checkpointer: BaseCheckpointSaver | None = None):
     """Assemble the graph; business rules remain inside the individual nodes."""
     graph = StateGraph(ShoppingState, context_schema=ShoppingWorkflowContext)
     graph.add_node("intent_agent", recognize_intent)
-    graph.add_node("intent_context", apply_intent_context)
     graph.add_node("clarification_agent", clarify_requirements)
     graph.add_node("catalog_retrieval", retrieve_catalog)
     graph.add_node("recommendation_agent", recommend_products)
@@ -41,9 +40,8 @@ def build_workflow(*, checkpointer: BaseCheckpointSaver | None = None):
     graph.add_node("emotional_agent", emotional_response)
     graph.add_node("compliance_check", compliance_check)
     graph.add_edge(START, "intent_agent")
-    graph.add_edge("intent_agent", "intent_context")
     graph.add_conditional_edges(
-        "intent_context",
+        "intent_agent",
         _route_intent,
         {
             "clarify": "clarification_agent",

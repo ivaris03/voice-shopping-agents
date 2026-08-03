@@ -13,7 +13,7 @@ from voice_shopping_api.agents.nodes import intent as intent_module
 from voice_shopping_api.agents.nodes import response as response_module
 from voice_shopping_api.agents.nodes.clarification import clarify_requirements
 from voice_shopping_api.agents.nodes.constants import COMPLIANCE_FALLBACK, REQUIRED_SLOTS
-from voice_shopping_api.agents.nodes.intent import apply_intent_context, recognize_intent
+from voice_shopping_api.agents.nodes.intent import recognize_intent
 from voice_shopping_api.agents.nodes.response import compliance_check, emotional_response
 from voice_shopping_api.agents.service import _handle_order, state_events
 from voice_shopping_api.agents.state import (
@@ -56,27 +56,19 @@ async def test_selected_recommendation_routes_to_create_order_before_category_ma
 
 
 @pytest.mark.asyncio
-async def test_selected_order_is_not_downgraded_to_a_new_recommendation() -> None:
-    updates = await apply_intent_context(
+async def test_intent_normalizes_category_and_tracks_category_change() -> None:
+    updates = await recognize_intent(
         {
-            "utterance": "买这个第二款耳机吧，你来帮我下单吧。",
-            "intent": {
-                "type": "PRODUCT_ORDER",
-                "confidence": 0.97,
-                "action": "CREATE",
-                "product_category": "HEADPHONES",
-            },
-            "starts_new_product_request": True,
+            "utterance": "我想买一双跑鞋",
+            "model_enabled": False,
             "product_category": "HEADPHONES",
-            "previous_product_cards": [
-                {"productId": "product-1", "name": "AirPods Pro 2"},
-                {"productId": "product-2", "name": "Edifier"},
-            ],
         }
     )
 
-    assert updates["intent"]["type"] == "PRODUCT_ORDER"
-    assert updates["intent"]["action"] == "CREATE"
+    assert updates["intent"]["type"] == "PRODUCT_RECOMMENDATION"
+    assert updates["intent"]["product_category"] == "RUNNING_SHOES"
+    assert updates["product_category"] == "RUNNING_SHOES"
+    assert updates["category_changed"] is True
 
 
 @pytest.mark.asyncio

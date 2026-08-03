@@ -486,7 +486,6 @@ def state_events(
 # graph node cannot silently fall back to a generic "Agent processing" label.
 WORKFLOW_NODE_LABELS: dict[str, str] = {
     "intent_agent": "意图识别 Agent 运行中",
-    "intent_context": "意图上下文处理中",
     "clarification_agent": "需求澄清 Agent 运行中",
     "catalog_retrieval": "商品召回中",
     "recommendation_agent": "推荐 Agent 运行中",
