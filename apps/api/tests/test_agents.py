@@ -1,17 +1,19 @@
 import asyncio
+from uuid import UUID
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.runtime import Runtime
 
 from voice_shopping_api.agents import model as model_module
+from voice_shopping_api.agents import service as service_module
 from voice_shopping_api.agents.graph import build_workflow, shopping_workflow
 from voice_shopping_api.agents.nodes import clarification as clarification_module
 from voice_shopping_api.agents.nodes import intent as intent_module
 from voice_shopping_api.agents.nodes import response as response_module
 from voice_shopping_api.agents.nodes.clarification import clarify_requirements
 from voice_shopping_api.agents.nodes.constants import COMPLIANCE_FALLBACK, REQUIRED_SLOTS
-from voice_shopping_api.agents.nodes.intent import recognize_intent
+from voice_shopping_api.agents.nodes.intent import apply_intent_context, recognize_intent
 from voice_shopping_api.agents.nodes.response import compliance_check, emotional_response
 from voice_shopping_api.agents.service import _handle_order, state_events
 from voice_shopping_api.agents.state import (
@@ -29,6 +31,52 @@ async def test_intent_selects_the_first_expressed_request() -> None:
 
     assert result["intent"]["type"] == "PRODUCT_RECOMMENDATION"
     assert result["intent"]["product_category"] == "HEADPHONES"
+
+
+@pytest.mark.asyncio
+async def test_selected_recommendation_routes_to_create_order_before_category_matching() -> None:
+    utterance = "买这个第二款耳机吧，你来帮我下单吧。"
+    result = await recognize_intent(
+        {
+            "utterance": utterance,
+            "model_enabled": False,
+            "previous_product_cards": [
+                {"productId": "product-1", "name": "AirPods Pro 2"},
+                {"productId": "product-2", "name": "Edifier"},
+            ],
+        }
+    )
+
+    assert result["intent"] == {
+        "type": "PRODUCT_ORDER",
+        "confidence": 0.99,
+        "action": "CREATE",
+    }
+    assert result["starts_new_product_request"] is False
+
+
+@pytest.mark.asyncio
+async def test_selected_order_is_not_downgraded_to_a_new_recommendation() -> None:
+    updates = await apply_intent_context(
+        {
+            "utterance": "买这个第二款耳机吧，你来帮我下单吧。",
+            "intent": {
+                "type": "PRODUCT_ORDER",
+                "confidence": 0.97,
+                "action": "CREATE",
+                "product_category": "HEADPHONES",
+            },
+            "starts_new_product_request": True,
+            "product_category": "HEADPHONES",
+            "previous_product_cards": [
+                {"productId": "product-1", "name": "AirPods Pro 2"},
+                {"productId": "product-2", "name": "Edifier"},
+            ],
+        }
+    )
+
+    assert updates["intent"]["type"] == "PRODUCT_ORDER"
+    assert updates["intent"]["action"] == "CREATE"
 
 
 @pytest.mark.asyncio
@@ -287,6 +335,114 @@ async def test_order_node_executes_the_context_order_handler() -> None:
 
     assert handled_states[0]["intent"]["type"] == "PRODUCT_ORDER"
     assert result["pending_order"]["id"] == "order-1"
+
+
+@pytest.mark.asyncio
+async def test_selected_product_order_creates_a_pending_order_before_confirmation() -> None:
+    handled_states: list[dict[str, object]] = []
+
+    async def load_catalog(_: str, __: bool, _filters: object) -> list[dict[str, object]]:
+        return []
+
+    async def handle_order(state: dict[str, object]) -> dict[str, object]:
+        handled_states.append(state)
+        return {
+            "pending_order": {"id": "order-2", "status": "pending"},
+            "speech_text": "已生成待确认订单，请说确认下单或取消订单。",
+            "final_reply": "已生成待确认订单，请说确认下单或取消订单。",
+            "compliance_blocked": False,
+        }
+
+    result = await shopping_workflow.ainvoke(
+        {
+            "utterance": "买这个第二款耳机吧，你来帮我下单吧。",
+            "previous_product_cards": [
+                {"productId": "product-1", "name": "AirPods Pro 2"},
+                {"productId": "product-2", "name": "Edifier"},
+            ],
+            "model_enabled": False,
+        },
+        context=ShoppingWorkflowContext(
+            catalog_loader=load_catalog,
+            order_handler=handle_order,
+        ),
+    )
+
+    assert handled_states[0]["intent"] == {
+        "type": "PRODUCT_ORDER",
+        "confidence": 0.99,
+        "action": "CREATE",
+    }
+    assert result["pending_order"]["status"] == "pending"
+    assert "确认下单" in result["final_reply"]
+
+
+@pytest.mark.asyncio
+async def test_confirmation_requires_an_existing_pending_order() -> None:
+    result = await recognize_intent(
+        {
+            "utterance": "买第二款耳机，下单吧。",
+            "model_enabled": False,
+            "previous_product_cards": [{"productId": "product-2", "name": "Edifier"}],
+        }
+    )
+    confirmation = await recognize_intent(
+        {
+            "utterance": "确认下单。",
+            "model_enabled": False,
+            "pending_order": {"id": "order-2", "status": "pending"},
+        }
+    )
+
+    assert result["intent"]["action"] == "CREATE"
+    assert confirmation["intent"]["action"] == "CONFIRM"
+
+
+@pytest.mark.asyncio
+async def test_order_handler_uses_the_selected_product_and_requests_confirmation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_product_id = UUID("20000000-0000-4000-8000-000000000001")
+    second_product_id = UUID("20000000-0000-4000-8000-000000000002")
+    captured: dict[str, object] = {}
+
+    async def no_pending_order(*_: object) -> None:
+        return None
+
+    async def create_order(*args: object) -> dict[str, object]:
+        payload = args[2]
+        captured["product_id"] = payload.product_id
+        return {
+            "id": "30000000-0000-4000-8000-000000000001",
+            "status": "pending",
+            "product_snapshot": {"name": "Edifier 入门真无线耳机"},
+            "unit_price": 199,
+            "total_amount": 199,
+        }
+
+    monkeypatch.setattr(service_module, "_latest_pending_order_id", no_pending_order)
+    monkeypatch.setattr(service_module, "create_pending_order", create_order)
+    result = await _handle_order(
+        None,  # type: ignore[arg-type]
+        {
+            "intent": {"type": "PRODUCT_ORDER", "action": "CREATE"},
+            "utterance": "买这个第二款耳机吧，你来帮我下单吧。",
+            "previous_product_cards": [
+                {"productId": str(first_product_id), "name": "AirPods Pro 2"},
+                {"productId": str(second_product_id), "name": "Edifier 入门真无线耳机"},
+            ],
+        },
+        None,  # type: ignore[arg-type]
+        UUID("40000000-0000-4000-8000-000000000001"),
+        UUID("50000000-0000-4000-8000-000000000001"),
+    )
+
+    assert captured["product_id"] == second_product_id
+    assert result["pending_order"]["status"] == "pending"
+    assert result["final_reply"] == (
+        "已生成待确认订单：Edifier 入门真无线耳机，数量 1，单价 199 元，"
+        "合计 199 元。订单十五分钟内有效，请说确认下单或取消订单。"
+    )
 
 
 @pytest.mark.asyncio

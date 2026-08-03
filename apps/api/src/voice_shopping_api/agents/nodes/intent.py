@@ -42,23 +42,58 @@ def _has_recommendation_cards(state: ShoppingState) -> bool:
     return bool(state.get("previous_product_cards") or state.get("product_cards"))
 
 
-def _order_action(utterance: str) -> str:
+def _has_pending_order(state: ShoppingState) -> bool:
+    pending_order = state.get("pending_order") or {}
+    return bool(pending_order.get("id")) and pending_order.get("status", "pending") == "pending"
+
+
+def _has_explicit_order_request(utterance: str) -> bool:
+    return any(
+        marker in utterance
+        for marker in (
+            "下单",
+            "买第一",
+            "买第二",
+            "买第三",
+            "买这个",
+            "买这款",
+            "就买",
+            "就要",
+            "帮我买",
+            "取消订单",
+        )
+    )
+
+
+def _order_action(utterance: str, *, has_pending_order: bool) -> str:
     if any(word in utterance for word in ("取消", "不要了", "不买了")):
         return "CANCEL"
-    if any(word in utterance for word in ("确认", "确定", "下单吧", "就这样")):
+    if has_pending_order and any(word in utterance for word in ("确认", "确定", "就这样")):
         return "CONFIRM"
     return "CREATE"
 
 
-def _starts_new_product_request(
-    utterance: str, category: str | None, intent_type: str
-) -> bool:
+def _starts_new_product_request(utterance: str, category: str | None, intent_type: str) -> bool:
     """Detect an explicit new purchase, excluding slot-answer phrasing."""
     if not category or intent_type not in ("PRODUCT_RECOMMENDATION", "PRODUCT_ORDER"):
         return False
-    return any(
-        marker in utterance
-        for marker in ("买", "推荐", "帮我选", "帮我挑", "需要一", "要一")
+    starts_new_request = any(
+        marker in utterance for marker in ("买", "推荐", "帮我选", "帮我挑", "需要一", "要一")
+    )
+    return starts_new_request and not (
+        intent_type == "PRODUCT_ORDER" and _has_explicit_order_request(utterance)
+    )
+
+
+def _selected_recommendation_order(state: ShoppingState, utterance: str) -> IntentResult | None:
+    """Prefer a concrete checkout instruction over category-word recommendations."""
+    has_order_context = _has_recommendation_cards(state) or _has_pending_order(state)
+    if not has_order_context or not _has_explicit_order_request(utterance):
+        return None
+    return IntentResult(
+        type="PRODUCT_ORDER",
+        confidence=0.99,
+        action=_order_action(utterance, has_pending_order=_has_pending_order(state)),
     )
 
 
@@ -75,6 +110,12 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
         (code for code, name in dynamic_category_names.items() if name and name in utterance),
         None,
     ) or _category(utterance)
+    selected_order = _selected_recommendation_order(state, utterance)
+    if selected_order:
+        return {
+            "intent": selected_order.model_dump(exclude_none=True),
+            "starts_new_product_request": False,
+        }
     if state.get("model_enabled"):
         try:
             model_intent = await recognize_with_model(
@@ -120,7 +161,11 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
     )
     detect(
         ("下单", "买第一", "买第二", "买第三", "确认", "取消订单"),
-        IntentResult(type="PRODUCT_ORDER", confidence=0.97, action=_order_action(utterance)),
+        IntentResult(
+            type="PRODUCT_ORDER",
+            confidence=0.97,
+            action=_order_action(utterance, has_pending_order=_has_pending_order(state)),
+        ),
     )
     detect(("你好", "谢谢", "嗨", "再见"), IntentResult(type="CHAT", confidence=0.9))
     if not detections:
@@ -154,7 +199,10 @@ async def apply_intent_context(state: ShoppingState) -> dict[str, Any]:
         intent.get("type") == "PRODUCT_ORDER"
         and intent.get("action") == "CREATE"
         and (
-            state.get("starts_new_product_request")
+            (
+                state.get("starts_new_product_request")
+                and not _has_order_target(state, state.get("utterance", ""))
+            )
             or not _has_recommendation_cards(state)
             or (
                 updates["category_changed"]
