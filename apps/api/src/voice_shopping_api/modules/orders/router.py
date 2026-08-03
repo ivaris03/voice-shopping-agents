@@ -13,6 +13,7 @@ from voice_shopping_api.modules.orders.service import (
     confirm_order,
     create_pending_order,
 )
+from voice_shopping_api.modules.sessions.service import finalize_session_profile
 from voice_shopping_api.schemas.domain import ItemsResponse, OrderCreate, OrderOut
 
 router = APIRouter()
@@ -41,6 +42,13 @@ async def create_order(payload: OrderCreate, session: Db, user_id: UserId) -> di
 @router.post("/{order_id}/confirm", response_model=OrderOut)
 async def confirm(order_id: UUID, session: Db, user_id: UserId) -> dict[str, object]:
     order = await confirm_order(session, user_id, order_id)
+    if order["status"] in {"success", "fail"} and order.get("session_id"):
+        await finalize_session_profile(
+            session,
+            order["session_id"],
+            user_id,
+            close_session=True,
+        )
     await session.commit()
     return order
 
@@ -48,5 +56,12 @@ async def confirm(order_id: UUID, session: Db, user_id: UserId) -> dict[str, obj
 @router.post("/{order_id}/cancel", response_model=OrderOut)
 async def cancel(order_id: UUID, session: Db, user_id: UserId) -> dict[str, object]:
     order = await cancel_order(session, user_id, order_id)
+    if order["status"] == "fail" and order.get("session_id"):
+        await finalize_session_profile(
+            session,
+            order["session_id"],
+            user_id,
+            close_session=True,
+        )
     await session.commit()
     return order

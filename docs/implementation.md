@@ -54,9 +54,14 @@
 `success`。取消、超时或校验失败进入 `fail`，终态不可迁移。
 
 商品点击和成功订单更新 `user_profile_dynamic`：点击累加品类/品牌偏好并维护最近浏览，
-成功订单使用更高权重、维护最近购买，并重新计算成功订单平均客单价。`user_profile_static`
-由用户资料或种子数据维护。推荐轮次开始时生成只读画像快照，并与 `ShoppingState` 一起
-保存在 `session_states`。
+成功订单使用更高权重、维护最近购买，并重新计算成功订单平均客单价。
+
+每轮从文本或语音转写中提取高置信度静态资料，并把它们累积为
+`ShoppingState.user_profile_updates`，该字段跨轮保存到 `session_states.workflow_state`。
+`POST /api/v1/sessions/{sessionId}/close`、WebSocket `session.close`、页面连接全部断开，
+以及订单进入 `success` 或 `fail` 终态时，调用会话画像收敛服务：显式渠道资料优先于对话抽取，
+只用非空、通过表约束校验的字段合并更新 `user_profile_static`。推荐轮次开始时仍生成只读
+画像快照并放入 `ShoppingState`；会话快照留档不作为长期画像事实来源。
 
 ## 仍需生产化的边界
 

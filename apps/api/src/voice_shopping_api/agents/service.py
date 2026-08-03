@@ -1,9 +1,9 @@
 import asyncio
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
 from typing import Any
-from uuid import UUID, uuid5
+from uuid import UUID
 
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import text
@@ -23,16 +23,20 @@ from voice_shopping_api.agents.state import (
 )
 from voice_shopping_api.core.config import get_settings
 from voice_shopping_api.core.queries import PRODUCT_COLUMNS, rows
+from voice_shopping_api.core.session import stable_uuid
 from voice_shopping_api.core.taxonomy import list_categories
-from voice_shopping_api.modules.catalog.profile import profile_snapshot
+from voice_shopping_api.modules.catalog.profile import (
+    extract_static_profile_candidates,
+    merge_static_profile_patches,
+    profile_snapshot,
+)
 from voice_shopping_api.modules.orders.service import (
     cancel_order,
     confirm_order,
     create_pending_order,
 )
+from voice_shopping_api.modules.sessions.service import finalize_session_profile
 from voice_shopping_api.schemas.domain import OrderCreate
-
-SESSION_NAMESPACE = UUID("f9b9f456-2d14-4ed5-a293-8b4d83f5c777")
 
 _checkpointed_workflow: tuple[object, Any] | None = None
 _checkpointed_workflow_lock = asyncio.Lock()
@@ -51,13 +55,6 @@ async def _workflow_for_turn() -> Any:
         workflow = build_workflow(checkpointer=checkpointer)
         _checkpointed_workflow = (checkpointer, workflow)
         return workflow
-
-
-def stable_uuid(value: str) -> UUID:
-    try:
-        return UUID(value)
-    except ValueError:
-        return uuid5(SESSION_NAMESPACE, value)
 
 
 def _json_default(value: Any) -> str:
@@ -493,6 +490,7 @@ async def process_turn(
     user_id: UUID,
     on_events: Callable[[list[dict[str, Any]]], Awaitable[None]] | None = None,
     on_speech_sentence: Callable[[str], Awaitable[None]] | None = None,
+    profile_updates: Mapping[str, Any] | None = None,
 ) -> tuple[ShoppingState, list[dict[str, Any]]]:
     settings = get_settings()
     session_id = stable_uuid(session_key)
@@ -501,6 +499,11 @@ async def process_turn(
     carried_forward = carry_forward_state(previous)
     model_enabled = bool(settings.dashscope_api_key)
     taxonomy_context = await _taxonomy_context(session)
+    profile_candidates = merge_static_profile_patches(
+        carried_forward.get("user_profile_updates", {}),
+        extract_static_profile_candidates(utterance, carried_forward.get("slots", {})),
+        profile_updates,
+    )
     state_input: ShoppingState = {
         **carried_forward,
         **taxonomy_context,
@@ -513,6 +516,7 @@ async def process_turn(
         "intent": {},
         "catalog_products": [],
         "user_profile_snapshot": await profile_snapshot(session, user_id),
+        "user_profile_updates": profile_candidates,
         "previous_product_cards": carried_forward.get("product_cards", []),
         "product_cards": [],
         "reasons": [],
@@ -602,7 +606,37 @@ async def process_turn(
                         "emotionStyle": result.get("emotion_style"),
                     },
                 )
+    result["user_profile_updates"] = merge_static_profile_patches(
+        state_input.get("user_profile_updates", {}),
+        extract_static_profile_candidates(
+            result.get("utterance", ""), result.get("slots", {})
+        ),
+    )
     await _persist(session, result, user_id, session_id, turn_id)
+    terminal_order = (result.get("pending_order") or {}).get("status") in {"success", "fail"}
+    if terminal_order:
+        await finalize_session_profile(
+            session,
+            session_id,
+            user_id,
+            result.get("user_profile_updates"),
+            close_session=True,
+        )
+        result["user_profile_snapshot"] = await profile_snapshot(session, user_id)
+        await session.execute(
+            text(
+                """
+                UPDATE session_states
+                SET user_profile_snapshot = CAST(:profile AS jsonb)
+                WHERE session_id = :session_id AND turn_id = :turn_id
+                """
+            ),
+            {
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "profile": json.dumps(result["user_profile_snapshot"], ensure_ascii=False),
+            },
+        )
     await session.commit()
     events = state_events(
         result,

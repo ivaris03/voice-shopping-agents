@@ -16,6 +16,8 @@ from voice_shopping_api.agents.service import process_turn
 from voice_shopping_api.core.config import get_settings
 from voice_shopping_api.core.database import async_session_factory
 from voice_shopping_api.core.identity import DEFAULT_CUSTOMER_ID
+from voice_shopping_api.core.session import stable_uuid
+from voice_shopping_api.modules.sessions.service import finalize_session_profile
 from voice_shopping_api.realtime.speech import StreamingAsr, split_sentences, synthesize_chunks
 
 router = APIRouter()
@@ -90,6 +92,43 @@ class RealtimeHub:
 
     async def close(self) -> None:
         await self.redis.aclose()
+
+    async def close_session(
+        self,
+        session_key: str,
+        user_id: UUID,
+        profile_updates: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        session_id = stable_uuid(session_key)
+        async with self.locks[session_key], async_session_factory() as db_session:
+            result = await finalize_session_profile(
+                db_session,
+                session_id,
+                user_id,
+                profile_updates,
+                close_session=True,
+            )
+            await db_session.commit()
+            return result
+
+    async def finalize_disconnected_session(self, session_key: str, user_id: UUID) -> None:
+        """Best-effort profile write when a page disappears without a close event."""
+        if self.text_connections[session_key] or self.audio_connections[session_key]:
+            return
+        async with self.locks[session_key], async_session_factory() as db_session:
+            if self.text_connections[session_key] or self.audio_connections[session_key]:
+                return
+            try:
+                await finalize_session_profile(
+                    db_session,
+                    stable_uuid(session_key),
+                    user_id,
+                    close_session=False,
+                )
+                await db_session.commit()
+            except Exception:
+                await db_session.rollback()
+                logger.exception("Failed to finalize disconnected session %s", session_key)
 
     async def _send_audio_event(self, session_id: str, event: dict[str, Any]) -> None:
         for connection in tuple(self.audio_connections[session_id]):
@@ -195,6 +234,7 @@ class RealtimeHub:
         turn_id: str,
         utterance: str,
         user_id: UUID,
+        profile_updates: dict[str, Any] | None = None,
     ) -> None:
         streamed_sentence_count = 0
 
@@ -217,6 +257,7 @@ class RealtimeHub:
                 user_id,
                 on_events=lambda batch: self.publish_text(session_id, batch),
                 on_speech_sentence=publish_streamed_sentence,
+                profile_updates=profile_updates,
             )
         if events:
             await self.publish_text(session_id, events)
@@ -244,6 +285,20 @@ async def text_socket(websocket: WebSocket, session_id: str) -> None:
                 for event in await hub.replay(session_id, turn_id, after_seq):
                     await websocket.send_json(event)
                 continue
+            if message_type == "session.close":
+                result = await hub.close_session(
+                    session_id,
+                    _user_id(websocket),
+                    message.get("profile") if isinstance(message.get("profile"), dict) else None,
+                )
+                await websocket.send_json(
+                    {
+                        "type": "session.closed",
+                        "sessionId": session_id,
+                        "payload": result,
+                    }
+                )
+                break
             turn_id = str(message.get("turnId") or "turn-1")
             utterance = str(message.get("utterance") or "").strip()
             if not utterance:
@@ -257,7 +312,13 @@ async def text_socket(websocket: WebSocket, session_id: str) -> None:
                     }
                 )
                 continue
-            await hub.run_turn(session_id, turn_id, utterance, _user_id(websocket))
+            await hub.run_turn(
+                session_id,
+                turn_id,
+                utterance,
+                _user_id(websocket),
+                message.get("profile") if isinstance(message.get("profile"), dict) else None,
+            )
     except WebSocketDisconnect:
         hub.text_connections[session_id].discard(websocket)
     except Exception as exc:
@@ -272,6 +333,9 @@ async def text_socket(websocket: WebSocket, session_id: str) -> None:
                     "payload": {"message": str(exc)},
                 }
             )
+    finally:
+        hub.text_connections[session_id].discard(websocket)
+        await hub.finalize_disconnected_session(session_id, _user_id(websocket))
 
 
 @router.websocket("/ws/audio/{session_id}")
@@ -436,3 +500,4 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
             with suppress(Exception):
                 await wait_for_sentence_task()
         hub.audio_connections[session_id].discard(websocket)
+        await hub.finalize_disconnected_session(session_id, _user_id(websocket))

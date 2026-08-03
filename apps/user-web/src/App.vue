@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   AppShell,
+  apiBaseUrl,
   audioWsBaseUrl,
   requestJson,
   textWsBaseUrl,
@@ -106,6 +107,7 @@ let capturedAudioBytes = 0
 let capturedAudioPeak = 0
 let recordingStartedAt = 0
 let lastAudioLevelUpdateAt = 0
+let sessionCloseSent = false
 let recordingTurnId = ''
 let asrReady = false
 let stopRequested = false
@@ -720,6 +722,7 @@ async function buyProduct(productId: string) {
         productId,
         quantity: 1,
         idempotencyKey: `web-${sessionId}-${crypto.randomUUID()}`,
+        sessionId,
       }),
     })
     await loadData()
@@ -741,11 +744,28 @@ async function updateOrder(order: Order, action: 'confirm' | 'cancel') {
   }
 }
 
+function notifySessionClosed() {
+  if (sessionCloseSent) return
+  sessionCloseSent = true
+  void fetch(`${apiBaseUrl}/sessions/${sessionId}/close`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-User-ID': customerId,
+    },
+    body: JSON.stringify({ reason: 'page_closed' }),
+    keepalive: true,
+  }).catch(() => undefined)
+}
+
 onMounted(() => {
   void Promise.all([loadData(), connectText(), connectAudio(), refreshAudioInputs()]).catch(() => undefined)
+  window.addEventListener('pagehide', notifySessionClosed)
   navigator.mediaDevices?.addEventListener?.('devicechange', handleAudioDeviceChange)
 })
 onBeforeUnmount(() => {
+  notifySessionClosed()
+  window.removeEventListener('pagehide', notifySessionClosed)
   stopAssistantSpeech()
   textSocket?.close()
   audioSocket?.close()

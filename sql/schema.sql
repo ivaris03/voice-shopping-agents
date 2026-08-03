@@ -302,7 +302,8 @@ CREATE TRIGGER sessions_set_updated_at
 BEFORE UPDATE ON sessions
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
--- 每轮保存一份可恢复的 ShoppingState；画像快照只读地固化在该轮记录中。
+-- 每轮保存一份可恢复的 ShoppingState；画像候选和只读画像快照一并固化在该轮记录中，
+-- 会话结束时再把候选资料收敛回 user_profile_static。
 CREATE TABLE IF NOT EXISTS session_states (
     id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id              uuid NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -367,7 +368,8 @@ $$;
 -- ============================================================================
 -- 五、用户画像：静态属性与动态行为
 -- 用户和商品在本项目中使用 UUID，因此这里保留 UUID 类型；字段语义与
--- 业务画像设计保持一致。静态画像来自用户资料或人工确认，动态画像由行为更新。
+-- 业务画像设计保持一致。静态画像由用户资料、人工确认或会话结束时的画像收敛更新，
+-- 动态画像由行为更新。
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS user_profile_static (

@@ -226,5 +226,25 @@ class BehaviorCreate(ApiModel):
     event_type: Literal["click"] = "click"
 
 
+class UserProfileStaticPatch(ApiModel):
+    """Facts supplied by a trusted channel when a conversation is finalized."""
+
+    gender: str | None = Field(default=None, max_length=8)
+    age: int | None = Field(default=None, ge=0, le=120)
+    city: str | None = Field(default=None, max_length=32)
+    height_cm: int | None = Field(default=None, ge=50, le=250)
+    weight_kg: int | None = Field(default=None, ge=10, le=300)
+    skin_type: str | None = Field(default=None, max_length=16)
+    tech_savvy: str | None = Field(default=None, max_length=16)
+    budget_band: str | None = Field(default=None, max_length=16)
+    budget: Decimal | None = Field(default=None, ge=0)
+    locale: str | None = Field(default=None, max_length=16)
+
+
+class SessionClose(ApiModel):
+    profile: UserProfileStaticPatch | None = None
+    reason: Literal["order_completed", "page_closed", "user_ended", "disconnect"] = "user_ended"
+
+
 class ItemsResponse[T](ApiModel):
     items: list[T]

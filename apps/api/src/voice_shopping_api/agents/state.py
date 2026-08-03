@@ -101,6 +101,12 @@ class TaxonomyState(TypedDict, total=False):
     taxonomy_categories: list[dict[str, Any]]
 
 
+class ProfileState(TypedDict, total=False):
+    """Static profile facts collected during the current conversation."""
+
+    user_profile_updates: dict[str, Any]
+
+
 class RecommendationState(TypedDict, total=False):
     """Retrieval and ranking data for the current recommendation path."""
 
@@ -159,6 +165,7 @@ class ShoppingState(
     TurnState,
     ConversationState,
     TaxonomyState,
+    ProfileState,
     RecommendationState,
     OrderState,
     ResponseState,
@@ -167,13 +174,14 @@ class ShoppingState(
     """The StateGraph contract, grouped above by lifecycle instead of by node."""
 
 
-# Only durable conversation facts are carried to the next request.  In
-# particular, taxonomy, candidate products, profiles and generated text are all
-# per-turn data and must not leak into the next graph invocation.
+# Only durable conversation facts are carried to the next request. Taxonomy,
+# candidate products, the read-only profile snapshot and generated text are
+# per-turn data; profile update candidates are accumulated until finalization.
 PERSISTED_STATE_KEYS = frozenset(
     {
         "product_category",
         "slots",
+        "user_profile_updates",
         "pending_question",
         "product_cards",
         "emotion_style",

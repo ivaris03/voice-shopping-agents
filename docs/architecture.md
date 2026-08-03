@@ -97,7 +97,7 @@ flowchart TD
     S --> A["语音 WS：音频流"]
 ```
 
-LangGraph 的 PostgreSQL Checkpointer 负责持久化每个节点后的 `ShoppingState`，使工作流能在下一轮继续恢复；本项目使用 `sessionId` 作为 `configurable.thread_id`，并同时作为 LangSmith 的 `metadata.thread_id`。`ShoppingState` 在图中保持扁平键，避免节点更新时覆盖嵌套对象；代码按生命周期拆成当轮输入、跨轮对话、只读 taxonomy、推荐、订单和展示输出六组 TypedDict。`session_states` 只保存跨轮业务事实：品类、槽位、待问问题、商品卡、展示风格和待处理订单；画像、候选商品、模型开关、历史和回复文本均不跨轮复用。
+LangGraph 的 PostgreSQL Checkpointer 负责持久化每个节点后的 `ShoppingState`，使工作流能在下一轮继续恢复；本项目使用 `sessionId` 作为 `configurable.thread_id`，并同时作为 LangSmith 的 `metadata.thread_id`。`ShoppingState` 在图中保持扁平键，避免节点更新时覆盖嵌套对象；代码按生命周期拆成当轮输入、跨轮对话、只读 taxonomy、画像候选、推荐、订单和展示输出七组 TypedDict。`session_states` 保存跨轮业务事实：品类、槽位、静态画像候选、商品卡、展示风格和待处理订单；画像只读快照、候选商品、模型开关、历史和回复文本均不作为下一轮输入。
 
 LangSmith 记录整条 StateGraph Trace，并以 `sessionId`、`turnId`、意图和 Agent 节点作为元数据，用于查看节点输入输出、模型调用、延迟、Token 消耗和错误。Trace 只用于可观测与评估，不保存业务状态；用户原话、画像和订单数据写入前需要脱敏。
 
@@ -146,7 +146,8 @@ ruleAdjustments:
 
 推荐前从 `user_profile_static`、`user_profile_dynamic` 生成只读
 `userProfileSnapshot`；同一轮推荐只读取该快照。商品点击和成功订单更新动态画像，
-静态画像由用户资料维护。
+对话中提取的静态资料先写入 `ShoppingState.user_profile_updates`，在订单终态、显式会话关闭
+或页面连接断开时统一合并回写 `user_profile_static`。显式渠道字段优先，空值不覆盖已有值。
 
 `PRODUCT_COMPARE` 和 `PRODUCT_QUERY` 同样由商品推荐 Agent 处理，但不重新召回商品。情感应答 Agent 为每张商品卡并发调用一次只生成理由的模型请求；文本增量携带 `productId`，前端据此填入对应卡片。单卡调用失败时只对该卡降级，不影响其他卡片。
 
@@ -166,7 +167,7 @@ ruleAdjustments:
 | `user_profile_dynamic` | 品类/品牌行为偏好、最近浏览/购买和客单价 |
 | `sessions` | 会话基本信息 |
 | `session_messages` | 会话消息和轮次 ID |
-| `session_states` | `ShoppingState`、画像快照和待确认订单 |
+| `session_states` | `ShoppingState`、画像候选/快照和待确认订单 |
 
 PGVector 字段保存在 `products`；订单成交快照保存在 `orders`。Redis 只保存连接和短期缓存，不保存业务事实。
 
@@ -176,6 +177,7 @@ PGVector 字段保存在 `products`；订单成交快照保存在 `orders`。Red
 | --- | --- |
 | `/ws/text/{session_id}` | 商品卡、推荐理由/话术增量、完整文本、流程状态 |
 | `/ws/audio/{session_id}` | 上行用户录音；下行 TTS 控制消息和二进制音频分片 |
+| `POST /api/v1/sessions/{sessionId}/close` | 显式结束会话并收敛静态画像 |
 
 文本连接依次发送 `recommendation.cards`、`text.delta`、`text.completed`。情感应答模型流每完成一个逗号、句号、问号等标点短句，就触发一次 TTS；语音连接即时发送该句的 `audio.start`、二进制音频分片和 `audio.end`，全部短句完成后发送 `audio.done`。ASR 同样按标点短句发送一次 `asr.sentence`，录音提交时发送 `asr.completed`。事件统一包含 `type`、`sessionId`、`turnId`、`seq` 和 `payload`，使用 `sessionId + turnId + seq` 唯一定位并排序。两个连接使用 `sessionId + turnId` 关联并支持重连。
 

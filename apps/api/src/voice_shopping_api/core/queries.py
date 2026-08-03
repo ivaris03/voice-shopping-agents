@@ -19,7 +19,8 @@ PRODUCT_COLUMNS = """
 """
 
 ORDER_COLUMNS = """
-    o.id, o.user_id, o.merchant_id, o.product_id, o.status, o.quantity,
+    o.id, o.user_id, o.merchant_id, o.product_id, o.session_id, o.source_turn_id,
+    o.status, o.quantity,
     o.unit_price, o.total_amount, o.merchant_snapshot, o.product_snapshot,
     o.failure_reason, o.expires_at, o.confirmed_at, o.created_at, o.updated_at
 """
