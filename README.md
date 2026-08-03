@@ -80,8 +80,10 @@ Reranker、ASR 和 TTS 模型。
 ```
 
 服务端依次推送 `flow.status`、`recommendation.cards`、`text.delta`、
-`text.completed` 和可选 `order.updated`。断线后发送 `session.resume + turnId + afterSeq`
-可从 Redis 重放遗漏事件。
+`text.completed` 和可选 `order.updated`。工作流节点开始执行时，`flow.status` 的
+`payload` 会带上实际 `node` 和用户提示 `label`（例如
+`clarification_agent` / `需求澄清 Agent 运行中`），前端可据此同步当前 Agent。
+断线后发送 `session.resume + turnId + afterSeq` 可从 Redis 重放遗漏事件。
 
 音频连接：`/ws/audio/{session_id}?userId={user_id}`。上行顺序为 `audio.start`、PCM16
 二进制分片、`audio.commit`；ASR 会按逗号、句号、问号等标点发送一次 `asr.sentence`，

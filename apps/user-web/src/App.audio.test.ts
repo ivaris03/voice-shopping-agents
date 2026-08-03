@@ -176,6 +176,26 @@ describe('assistant reply audio coordination', () => {
     wrapper.unmount()
   })
 
+  it('shows the backend workflow node while the turn is running', async () => {
+    const wrapper = mount(App)
+    await flushPromises()
+    const textSocket = FakeWebSocket.instances.find((socket) => socket.url.includes('/ws/text/'))
+
+    textSocket?.emitJson({
+      type: 'flow.status',
+      turnId: 'turn-clarification',
+      payload: {
+        status: 'processing',
+        node: 'clarification_agent',
+        label: '需求澄清 Agent 运行中',
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('需求澄清 Agent 运行中')
+    wrapper.unmount()
+  })
+
   it('uses browser speech only after the audio channel explicitly selects fallback', async () => {
     const wrapper = mount(App)
     await flushPromises()

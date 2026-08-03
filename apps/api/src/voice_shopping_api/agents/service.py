@@ -482,6 +482,20 @@ def state_events(
     return events
 
 
+# Keep the user-facing wording next to the workflow node names so a renamed
+# graph node cannot silently fall back to a generic "Agent processing" label.
+WORKFLOW_NODE_LABELS: dict[str, str] = {
+    "intent_agent": "意图识别 Agent 运行中",
+    "intent_context": "意图上下文处理中",
+    "clarification_agent": "需求澄清 Agent 运行中",
+    "catalog_retrieval": "商品召回中",
+    "recommendation_agent": "推荐 Agent 运行中",
+    "order_node": "订单处理节点运行中",
+    "emotional_agent": "回复 Agent 运行中",
+    "compliance_check": "合规检查节点运行中",
+}
+
+
 async def process_turn(
     session: AsyncSession,
     session_key: str,
@@ -580,7 +594,7 @@ async def process_turn(
         )
 
     workflow = await _workflow_for_turn()
-    async for update in workflow.astream(
+    async for stream_item in workflow.astream(
         state_input,
         config=run_config,
         context=ShoppingWorkflowContext(
@@ -594,9 +608,34 @@ async def process_turn(
             speech_delta_publisher=publish_speech_delta if on_events else None,
             speech_sentence_publisher=on_speech_sentence if on_events else None,
         ),
-        stream_mode="updates",
+        # ``tasks`` emits a start item before each node executes.  That is the
+        # point at which the UI can truthfully show the node as "running";
+        # updates alone arrive only after the node has finished.
+        stream_mode=["updates", "tasks"],
     ):
-        for node_name, partial in update.items():
+        stream_mode, payload = stream_item
+        if stream_mode == "tasks":
+            # Task start payloads have ``input``; task result payloads have
+            # ``result``/``error``.  Only publish starts to avoid flickering
+            # through a completed state between adjacent workflow nodes.
+            if on_events and isinstance(payload, dict) and "input" in payload:
+                node_name = str(payload.get("name", ""))
+                label = WORKFLOW_NODE_LABELS.get(node_name)
+                if label:
+                    await publish_event(
+                        "flow.status",
+                        {
+                            "status": "processing",
+                            "node": node_name,
+                            "label": label,
+                        },
+                    )
+            continue
+        if stream_mode != "updates" or not isinstance(payload, dict):
+            continue
+        for node_name, partial in payload.items():
+            if not isinstance(partial, dict):
+                continue
             result.update(partial)
             if on_events and node_name == "recommendation_agent" and result.get("product_cards"):
                 await publish_event(

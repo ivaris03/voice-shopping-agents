@@ -176,6 +176,16 @@ const orderStatusLabels: Record<Order['status'], string> = {
   fail: '已取消',
 }
 const quickPrompts = ['通勤降噪耳机，预算一千以内', '适合日常跑步的鞋', '送给朋友的口红']
+const workflowNodeLabels: Record<string, string> = {
+  intent_agent: '意图识别 Agent 运行中',
+  intent_context: '意图上下文处理中',
+  clarification_agent: '需求澄清 Agent 运行中',
+  catalog_retrieval: '商品召回中',
+  recommendation_agent: '推荐 Agent 运行中',
+  order_node: '订单处理节点运行中',
+  emotional_agent: '回复 Agent 运行中',
+  compliance_check: '合规检查节点运行中',
+}
 
 function categoryLabel(value: string) {
   return categoryLabels[value] ?? value.replaceAll('_', ' ')
@@ -385,7 +395,13 @@ function toggleAssistantSpeechPause() {
 function handleEvent(event: ApiEvent<Record<string, unknown>>) {
   if (event.type === 'flow.status') {
     const status = String(event.payload.status ?? '')
-    flowStatus.value = status === 'processing' ? 'Agent 正在理解与筛选…' : '可以继续说'
+    if (status === 'processing') {
+      const backendLabel = String(event.payload.label ?? '')
+      const nodeName = String(event.payload.node ?? '')
+      flowStatus.value = backendLabel || workflowNodeLabels[nodeName] || 'Agent 正在理解与筛选…'
+    } else if (status === 'completed') {
+      flowStatus.value = '可以继续说'
+    }
   }
   if (event.type === 'recommendation.cards') {
     const cards = event.payload.productCards as RecommendationCard[]
