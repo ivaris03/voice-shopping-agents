@@ -541,99 +541,105 @@ ON CONFLICT (id) DO UPDATE SET
     embedding = EXCLUDED.embedding,
     deleted_at = NULL;
 
-INSERT INTO user_static_profiles (
-    user_id, category_scores, brand_scores, attribute_preferences,
-    price_min, price_max, version, last_event_at
+INSERT INTO user_profile_static (
+    user_id, gender, age, city, height_cm, weight_kg, skin_type,
+    tech_savvy, budget_band, locale, updated_at
 )
 VALUES
     (
         '00000000-0000-4000-8000-000000000101',
-        '{"HEADPHONES":0.86,"COFFEE_MACHINE":0.28}',
-        '{"云雀":0.72,"潮汐":0.55}',
-        '{"noiseCancellation":0.90,"longBattery":0.75,"lightweight":0.64}',
-        300.00, 1100.00, 3, CURRENT_TIMESTAMP - interval '1 day'
+        'male', 29, '上海', 178, 68, 'normal', 'mid', 'mid', 'zh_cn',
+        CURRENT_TIMESTAMP - interval '1 day'
     ),
     (
         '00000000-0000-4000-8000-000000000102',
-        '{"COFFEE_MACHINE":0.81,"HEADPHONES":0.22}',
-        '{"山岚":0.68,"晨雾":0.62}',
-        '{"steamWand":0.80,"compact":0.56}',
-        500.00, 2000.00, 2, CURRENT_TIMESTAMP - interval '2 days'
+        'female', 32, '杭州', 165, 52, 'dry', 'novice', 'premium', 'zh_cn',
+        CURRENT_TIMESTAMP - interval '2 days'
     ),
     (
         '00000000-0000-4000-8000-000000000103',
-        '{"RUNNING_SHOES":0.88,"LIPSTICK":0.32}',
-        '{"Nike":0.75,"Asics":0.68,"HOKA":0.46}',
-        '{"cushionHigh":0.85,"terrainRoad":0.90,"lightweight":0.58}',
-        500.00, 1700.00, 4, CURRENT_TIMESTAMP - interval '6 hours'
+        'female', 28, '北京', 168, 55, 'normal', 'expert', 'mid', 'zh_cn',
+        CURRENT_TIMESTAMP - interval '6 hours'
     ),
     (
-        -- 冷启动用户：保留空画像，用于验证无历史行为时的推荐降级。
+        -- 冷启动用户：保留空静态画像，用于验证无历史资料时的推荐降级。
         '00000000-0000-4000-8000-000000000104',
-        '{}', '{}', '{}',
-        NULL, NULL, 1, NULL
+        NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'zh_cn',
+        CURRENT_TIMESTAMP
     ),
     (
         '00000000-0000-4000-8000-000000000105',
-        '{"HEADPHONES":0.74,"WATCHES":0.52}',
-        '{"Sony":0.61,"Casio":0.55,"Seiko":0.42}',
-        '{"noiseCancellation":0.78,"longBattery":0.64,"waterResistance":0.40}',
-        300.00, 2600.00, 3, CURRENT_TIMESTAMP - interval '12 hours'
+        'male', 35, '深圳', 180, 75, 'oily', 'mid', 'premium', 'zh_cn',
+        CURRENT_TIMESTAMP - interval '12 hours'
     )
 ON CONFLICT (user_id) DO UPDATE SET
-    category_scores = EXCLUDED.category_scores,
-    brand_scores = EXCLUDED.brand_scores,
-    attribute_preferences = EXCLUDED.attribute_preferences,
-    price_min = EXCLUDED.price_min,
-    price_max = EXCLUDED.price_max,
-    version = EXCLUDED.version,
-    last_event_at = EXCLUDED.last_event_at;
+    gender = EXCLUDED.gender,
+    age = EXCLUDED.age,
+    city = EXCLUDED.city,
+    height_cm = EXCLUDED.height_cm,
+    weight_kg = EXCLUDED.weight_kg,
+    skin_type = EXCLUDED.skin_type,
+    tech_savvy = EXCLUDED.tech_savvy,
+    budget_band = EXCLUDED.budget_band,
+    locale = EXCLUDED.locale,
+    updated_at = EXCLUDED.updated_at;
 
-INSERT INTO user_dynamic_profiles (
-    user_id, category_scores, product_scores, session_interests,
-    version, last_event_at, expires_at
+INSERT INTO user_profile_dynamic (
+    user_id, category_affinity, brand_affinity, recent_viewed,
+    recent_purchased, price_sensitivity, avg_order_amount, updated_at
 )
 VALUES
     (
         '00000000-0000-4000-8000-000000000101',
         '{"HEADPHONES":0.94}',
-        '{"20000000-0000-4000-8000-000000000001":0.82,"20000000-0000-4000-8000-000000000002":0.61}',
-        '{"budgetMax":1000,"useCase":"commute","required":{"noiseCancellation":true}}',
-        5, CURRENT_TIMESTAMP - interval '20 minutes', CURRENT_TIMESTAMP + interval '7 days'
+        '{"云雀":0.72,"潮汐":0.55}',
+        ARRAY[
+            '20000000-0000-4000-8000-000000000001'::uuid,
+            '20000000-0000-4000-8000-000000000002'::uuid
+        ],
+        '{}'::uuid[], 0.35, NULL, CURRENT_TIMESTAMP - interval '20 minutes'
     ),
     (
         '00000000-0000-4000-8000-000000000102',
         '{"COFFEE_MACHINE":0.88}',
-        '{"20000000-0000-4000-8000-000000000005":0.75}',
-        '{"useCase":"home","experience":"beginner"}',
-        2, CURRENT_TIMESTAMP - interval '2 hours', CURRENT_TIMESTAMP + interval '7 days'
+        '{"山岚":0.68,"晨雾":0.62}',
+        ARRAY['20000000-0000-4000-8000-000000000005'::uuid],
+        ARRAY['20000000-0000-4000-8000-000000000005'::uuid],
+        0.25, 1699.00, CURRENT_TIMESTAMP - interval '2 hours'
     ),
     (
         '00000000-0000-4000-8000-000000000103',
         '{"RUNNING_SHOES":0.93}',
-        '{"20000000-0000-4000-8000-000000000101":0.76,"20000000-0000-4000-8000-000000000106":0.58,"20000000-0000-4000-8000-000000000110":0.64}',
-        '{"budgetMax":1000,"terrain":"road","useCase":"daily-training"}',
-        6, CURRENT_TIMESTAMP - interval '15 minutes', CURRENT_TIMESTAMP + interval '7 days'
+        '{"Nike":0.75,"Asics":0.68,"HOKA":0.46}',
+        ARRAY[
+            '20000000-0000-4000-8000-000000000101'::uuid,
+            '20000000-0000-4000-8000-000000000106'::uuid,
+            '20000000-0000-4000-8000-000000000110'::uuid
+        ],
+        '{}'::uuid[], 0.40, NULL, CURRENT_TIMESTAMP - interval '15 minutes'
     ),
     (
         '00000000-0000-4000-8000-000000000104',
-        '{}', '{}', '{}',
-        1, NULL, CURRENT_TIMESTAMP + interval '7 days'
+        '{}', '{}', '{}', '{}', NULL, NULL, CURRENT_TIMESTAMP
     ),
     (
         '00000000-0000-4000-8000-000000000105',
         '{"HEADPHONES":0.82,"WATCHES":0.45}',
-        '{"20000000-0000-4000-8000-000000000301":0.72,"20000000-0000-4000-8000-000000000202":0.38}',
-        '{"useCase":"commute","preferredForm":"over-ear"}',
-        4, CURRENT_TIMESTAMP - interval '1 hour', CURRENT_TIMESTAMP + interval '7 days'
+        '{"Sony":0.61,"Casio":0.55,"Seiko":0.42}',
+        ARRAY[
+            '20000000-0000-4000-8000-000000000301'::uuid,
+            '20000000-0000-4000-8000-000000000202'::uuid
+        ],
+        '{}'::uuid[], 0.30, NULL, CURRENT_TIMESTAMP - interval '1 hour'
     )
 ON CONFLICT (user_id) DO UPDATE SET
-    category_scores = EXCLUDED.category_scores,
-    product_scores = EXCLUDED.product_scores,
-    session_interests = EXCLUDED.session_interests,
-    version = EXCLUDED.version,
-    last_event_at = EXCLUDED.last_event_at,
-    expires_at = EXCLUDED.expires_at;
+    category_affinity = EXCLUDED.category_affinity,
+    brand_affinity = EXCLUDED.brand_affinity,
+    recent_viewed = EXCLUDED.recent_viewed,
+    recent_purchased = EXCLUDED.recent_purchased,
+    price_sensitivity = EXCLUDED.price_sensitivity,
+    avg_order_amount = EXCLUDED.avg_order_amount,
+    updated_at = EXCLUDED.updated_at;
 
 INSERT INTO sessions (
     id, user_id, status, conversation_summary, last_turn_id,
@@ -835,7 +841,7 @@ VALUES
         '30000000-0000-4000-8000-000000000001',
         '31000000-0000-4000-8000-000000000001',
         '{"utterance":"我想买一个通勤用的降噪耳机，预算一千以内。","intents":[{"type":"PRODUCT_RECOMMENDATION","confidence":0.98}],"actionQueue":["PRODUCT_RECOMMENDATION"],"productCategory":"HEADPHONES","requiredSlots":["budget","useCase","noiseCancellation"],"slots":{"budget":{"max":1000},"useCase":"commute","noiseCancellation":true},"clarificationStatus":"READY","productCards":[{"productId":"20000000-0000-4000-8000-000000000001"},{"productId":"20000000-0000-4000-8000-000000000002"},{"productId":"20000000-0000-4000-8000-000000000003"}],"emotionStyle":"warm-professional"}',
-        '{"static":{"categoryScores":{"HEADPHONES":0.86},"priceRange":{"min":300,"max":1100}},"dynamic":{"categoryScores":{"HEADPHONES":0.94},"useCase":"commute"},"capturedAt":"2026-08-02T00:00:00Z"}',
+        '{"static":{"gender":"male","age":29,"city":"上海","heightCm":178,"weightKg":68,"skinType":"normal","techSavvy":"mid","budgetBand":"mid","locale":"zh_cn"},"dynamic":{"categoryAffinity":{"HEADPHONES":0.94},"brandAffinity":{"云雀":0.72,"潮汐":0.55},"recentViewed":["20000000-0000-4000-8000-000000000001","20000000-0000-4000-8000-000000000002"],"recentPurchased":[],"priceSensitivity":0.35,"avgOrderAmount":null},"capturedAt":"2026-08-02T00:00:00Z"}',
         NULL, 'demo-checkpoint-001'
     ),
     (
@@ -843,7 +849,7 @@ VALUES
         '30000000-0000-4000-8000-000000000001',
         '31000000-0000-4000-8000-000000000002',
         '{"utterance":"就买第一款。","intents":[{"type":"PRODUCT_ORDER","action":"CREATE","confidence":0.99}],"actionQueue":["PRODUCT_ORDER"],"pendingOrder":{"orderId":"50000000-0000-4000-8000-000000000001","status":"pending","expiresInSeconds":900}}',
-        '{"static":{"categoryScores":{"HEADPHONES":0.86},"priceRange":{"min":300,"max":1100}},"dynamic":{"categoryScores":{"HEADPHONES":0.94},"useCase":"commute"},"capturedAt":"2026-08-02T00:02:00Z"}',
+        '{"static":{"gender":"male","age":29,"city":"上海","heightCm":178,"weightKg":68,"skinType":"normal","techSavvy":"mid","budgetBand":"mid","locale":"zh_cn"},"dynamic":{"categoryAffinity":{"HEADPHONES":0.94},"brandAffinity":{"云雀":0.72,"潮汐":0.55},"recentViewed":["20000000-0000-4000-8000-000000000001","20000000-0000-4000-8000-000000000002"],"recentPurchased":[],"priceSensitivity":0.35,"avgOrderAmount":null},"capturedAt":"2026-08-02T00:02:00Z"}',
         '50000000-0000-4000-8000-000000000001', 'demo-checkpoint-002'
     ),
     (
@@ -851,7 +857,7 @@ VALUES
         '30000000-0000-4000-8000-000000000003',
         '33000000-0000-4000-8000-000000000001',
         '{"utterance":"帮我写一份周报。","intents":[{"type":"UNSUPPORTED_REQUEST","confidence":0.99}],"actionQueue":["UNSUPPORTED_REQUEST"],"finalReply":"抱歉，我目前只能协助商品推荐、查询、对比和下单。你可以告诉我想买什么商品。"}',
-        '{"static":{"categoryScores":{}},"dynamic":{"categoryScores":{}},"coldStart":true,"capturedAt":"2026-08-02T01:00:00Z"}',
+        '{"static":{"gender":null,"age":null,"city":null,"heightCm":null,"weightKg":null,"skinType":null,"techSavvy":null,"budgetBand":null,"locale":"zh_cn"},"dynamic":{"categoryAffinity":{},"brandAffinity":{},"recentViewed":[],"recentPurchased":[],"priceSensitivity":null,"avgOrderAmount":null},"capturedAt":"2026-08-02T01:00:00Z"}',
         NULL, 'demo-checkpoint-unsupported-001'
     ),
     (
@@ -859,7 +865,7 @@ VALUES
         '30000000-0000-4000-8000-000000000004',
         '34000000-0000-4000-8000-000000000001',
         '{"utterance":"我想买双跑鞋。","intents":[{"type":"PRODUCT_RECOMMENDATION","confidence":0.98}],"actionQueue":["PRODUCT_RECOMMENDATION"],"productCategory":"RUNNING_SHOES","requiredSlots":["budgetMax","useCase"],"slots":{},"clarificationStatus":"ASK","missingSlots":["budgetMax","useCase"],"pendingQuestion":{"slot":"budgetMax","question":"你的预算上限是多少？"}}',
-        '{"static":{"categoryScores":{"RUNNING_SHOES":0.88},"priceRange":{"min":500,"max":1700}},"dynamic":{"categoryScores":{"RUNNING_SHOES":0.93}},"capturedAt":"2026-08-02T01:30:00Z"}',
+        '{"static":{"gender":"female","age":28,"city":"北京","heightCm":168,"weightKg":55,"skinType":"normal","techSavvy":"expert","budgetBand":"mid","locale":"zh_cn"},"dynamic":{"categoryAffinity":{"RUNNING_SHOES":0.93},"brandAffinity":{"Nike":0.75,"Asics":0.68,"HOKA":0.46},"recentViewed":["20000000-0000-4000-8000-000000000101","20000000-0000-4000-8000-000000000106","20000000-0000-4000-8000-000000000110"],"recentPurchased":[],"priceSensitivity":0.40,"avgOrderAmount":null},"capturedAt":"2026-08-02T01:30:00Z"}',
         NULL, 'demo-checkpoint-clarify-001'
     ),
     (
@@ -867,7 +873,7 @@ VALUES
         '30000000-0000-4000-8000-000000000004',
         '34000000-0000-4000-8000-000000000002',
         '{"utterance":"一千元以内。","intents":[{"type":"PRODUCT_RECOMMENDATION","confidence":0.97}],"actionQueue":["PRODUCT_RECOMMENDATION"],"productCategory":"RUNNING_SHOES","requiredSlots":["budgetMax","useCase"],"slots":{"budgetMax":1000},"clarificationStatus":"ASK","missingSlots":["useCase"],"pendingQuestion":{"slot":"useCase","question":"主要用于什么场景？"}}',
-        '{"static":{"categoryScores":{"RUNNING_SHOES":0.88},"priceRange":{"min":500,"max":1700}},"dynamic":{"categoryScores":{"RUNNING_SHOES":0.93}},"capturedAt":"2026-08-02T01:32:00Z"}',
+        '{"static":{"gender":"female","age":28,"city":"北京","heightCm":168,"weightKg":55,"skinType":"normal","techSavvy":"expert","budgetBand":"mid","locale":"zh_cn"},"dynamic":{"categoryAffinity":{"RUNNING_SHOES":0.93},"brandAffinity":{"Nike":0.75,"Asics":0.68,"HOKA":0.46},"recentViewed":["20000000-0000-4000-8000-000000000101","20000000-0000-4000-8000-000000000106","20000000-0000-4000-8000-000000000110"],"recentPurchased":[],"priceSensitivity":0.40,"avgOrderAmount":null},"capturedAt":"2026-08-02T01:32:00Z"}',
         NULL, 'demo-checkpoint-clarify-002'
     ),
     (
@@ -875,7 +881,7 @@ VALUES
         '30000000-0000-4000-8000-000000000004',
         '34000000-0000-4000-8000-000000000003',
         '{"utterance":"主要是日常路跑训练。","intents":[{"type":"PRODUCT_RECOMMENDATION","confidence":0.98}],"actionQueue":["PRODUCT_RECOMMENDATION"],"productCategory":"RUNNING_SHOES","requiredSlots":["budgetMax","useCase"],"slots":{"budgetMax":1000,"useCase":"daily-road-running"},"clarificationStatus":"READY","missingSlots":[],"productCards":[{"productId":"20000000-0000-4000-8000-000000000101"},{"productId":"20000000-0000-4000-8000-000000000110"},{"productId":"20000000-0000-4000-8000-000000000106"}],"emotionStyle":"encouraging-professional"}',
-        '{"static":{"categoryScores":{"RUNNING_SHOES":0.88},"priceRange":{"min":500,"max":1700}},"dynamic":{"categoryScores":{"RUNNING_SHOES":0.93},"budgetMax":1000,"useCase":"daily-road-running"},"capturedAt":"2026-08-02T01:35:00Z"}',
+        '{"static":{"gender":"female","age":28,"city":"北京","heightCm":168,"weightKg":55,"skinType":"normal","techSavvy":"expert","budgetBand":"mid","locale":"zh_cn"},"dynamic":{"categoryAffinity":{"RUNNING_SHOES":0.93},"brandAffinity":{"Nike":0.75,"Asics":0.68,"HOKA":0.46},"recentViewed":["20000000-0000-4000-8000-000000000101","20000000-0000-4000-8000-000000000106","20000000-0000-4000-8000-000000000110"],"recentPurchased":[],"priceSensitivity":0.40,"avgOrderAmount":null},"capturedAt":"2026-08-02T01:35:00Z"}',
         NULL, 'demo-checkpoint-clarify-003'
     )
 ON CONFLICT (id) DO UPDATE SET

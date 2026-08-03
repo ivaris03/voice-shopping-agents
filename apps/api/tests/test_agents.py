@@ -577,7 +577,9 @@ async def test_category_switch_clears_old_slots_and_routes_to_clarification() ->
                 "noiseCancellation": True,
             },
             "catalog_products": [],
-            "user_profile_snapshot": {"dynamic": {"categoryScores": {"HEADPHONES": 0.94}}},
+            "user_profile_snapshot": {
+                "dynamic": {"categoryAffinity": {"HEADPHONES": 0.94}}
+            },
         }
     )
 

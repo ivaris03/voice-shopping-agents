@@ -136,12 +136,17 @@ flowchart LR
 ```
 
 ```text
-matchScore = 0.4 × rerankerScore
-           + 0.4 × dynamicProfileScore
-           + 0.2 × staticProfileScore
+matchScore = rerankerScore + ruleAdjustments
+
+ruleAdjustments:
+  dynamic.brandAffinity 命中品牌       +0.2
+  price > 1.5 × dynamic.avgOrderAmount -0.15
+  productId 在 dynamic.recentPurchased -0.3
 ```
 
-推荐前从 `user_static_profiles`、`user_dynamic_profiles` 生成只读 `userProfileSnapshot`；同一轮推荐只读取该快照。商品点击和正式下单更新两张画像表，下单权重更高。具体画像字段和有效期在建表时确定。
+推荐前从 `user_profile_static`、`user_profile_dynamic` 生成只读
+`userProfileSnapshot`；同一轮推荐只读取该快照。商品点击和成功订单更新动态画像，
+静态画像由用户资料维护。
 
 `PRODUCT_COMPARE` 和 `PRODUCT_QUERY` 同样由商品推荐 Agent 处理，但不重新召回商品。情感应答 Agent 为每张商品卡并发调用一次只生成理由的模型请求；文本增量携带 `productId`，前端据此填入对应卡片。单卡调用失败时只对该卡降级，不影响其他卡片。
 
@@ -157,8 +162,8 @@ matchScore = 0.4 × rerankerScore
 | `users` | 用户身份和基础信息 |
 | `products` | 商家、价格、库存、属性、状态和商品向量 |
 | `orders` | 用户、商家、商品、成交快照、金额、15 分钟有效期、状态和幂等键 |
-| `user_static_profiles` | 长期用户偏好 |
-| `user_dynamic_profiles` | 近期行为和会话兴趣 |
+| `user_profile_static` | 用户相对稳定的资料属性 |
+| `user_profile_dynamic` | 品类/品牌行为偏好、最近浏览/购买和客单价 |
 | `sessions` | 会话基本信息 |
 | `session_messages` | 会话消息和轮次 ID |
 | `session_states` | `ShoppingState`、画像快照和待确认订单 |

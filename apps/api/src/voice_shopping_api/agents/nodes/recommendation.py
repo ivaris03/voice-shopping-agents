@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 RULE_BRAND_HIT = 0.2
 RULE_PRICE_OVER_AVG = -0.15
 RULE_REPEAT_PURCHASE = -0.3
-AVG_ORDER_VALUE_MULTIPLIER = 1.5
+AVG_ORDER_AMOUNT_MULTIPLIER = 1.5
 
 
 def _reranker_score(
@@ -49,20 +49,20 @@ def _reranker_score(
 def _rule_adjustments(
     product: dict[str, Any], profile: dict[str, Any]
 ) -> tuple[float, dict[str, float]]:
-    """画像快照规则：命中用户偏好品牌加分，价格超平均客单价 1.5 倍、
-    最近买过同款商品则扣分。"""
-    static = profile.get("static", {})
+    """画像快照规则：动态品牌偏好加分，超出平均客单价或复购则扣分。"""
+    dynamic = profile.get("dynamic", {})
     brand = str(product.get("brand") or "")
     parts: dict[str, float] = {}
-    if float(static.get("brandScores", {}).get(brand, 0)) > 0:
+    if float(dynamic.get("brandAffinity", {}).get(brand, 0)) > 0:
         parts["brandHit"] = RULE_BRAND_HIT
-    avg_order_value = profile.get("avgOrderValue")
+    avg_order_amount = dynamic.get("avgOrderAmount")
     if (
-        avg_order_value is not None
-        and float(product.get("price", 0)) > float(avg_order_value) * AVG_ORDER_VALUE_MULTIPLIER
+        avg_order_amount is not None
+        and float(product.get("price", 0))
+        > float(avg_order_amount) * AVG_ORDER_AMOUNT_MULTIPLIER
     ):
-        parts["priceOverAvgOrderValue"] = RULE_PRICE_OVER_AVG
-    if str(product.get("id", "")) in profile.get("recentlyPurchasedProductIds", []):
+        parts["priceOverAvgOrderAmount"] = RULE_PRICE_OVER_AVG
+    if str(product.get("id", "")) in dynamic.get("recentPurchased", []):
         parts["repeatPurchase"] = RULE_REPEAT_PURCHASE
     return sum(parts.values()), parts
 

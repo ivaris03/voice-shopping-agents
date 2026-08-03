@@ -87,9 +87,9 @@ flowchart TD
 ## 5. 推荐与用户画像
 
 - 推荐流程：硬约束过滤 → PGVector 召回 → 粗排 Top 20 → Reranker 与用户画像加权精排 → Top 3。
-- 精排权重：Reranker 0.4、动态画像 0.4、静态画像 0.2。
-- 静态、动态画像分别保存在 `user_static_profiles`、`user_dynamic_profiles`。
-- 商品点击和正式下单都会更新两张画像表，下单权重高于点击。
+- 静态画像保存在 `user_profile_static`，记录用户资料；动态画像保存在
+  `user_profile_dynamic`，记录品类/品牌偏好、最近浏览/购买、价格敏感度和平均客单价。
+- 商品点击和成功订单更新动态画像，成功订单的品类/品牌增量高于点击；静态画像由用户资料维护。
 - 推荐前生成只读 `userProfileSnapshot`，Agent 不直接访问画像表。
 - 商品推荐 Agent 不生成理由；情感应答 Agent 为每个商品生成一条理由。
 

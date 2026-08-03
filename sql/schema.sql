@@ -365,59 +365,63 @@ END;
 $$;
 
 -- ============================================================================
--- 五、画像域：用户静态画像、用户动态画像
--- 点击和正式下单后，由 FastAPI 在业务事务中更新两张画像表。
+-- 五、用户画像：静态属性与动态行为
+-- 用户和商品在本项目中使用 UUID，因此这里保留 UUID 类型；字段语义与
+-- 业务画像设计保持一致。静态画像来自用户资料或人工确认，动态画像由行为更新。
 -- ============================================================================
 
-CREATE TABLE IF NOT EXISTS user_static_profiles (
-    user_id             uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    category_scores     jsonb NOT NULL DEFAULT '{}'::jsonb,
-    brand_scores        jsonb NOT NULL DEFAULT '{}'::jsonb,
-    attribute_preferences jsonb NOT NULL DEFAULT '{}'::jsonb,
-    price_min           numeric(12, 2),
-    price_max           numeric(12, 2),
-    version             bigint NOT NULL DEFAULT 1,
-    last_event_at       timestamptz,
-    created_at          timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at          timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT user_static_profiles_category_object_check CHECK (jsonb_typeof(category_scores) = 'object'),
-    CONSTRAINT user_static_profiles_brand_object_check CHECK (jsonb_typeof(brand_scores) = 'object'),
-    CONSTRAINT user_static_profiles_attributes_object_check CHECK (jsonb_typeof(attribute_preferences) = 'object'),
-    CONSTRAINT user_static_profiles_price_check CHECK (
-        (price_min IS NULL OR price_min >= 0)
-        AND (price_max IS NULL OR price_max >= 0)
-        AND (price_min IS NULL OR price_max IS NULL OR price_min <= price_max)
+CREATE TABLE IF NOT EXISTS user_profile_static (
+    user_id         uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    gender          varchar(8),
+    age             integer,
+    city            varchar(32),
+    height_cm       integer,
+    weight_kg       integer,
+    skin_type       varchar(16),
+    tech_savvy      varchar(16),
+    budget_band     varchar(16),
+    locale          varchar(16) NOT NULL DEFAULT 'zh_cn',
+    updated_at      timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT user_profile_static_age_check CHECK (age IS NULL OR age BETWEEN 0 AND 120),
+    CONSTRAINT user_profile_static_height_check CHECK (
+        height_cm IS NULL OR height_cm BETWEEN 50 AND 250
     ),
-    CONSTRAINT user_static_profiles_version_check CHECK (version > 0)
+    CONSTRAINT user_profile_static_weight_check CHECK (
+        weight_kg IS NULL OR weight_kg BETWEEN 10 AND 300
+    )
 );
 
-DROP TRIGGER IF EXISTS user_static_profiles_set_updated_at ON user_static_profiles;
-CREATE TRIGGER user_static_profiles_set_updated_at
-BEFORE UPDATE ON user_static_profiles
+DROP TRIGGER IF EXISTS user_profile_static_set_updated_at ON user_profile_static;
+CREATE TRIGGER user_profile_static_set_updated_at
+BEFORE UPDATE ON user_profile_static
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
-CREATE TABLE IF NOT EXISTS user_dynamic_profiles (
+CREATE TABLE IF NOT EXISTS user_profile_dynamic (
     user_id             uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    category_scores     jsonb NOT NULL DEFAULT '{}'::jsonb,
-    product_scores      jsonb NOT NULL DEFAULT '{}'::jsonb,
-    session_interests   jsonb NOT NULL DEFAULT '{}'::jsonb,
-    version             bigint NOT NULL DEFAULT 1,
-    last_event_at       timestamptz,
-    expires_at          timestamptz,
-    created_at          timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    category_affinity   jsonb NOT NULL DEFAULT '{}'::jsonb,
+    brand_affinity      jsonb NOT NULL DEFAULT '{}'::jsonb,
+    recent_viewed       uuid[] NOT NULL DEFAULT ARRAY[]::uuid[],
+    recent_purchased    uuid[] NOT NULL DEFAULT ARRAY[]::uuid[],
+    price_sensitivity   numeric(3, 2),
+    avg_order_amount    numeric(10, 2),
     updated_at          timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT user_dynamic_profiles_category_object_check CHECK (jsonb_typeof(category_scores) = 'object'),
-    CONSTRAINT user_dynamic_profiles_product_object_check CHECK (jsonb_typeof(product_scores) = 'object'),
-    CONSTRAINT user_dynamic_profiles_interests_object_check CHECK (jsonb_typeof(session_interests) = 'object'),
-    CONSTRAINT user_dynamic_profiles_version_check CHECK (version > 0)
+    CONSTRAINT user_profile_dynamic_category_object_check CHECK (
+        jsonb_typeof(category_affinity) = 'object'
+    ),
+    CONSTRAINT user_profile_dynamic_brand_object_check CHECK (
+        jsonb_typeof(brand_affinity) = 'object'
+    ),
+    CONSTRAINT user_profile_dynamic_price_sensitivity_check CHECK (
+        price_sensitivity IS NULL OR price_sensitivity BETWEEN 0 AND 1
+    ),
+    CONSTRAINT user_profile_dynamic_avg_order_amount_check CHECK (
+        avg_order_amount IS NULL OR avg_order_amount >= 0
+    )
 );
 
-CREATE INDEX IF NOT EXISTS user_dynamic_profiles_expiry_idx
-    ON user_dynamic_profiles (expires_at) WHERE expires_at IS NOT NULL;
-
-DROP TRIGGER IF EXISTS user_dynamic_profiles_set_updated_at ON user_dynamic_profiles;
-CREATE TRIGGER user_dynamic_profiles_set_updated_at
-BEFORE UPDATE ON user_dynamic_profiles
+DROP TRIGGER IF EXISTS user_profile_dynamic_set_updated_at ON user_profile_dynamic;
+CREATE TRIGGER user_profile_dynamic_set_updated_at
+BEFORE UPDATE ON user_profile_dynamic
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 COMMIT;

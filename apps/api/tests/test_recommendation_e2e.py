@@ -141,6 +141,20 @@ async def required_slots(session: AsyncSession) -> dict[str, list[str]]:
     }
 
 
+@pytest.mark.asyncio
+async def test_profile_snapshot_uses_static_and_dynamic_profile_fields(
+    session: AsyncSession,
+) -> None:
+    snapshot = await profile_snapshot(session, USER_101)
+
+    assert snapshot["static"]["city"] == "上海"
+    assert snapshot["static"]["budgetBand"] == "mid"
+    assert snapshot["dynamic"]["categoryAffinity"]["HEADPHONES"] == pytest.approx(0.94)
+    assert snapshot["dynamic"]["brandAffinity"]["云雀"] == pytest.approx(0.72)
+    assert snapshot["dynamic"]["recentViewed"]
+    assert snapshot["dynamic"]["recentPurchased"] == []
+
+
 def find_product(catalog: dict[str, dict[str, Any]], keyword: str) -> dict[str, Any]:
     matches = [row for row in catalog.values() if keyword in str(row["name"])]
     assert len(matches) == 1, f"期望唯一匹配「{keyword}」，实际 {len(matches)} 个"
@@ -256,7 +270,7 @@ async def run_and_record(
 # 用例名称到简短中文标签，报告用。
 RULE_LABELS = {
     "brandHit": "品牌+0.2",
-    "priceOverAvgOrderValue": "超价-0.15",
+    "priceOverAvgOrderAmount": "超价-0.15",
     "repeatPurchase": "复购-0.3",
 }
 
@@ -447,7 +461,7 @@ async def test_semi_auto_with_steam_wand_penalizes_repeat_purchase(
     assert [card["name"] for card in outcome["cards"]] == ["山岚半自动咖啡机"]
     breakdown = outcome["cards"][0]["scoreBreakdown"]
     assert breakdown["repeatPurchase"] == -0.3  # 90 天内买过山岚
-    assert "priceOverAvgOrderValue" not in breakdown  # 1699 < 1699 * 1.5
+    assert "priceOverAvgOrderAmount" not in breakdown  # 1699 < 1699 * 1.5
 
 
 @pytest.mark.asyncio
@@ -497,10 +511,10 @@ async def test_rule_penalty_reorders_top_choice_deterministically(
         slots={},
         profile={
             "static": {},
-            "avgOrderValue": 400.0,
-            "recentlyPurchasedProductIds": [
-                str(pegasus_39_id)
-            ],  # 与 profile_snapshot 一致：字符串列表
+            "dynamic": {
+                "avgOrderAmount": 400.0,
+                "recentPurchased": [str(pegasus_39_id)],
+            },  # 与 profile_snapshot 一致：字符串列表
         },
         model_enabled=False,
     )
@@ -523,12 +537,12 @@ async def test_rule_penalty_reorders_top_choice_deterministically(
     assert pegasus_40["matchScore"] == pytest.approx(0.37, abs=0.001)  # 0.52 - 0.15
     assert pegasus_40["scoreBreakdown"] == {
         "reranker": pytest.approx(0.52, abs=0.001),
-        "priceOverAvgOrderValue": -0.15,
+        "priceOverAvgOrderAmount": -0.15,
     }
     assert clifton["matchScore"] == pytest.approx(0.37, abs=0.001)  # 0.52 - 0.15
     assert clifton["scoreBreakdown"] == {
         "reranker": pytest.approx(0.52, abs=0.001),
-        "priceOverAvgOrderValue": -0.15,
+        "priceOverAvgOrderAmount": -0.15,
     }
 
 

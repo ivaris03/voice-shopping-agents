@@ -26,42 +26,42 @@ def test_empty_profile_adds_no_adjustment() -> None:
 
 
 def test_brand_hit_adds_points() -> None:
-    profile = {"static": {"brandScores": {"Asics": 0.18}}}
+    profile = {"dynamic": {"brandAffinity": {"Asics": 0.18}}}
     score, parts = _rule_adjustments(PRODUCT, profile)
     assert score == RULE_BRAND_HIT
     assert parts == {"brandHit": RULE_BRAND_HIT}
 
 
 def test_brand_with_zero_score_is_not_a_hit() -> None:
-    profile = {"static": {"brandScores": {"Asics": 0.0}}}
+    profile = {"dynamic": {"brandAffinity": {"Asics": 0.0}}}
     score, parts = _rule_adjustments(PRODUCT, profile)
     assert score == 0.0
     assert parts == {}
 
 
 def test_price_over_1_5x_avg_order_value_deducts() -> None:
-    profile = {"avgOrderValue": 500.0}  # 899 > 750
+    profile = {"dynamic": {"avgOrderAmount": 500.0}}  # 899 > 750
     score, parts = _rule_adjustments(PRODUCT, profile)
     assert score == RULE_PRICE_OVER_AVG
-    assert parts == {"priceOverAvgOrderValue": RULE_PRICE_OVER_AVG}
+    assert parts == {"priceOverAvgOrderAmount": RULE_PRICE_OVER_AVG}
 
 
 def test_price_below_1_5x_avg_order_value_is_not_deducted() -> None:
-    profile = {"avgOrderValue": 600.0}  # 899 < 900
+    profile = {"dynamic": {"avgOrderAmount": 600.0}}  # 899 < 900
     score, parts = _rule_adjustments(PRODUCT, profile)
     assert score == 0.0
     assert parts == {}
 
 
 def test_price_over_avg_without_orders_is_not_deducted() -> None:
-    profile = {"avgOrderValue": None}
+    profile = {"dynamic": {"avgOrderAmount": None}}
     score, parts = _rule_adjustments(PRODUCT, profile)
     assert score == 0.0
     assert parts == {}
 
 
 def test_repeat_purchase_deducts() -> None:
-    profile = {"recentlyPurchasedProductIds": [PRODUCT["id"]]}
+    profile = {"dynamic": {"recentPurchased": [PRODUCT["id"]]}}
     score, parts = _rule_adjustments(PRODUCT, profile)
     assert score == RULE_REPEAT_PURCHASE
     assert parts == {"repeatPurchase": RULE_REPEAT_PURCHASE}
@@ -69,8 +69,10 @@ def test_repeat_purchase_deducts() -> None:
 
 def test_brand_hit_and_repeat_purchase_combine() -> None:
     profile = {
-        "static": {"brandScores": {"Asics": 0.18}},
-        "recentlyPurchasedProductIds": [PRODUCT["id"]],
+        "dynamic": {
+            "brandAffinity": {"Asics": 0.18},
+            "recentPurchased": [PRODUCT["id"]],
+        },
     }
     score, parts = _rule_adjustments(PRODUCT, profile)
     assert score == RULE_BRAND_HIT + RULE_REPEAT_PURCHASE  # 0.2 - 0.3 = -0.1
