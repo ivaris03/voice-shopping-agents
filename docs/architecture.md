@@ -1,195 +1,295 @@
 # 语音导购 Agent 架构文档
 
+本文描述当前仓库已经落地的系统架构和关键设计决策。实现以 FastAPI 模块化单体为核心，Agent 工作流由 LangGraph 装配，三个 Vue 前端通过 HTTP 和双 WebSocket 访问后端。
+
 ## 1. 架构总览
 
-### 1.1 业务如何解决
+### 1.1 物理结构
 
-平台在普通商品浏览之外增加语音导购：系统理解用户意图，必要时澄清需求，从商品库中选出 3 个商品，再逐商品生成推荐理由和语音话术。点击与下单行为持续更新画像，影响后续精排；语音下单经过二次确认后创建正式订单。
+```text
+apps/
+  api/             FastAPI、LangGraph、订单/画像/品类业务、双 WebSocket
+  user-web/        用户端 Vue 应用
+  merchant-web/    商家端 Vue 应用
+  platform-web/    平台端 Vue 应用
+packages/web-ui/   三端共享组件、样式、API 类型和请求客户端
+sql/               PostgreSQL + PGVector Schema 和演示数据
+docs/              需求、架构和实现说明
+```
+
+后端是模块化单体，不拆分微服务。HTTP 路由按 `catalog`、`orders`、`merchant`、`platform`、`sessions` 划分；Agent 代码、模型适配、实时传输和基础设施分别位于 `agents`、`core`、`realtime` 和对应模块中。
+
+### 1.2 三个业务闭环
 
 ```mermaid
 flowchart LR
-    U["用户"] --> V["语音导购"]
-    V --> W["四个 Agent 的 Custom Workflow"]
-    C["商品库"] --> W
-    P["用户画像快照"] --> W
-    W --> R["商品卡、理由和语音"]
-    R --> E["点击/下单事件"]
-    E --> P
+    U["用户端"] --> G["导购闭环：理解需求 -> 澄清 -> 推荐 -> 理由/语音"]
+    G --> B["行为事件"]
+    B --> P["画像闭环：静态资料收敛 + 动态偏好更新"]
+    G --> O["交易闭环：待确认 -> 二次确认 -> 成交/失败"]
+    C["平台品类和商品库"] --> G
+    P --> G
+    M["商家端 / 平台端"] --> C
+    M --> O
 ```
 
-系统包含三个闭环：语音输入到推荐结果的导购闭环、行为更新画像的个性化闭环、二次确认到正式订单的交易闭环。
-
-### 1.2 LangGraph 核心设计
-
-| 核心部分 | 作用 |
-| --- | --- |
-| LangGraph | 运行工作流并支持条件路由、状态持久化和多轮恢复 |
-| Custom Workflow | 使用代码明确规定 Agent 与业务节点的路径 |
-| StateGraph | 定义共享状态、节点、普通边和条件边 |
-| LangChain | 封装模型调用、Prompt 和结构化输出 |
-| LangSmith | 追踪、调试、评估和监控 Agent 工作流 |
-
-应用代码按 LangGraph 的图装配与节点职责拆分：`agents/graph.py` 只声明节点、边和条件路由；`agents/nodes/intent.py`、`clarification.py`、`recommendation.py`、`response.py` 分别实现业务节点；`agents/nodes/constants.py` 集中维护共享规则；`agents/state.py` 定义图状态和运行时依赖。`workflow.py` 仅保留旧导入路径的兼容导出，新的应用代码直接依赖 `graph.py` 和对应节点模块。
+用户输入进入同一会话的两个传输通道：文本通道负责结构化事件和文本增量，音频通道负责 ASR 上行与 TTS 下行。两条通道用 `sessionId + turnId` 关联，但音频二进制不进入文本事件重放日志。
 
 ## 2. 业务架构
 
-### 2.1 三端业务能力
+### 2.1 端和模块边界
 
-| 前端 | 能力 |
-| --- | --- |
-| 用户端 | 店铺商品浏览、语音导购、我的订单 |
-| 商家端 | 店铺 CRUD、商品 CRUD、本店订单 |
-| 平台端 | 商家和商品查看、商家启用/禁用、全平台订单 |
+| 边界 | 主要职责 | 数据边界 |
+| --- | --- | --- |
+| 用户端 | 浏览、导购、行为上报、订单操作 | 只能访问启用商家和用户自己的订单 |
+| 商家端 | 店铺、商品、库存和本店订单 | SQL 以 `owner_user_id` 隔离 |
+| 平台端 | 品类、槽位、商家状态、全量数据 | 当前 MVP 没有独立认证中间件，生产需补角色授权 |
+| catalog | 可见商品、行为事件、静态/动态画像 | 商品可见性和画像更新在服务端判断 |
+| agents | 工作流、状态、模型调用、推荐和回复 | 业务事实通过运行时依赖注入，不由 Agent 直接建立数据库连接 |
+| orders | 待确认订单、确认事务、取消和失败状态 | 订单快照是成交事实，和当前商品字段解耦 |
+| sessions | 会话消息、状态投影、静态画像收敛 | 只持久化业务事实，不把整份图状态当业务表使用 |
+| realtime | 连接集合、会话锁、事件广播、文本重放、TTS 转发 | 文本事件保留，音频二进制不保留 |
 
-三个前端均为独立 Vue 应用，可在同一 Monorepo 中共享组件与 API 类型。
+### 2.2 业务可见性
 
-### 2.2 核心业务模块
-
-| 模块 | 职责 |
-| --- | --- |
-| 商家商品 | 店铺、商品、库存和商家启用状态 |
-| 用户画像 | 更新静态/动态画像并生成只读快照 |
-| 导购会话 | 保存消息、槽位和工作流状态 |
-| Agent 工作流 | 意图识别、需求澄清、商品推荐和情感应答 |
-| 合规检查 | 使用正则匹配禁用关键词 |
-| 订单 | 待确认订单、正式订单和三端查询 |
+用户侧商品查询和推荐共同使用以下可见性条件：商品未软删除、状态为 `on_sale`、库存大于 0、商家未软删除且已启用。商家和平台列表可以看到更宽的数据范围，但仍排除软删除记录。订单通过用户、商家 owner 或平台查询边界隔离。
 
 ## 3. 技术架构
 
-### 3.1 技术与模型选型
-
-后端采用 FastAPI 模块化单体，三个前端使用 Vue。
-
 | 能力 | 选型 |
 | --- | --- |
-| 工作流/模型封装 | LangGraph、LangChain |
-| Agent 可观测性 | LangSmith |
-| 数据库/向量检索 | PostgreSQL 15 + PGVector |
-| 缓存 | Redis 7 |
+| API | FastAPI + SQLAlchemy asyncio + asyncpg |
+| 工作流 | LangGraph `StateGraph`，Agent 节点和普通业务节点统一装配 |
+| 模型封装 | LangChain `ChatQwen`、DashScope Embedding、DashScope Rerank |
 | Agent LLM | `qwen3.7-flash` |
-| 流式 ASR | `qwen-audio-3.0-asr-flash-streaming` |
-| TTS | `qwen-audio-3.0-tts-plus` |
-| Embedding | `qwen3.7-text-embedding` |
+| Embedding | `qwen3.7-text-embedding`，商品向量 1024 维且入库前归一化 |
 | Reranker | `qwen3-rerank` |
+| ASR | `qwen-audio-3.0-asr-flash-streaming` |
+| TTS | `qwen-audio-3.0-tts-plus` |
+| 数据库 | PostgreSQL + PGVector、JSONB、数组、部分索引 |
+| 缓存/重放 | Redis 事件列表；进程内 deque 作为热缓存 |
+| 前端 | 三个独立 Vue 应用 + `packages/web-ui` 共享包 |
+| 可观测性 | LangSmith，可选启用，失败不阻断业务请求 |
 
-### 3.2 LangGraph Custom Workflow
+模型密钥通过配置决定是否启用模型链路。未配置 DashScope Key 时，意图、槽位解析、排序、推荐理由和部分语音输出使用确定性降级；服务端 ASR 输入仍需要可用的 ASR 模型，TTS 失败时前端使用浏览器语音播放。
 
-Agent 与普通 Python 业务代码均作为 StateGraph 节点。Agent 不直接互调，只读取共享 `ShoppingState` 并返回局部状态更新。
+## 4. LangGraph 工作流
+
+### 4.1 图装配和路由
+
+`agents/graph.py` 只负责声明节点、边和条件路由，业务规则放在各节点模块。当前图为：
 
 ```mermaid
 flowchart TD
-    ASR["ASR 转写"] --> I["意图识别 Agent"]
-    I --> R{"代码条件路由"}
-    R -->|推荐| C["需求澄清 Agent：加载品类槽位配置"]
-    C -->|ASK| E["情感应答 Agent"]
-    C -->|READY| P["商品推荐 Agent：召回 + 精排"]
-    R -->|对比/查询| P
-    R -->|订单| O["订单节点：创建/确认/取消事务"]
-    R -->|聊天/不支持| E
-    P --> W["文本 WS：推送商品卡"]
-    W --> E
-    O --> E
-    E --> F["流式正则过滤"]
-    F --> T["文本 WS：理由/话术增量"]
-    T --> K["完整文本合规检查"]
-    K --> S["TTS"]
-    S --> A["语音 WS：音频流"]
+    S["START"] --> I["intent_agent"]
+    I -->|PRODUCT_RECOMMENDATION| C["clarification_agent"]
+    I -->|PRODUCT_COMPARE / PRODUCT_QUERY| R["recommendation_agent"]
+    I -->|PRODUCT_ORDER| O["order_node"]
+    I -->|CHAT / UNSUPPORTED_REQUEST| E["emotional_agent"]
+    I -->|不支持但存在 pending_question| C
+    C -->|clarification_status=READY| R
+    C -->|ASK| E
+    R --> E
+    O --> K["compliance_check"]
+    E --> K
+    K --> X["END"]
 ```
 
-LangGraph 的 PostgreSQL Checkpointer 负责持久化每个节点后的 `ShoppingState`，使工作流能在下一轮继续恢复；本项目使用 `sessions.id` 的字符串形式作为 `configurable.thread_id`，并同时作为 LangSmith 的 `metadata.thread_id`。`ShoppingState` 在图中保持扁平键，避免节点更新时覆盖嵌套对象；代码按生命周期拆成当轮输入、跨轮对话、只读 taxonomy、画像候选、推荐、订单和展示输出七组 TypedDict。`session_states` 只保存业务状态投影：品类、槽位、静态画像候选、澄清问题和最近商品卡；画像只读快照、候选商品、模型开关、历史、回复文本和订单详情均不作为业务状态投影，订单以 `orders` 为准。
+节点职责如下：
 
-LangSmith 记录整条 StateGraph Trace，并以 `sessionId`、`turnId`、意图和 Agent 节点作为元数据，用于查看节点输入输出、模型调用、延迟、Token 消耗和错误。Trace 只用于可观测与评估，不保存业务状态；用户原话、画像和订单数据写入前需要脱敏。
-
-### 3.3 意图、槽位与 Agent 契约
-
-意图识别输入为当前 `utterance` 和最近 3 轮对话摘要。每轮只选择一个主意图；若用户一句话包含多个请求，按表达顺序选择当前可执行的第一个。每个意图带 `confidence`；推荐意图还需输出标准化 `productCategory`。
-
-```text
-PRODUCT_RECOMMENDATION  PRODUCT_ORDER
-PRODUCT_COMPARE         PRODUCT_QUERY
-CHAT                    UNSUPPORTED_REQUEST
-```
-
-`PRODUCT_ORDER` 的 `action` 为 `CREATE/CONFIRM/CANCEL`。商品需求槽位不由意图识别 Agent 输出，而是在需求澄清阶段按品类动态加载和填充。
-
-| 节点 | 输入 | 输出 |
+| 节点 | 输入重点 | 输出重点 |
 | --- | --- | --- |
-| 意图识别 Agent | 当前话语、最近 3 轮摘要 | 意图及置信度、可选订单 action、`productCategory` |
-| 需求澄清 Agent | 当前话语、商品品类、该品类 `requiredSlots`、当前槽位、澄清记录 | `ASK/READY`、已更新槽位、缺失槽位、问题 |
-| 商品推荐 Agent | 意图、槽位、画像快照、商品事实 | `productCards`、`emotionStyle` |
-| 情感应答 Agent | 商品卡、情绪风格、用户原话、会话情绪 | 每个商品的 `productId + reason`、文本增量、`speechText` |
+| `intent_agent` | 当前话语、最近 6 条消息、动态品类上下文、上一轮卡片/待确认订单 | 单意图、置信度、品类、订单 action、品类变化标记 |
+| `clarification_agent` | 品类必填/允许槽位、槽位定义、当前槽位、pending question、当前话语 | `ASK/READY`、过滤后的槽位、缺失槽位、下一问题 |
+| `recommendation_agent` | 意图、品类、已填槽位、画像快照、注入的 catalog loader | Top 3 商品卡、匹配分、评分拆解、情绪风格 |
+| `order_node` | 意图 action、上一轮商品卡、待确认订单 | 订单服务返回的状态和播报文本 |
+| `emotional_agent` | 商品卡、原话、情绪风格 | 每卡理由、完整话术、流式发布回调结果 |
+| `compliance_check` | 完整话术 | 合规标记、最终回复或固定兜底 |
 
-所有结构化输出通过 Pydantic 校验后写入 `ShoppingState`。商品事实由后端提供，Agent 不编造商品 ID、价格、图片和属性；商品卡顺序以加权精排结果为准。
+订单处理节点和推荐/回复节点都可以运行普通 Python 业务代码；Agent 不直接互相调用，而是通过共享 `ShoppingState` 和图路由协作。
 
-推荐流程首次进入需求澄清节点时，根据二级 `productCategory` 查询该品类固定的 3~5 个 `attributes` Key，这组 Key 同时作为 `requiredSlots`。节点先抽取用户已经表达的槽位，再逐轮询问一到两个缺失项；当 `pendingQuestion` 存在时，下一轮用户回答直接路由回需求澄清节点。全部必填槽位完成后才进入商品推荐 Agent。`budgetMax` 作为跨品类可选过滤条件，不计入品类必填 Key。第一版的品类槽位规则使用应用配置维护，并由数据库约束保证同品类商品 Key 集合一致。
+### 4.2 状态生命周期
 
-### 3.4 商品推荐与用户画像
+`agents/state.py` 使用一个扁平 `ShoppingState`，通过 TypedDict mixin 标注字段生命周期：
+
+| 状态组 | 内容 | 生命周期 |
+| --- | --- | --- |
+| TurnState | session/turn/user、当前话语、最近历史、模型开关 | 当前轮 |
+| ConversationState | 意图、品类、品类变化、槽位、澄清问题 | 跨轮业务事实 |
+| TaxonomyState | 当前 DB 品类及槽位的只读上下文 | 当前轮，不持久化 |
+| ProfileState | 会话内静态画像候选 | 跨轮候选，结束时收敛 |
+| RecommendationState | 画像快照、候选商品、商品卡、上一轮卡片 | 画像快照和候选为当前轮；商品卡可跨轮引用 |
+| OrderState | 当前待确认或终态订单引用 | 订单表为事实源，状态只保留当前轮结果 |
+| ResponseState | 理由、话术、合规和流式标记 | 当前轮展示输出 |
+
+扁平状态是为了避免 StateGraph 默认更新语义下的嵌套对象整体覆盖。每个节点只返回自己负责的局部键，运行时再合并成完整状态。
+
+### 4.3 运行时依赖注入
+
+`ShoppingRuntimeDependencies` 通过 LangGraph context 注入：
+
+- `catalog_loader`：由 service 层绑定数据库商品召回和向量查询。
+- `order_handler`：由 service 层绑定订单创建/确认/取消事务。
+- `reason_publisher`：把逐卡理由增量发送到文本 WebSocket。
+- `speech_delta_publisher`：把话术增量发送到文本 WebSocket。
+- `speech_sentence_publisher`：把完成短句交给音频 Hub 做 TTS。
+
+这样可以在单元测试中使用内存 catalog、假的订单处理器和内存发布器，也避免 Agent 节点依赖 FastAPI 请求对象。
+
+## 5. 品类、商品和检索架构
+
+### 5.1 动态品类配置
+
+平台品类由 `category_l1`、`category_l2` 和 `category_slots` 组成。二级分类通过外键关联一级分类；槽位保存 `key`、`is_required` 和非空 `enum_values`。运行时 `list_categories()` 从槽位表聚合 `requiredSlots` 和 `optionalSlots`，并将完整配置注入意图和澄清节点。
+
+商品写入时由 API 重新读取当前二级分类的槽位定义，校验一级/二级归属、未知键、必填值、枚举范围和空值。数据库约束负责基本结构，跨表语义由 API 负责。
+
+### 5.2 商品向量
+
+`core/product_embedding.py` 把商品转换成固定顺序的中文商品卡片文本：品类、品牌、卖点、描述、带中文标签的属性和价格带。英文品类/槽位/枚举映射为中文，未知代码回退为原值。
+
+商品创建时生成向量；更新名称、品类、品牌、描述、价格、属性或卖点时按拼装文本变化重新生成；只更新 SKU、库存、状态或图片时保留原向量。模型不可用时写入 `NULL`，不阻断商品 CRUD。平台提供全量向量重建接口。
+
+`products` 上有属性 JSONB GIN 索引、名称 trigram 索引和带 `embedding IS NOT NULL` 谓词的 HNSW 余弦索引。当前推荐召回实际使用向量排序或 `created_at` 降级排序；trigram 索引为后续词法查询保留，Reranker 失败时的当前词法兜底在 Python 中完成。
+
+### 5.3 推荐链路
 
 ```mermaid
 flowchart LR
-    A["结构化需求"] --> B["硬约束过滤"]
-    B --> C["Embedding + PGVector 召回"]
-    C --> D["粗排 Top 20"]
-    D --> E["Reranker + 静态/动态画像加权"]
-    E --> F["Top 3 商品卡 + emotionStyle"]
+    A["结构化需求"] --> B["可见性 + 品类 + 预算 + 全部已填槽位硬过滤"]
+    B --> C{"查询向量可用?"}
+    C -->|是| D["PGVector 余弦排序，LIMIT 20"]
+    C -->|否| E["created_at DESC，仍保留 NULL embedding 商品"]
+    D --> F["Reranker 精排"]
+    E --> F
+    F --> G["Top 3"]
+    G --> H["画像规则二次排序"]
+    H --> I["商品卡 + matchScore + scoreBreakdown"]
 ```
 
-```text
-matchScore = rerankerScore + ruleAdjustments
+硬过滤会把所有已经填入的必填和选填槽位都传入 SQL。枚举使用 JSONB 包含语义，布尔值按 JSON 布尔序列化；数值使用最低值比较；尺码支持 `size` 或 `sizeRange`；防水值提取数字部分；商品为 `unisex` 时可满足性别需求。
 
-ruleAdjustments:
-  dynamic.brandAffinity 命中品牌       +0.2
-  price > 1.5 × dynamic.avgOrderAmount -0.15
-  productId 在 dynamic.recentPurchased -0.3
+Reranker 分数先裁剪到 `[0, 1]`，前 20 条取 Top 3；Reranker 不可用时使用关键词命中分 `min(1, 0.52 + 0.1 * 命中数)`。随后只在这 3 条内叠加画像规则：品牌偏好 `+0.2`、价格超过平均客单价 1.5 倍 `-0.15`、最近购买过 `-0.3`。规则分相同则保持第一阶段顺序。
+
+对比和查询优先使用上一轮商品卡；没有商品卡时才进入正常召回路径。商品卡由后端事实构造，理由生成被拆到下一个回复节点。
+
+## 6. 用户画像架构
+
+画像数据拆成两个表和一个会话候选区：
+
+```mermaid
+flowchart LR
+    T["当前话语/槽位"] --> U["session_states.user_profile_updates"]
+    U --> F["会话关闭、断开或订单终态"]
+    F --> S["user_profile_static"]
+    C["商品点击"] --> D["user_profile_dynamic"]
+    O["成功订单"] --> D
+    S --> P["userProfileSnapshot"]
+    D --> P
+    P --> R["推荐节点，只读"]
 ```
 
-推荐前从 `user_profile_static`、`user_profile_dynamic` 生成只读
-`userProfileSnapshot`；同一轮推荐只读取该快照。商品点击和成功订单更新动态画像，
-对话中提取的静态资料先写入 `ShoppingState.user_profile_updates`，在订单终态、显式会话关闭
-或页面连接断开时统一合并回写 `user_profile_static`。显式渠道字段优先，空值不覆盖已有值。
+- 静态资料抽取只接受高置信度文本规则和可信 `profile` 渠道；无效值被丢弃，空值不覆盖旧值。
+- 显式 profile patch 在合并顺序上覆盖对话抽取结果。
+- 动态画像更新锁定用户和画像行，点击权重为 `0.1`，成功订单权重为 `0.32`，分数封顶为 `1.0`；最近浏览/购买列表去重并限制 20 条。
+- 成功订单后重新计算用户全部成功订单的平均客单价。
+- 推荐前读取静态和动态画像形成只读快照；快照、候选商品和生成文本不写入业务状态投影。
 
-`PRODUCT_COMPARE` 和 `PRODUCT_QUERY` 同样由商品推荐 Agent 处理，但不重新召回商品。情感应答 Agent 为每张商品卡并发调用一次只生成理由的模型请求；文本增量携带 `productId`，前端据此填入对应卡片。单卡调用失败时只对该卡降级，不影响其他卡片。
+## 7. 订单事务架构
 
-### 3.5 语音订单
+订单服务使用数据库事务和行锁保证语音与 HTTP 两种入口行为一致：
 
-`PRODUCT_ORDER + CREATE` 创建状态为 `pending` 的订单，有效期 15 分钟；`CONFIRM` 重新校验商家、商品、价格和库存，在事务内扣减库存并更新为 `success`；`CANCEL`、超时或校验失败更新为 `fail`。订单状态仅包含 `pending`、`success`、`fail`，并保存成交快照和幂等键。当前版本不创建支付记录。
+1. 创建待确认订单时校验商品可售、商家启用和库存，保存价格、商家和商品快照，不扣库存。
+2. 确认时先锁订单，再锁商品和商家；重新校验有效期、可售状态、价格和库存。
+3. 成功路径在同一事务中扣减库存、更新订单为 `success`、设置确认时间并更新动态画像。
+4. 失败路径更新为 `fail` 并写入原因；取消只处理用户自己的 `pending` 订单。
+5. 数据库触发器禁止 `success`/`fail` 终态重新迁移；唯一幂等键保证重复创建不产生第二个订单。
 
-### 3.6 核心数据
+订单成交快照保存在 `orders.merchant_snapshot` 和 `orders.product_snapshot`，因此商品软删除、改价或商家状态变化不会改变历史订单展示。
+
+## 8. 会话持久化和并发
+
+### 8.1 两层状态存储
+
+LangGraph Checkpointer 和业务状态投影各自承担不同职责：
+
+- Checkpointer：可选的 PostgreSQL `AsyncPostgresSaver`，懒加载并持久化完整 StateGraph 状态；`configurable.thread_id` 使用 `stable_uuid(session_key)`。
+- `session_states.business_state`：每轮只保存业务侧需要查询、审计或在无 checkpoint 时引导下一轮的投影。当前版本的键为 `product_category`、`slots`、`user_profile_updates`、`pending_question`、`product_cards`，版本号为 `1`。
+- 下一轮优先从 Checkpointer 恢复；没有 checkpoint 时读取 `session_states` 最新投影，并通过 `carry_forward_state()` 丢弃未知或过期字段。
+- 待确认订单从 `orders` 查询，完整订单详情不依赖图状态；画像快照、候选商品、模型开关、回复文本不跨轮持久化。
+- `session_messages` 每轮保存用户 transcript 和助手最终回复，按 `(session_id, turn_id, seq)` 幂等写入。
+
+### 8.2 会话串行化
+
+`RealtimeHub` 为每个 session 使用 `asyncio.Lock`，串行执行同一会话的 turn，避免并发轮次覆盖状态、重复创建订单或交错发布事件。文本和音频连接关闭后，只有当该 session 没有任何连接时才触发一次断开画像收敛。
+
+## 9. 双 WebSocket 和重连
+
+### 9.1 文本通道
+
+`/ws/text/{session_id}` 负责结构化事件。服务端先发送 `session.connected`，处理轮次时发送初始 `flow.status`，然后从 LangGraph `tasks` 流监听节点开始事件，因此前端显示的是实际运行中的节点。文本事件包括：
+
+- `flow.status`：processing/completed，processing 时可带 node 和用户提示 label。
+- `recommendation.cards`：商品卡和情绪风格。
+- `text.delta`：理由或完整话术增量。
+- `text.completed`：最终文本和合规标记。
+- `order.updated`：订单状态。
+- `flow.error`：当前轮错误。
+
+每个 session 在进程内保留 300 条事件，同时写入 Redis 列表 `voice-shopping:events:{sessionId}`，限制 300 条并设置 3600 秒 TTL。`session.resume` 根据 `turnId` 和 `afterSeq` 重放文本事件。
+
+### 9.2 音频通道
+
+`/ws/audio/{session_id}` 负责两条方向：
+
+- 输入：客户端将浏览器采集的音频重采样为 16 kHz PCM16，通过 `audio.start`、二进制帧和 `audio.commit` 发送；ASR 回调按标点拆出 `asr.sentence`，提交时发送 `asr.completed`。
+- 输出：情感节点把完整话术按标点切成短句，Hub 为每句调用 TTS，发送 `audio.start`、WAV 分片、`audio.end`，最后发送 `audio.done`。
+- TTS 没有返回有效音频时，Hub 发送带 `fallback=true` 的 16 kHz 静音 WAV 控制流程，用户端改用浏览器 `SpeechSynthesis`；ASR 无模型时返回 `audio.error`，不会伪造服务端转写结果。
+
+音频事件不写入 Redis，音频断线只清理连接和当前 ASR 资源；需要重新录音或重新播放时由客户端重新发起。
+
+## 10. 模型、降级和可观测性
+
+### 10.1 降级策略
+
+| 场景 | 当前降级 |
+| --- | --- |
+| 无 DashScope Key | 意图关键词识别、确定性槽位抽取、created_at 候选排序、词法 Reranker 分、确定性理由 |
+| Query Embedding 失败 | SQL 不加向量条件，按 `created_at DESC` 取候选 |
+| Reranker 失败 | 使用商品事实文本的词法命中分 |
+| 单商品理由模型失败或不合规 | 仅该卡使用固定理由，不影响其他卡 |
+| TTS 无音频或失败 | 发送 fallback 标志，前端使用浏览器语音 |
+| LangSmith 不可用 | 日志记录调试信息，业务请求继续执行 |
+
+### 10.2 LangSmith
+
+LangSmith 追踪由环境变量可选开启。代码会记录工作流的 session/turn 元数据、模型/Embedding/Reranker 的 provider 和模型名、请求 ID、耗时、Token/计费信息，以及 ASR/TTS 的音频统计。当前实现的模型输入、Embedding 文本、ASR transcript 和 TTS 文本可能进入 trace；生产环境必须在启用外部追踪前增加脱敏、访问控制和保留期限策略。
+
+## 11. 核心数据模型
 
 | 表 | 主要内容 |
 | --- | --- |
-| `merchants` | 店铺信息和启用状态 |
-| `users` | 用户身份和基础信息 |
-| `products` | 商家、价格、库存、属性、状态和商品向量 |
-| `orders` | 用户、商家、商品、成交快照、金额、15 分钟有效期、状态和幂等键 |
-| `user_profile_static` | 用户相对稳定的资料属性 |
-| `user_profile_dynamic` | 品类/品牌行为偏好、最近浏览/购买和客单价 |
-| `sessions` | 会话基本信息 |
-| `session_messages` | 会话消息和轮次 ID |
-| `session_states` | 业务状态投影、画像候选和待确认订单引用 |
+| `users` | 演示用户、角色和状态 |
+| `merchants` | 店铺、owner、启用状态、禁用原因和软删除时间 |
+| `category_l1` | 一级品类 |
+| `category_l2` | 二级品类及父级外键 |
+| `category_slots` | 槽位必填标记和枚举值 |
+| `products` | 商家、价格、库存、属性 JSONB、状态、软删除和 1024 维向量 |
+| `orders` | 订单状态、快照、价格、幂等键、有效期和失败原因 |
+| `sessions` | 会话生命周期和用户归属 |
+| `session_states` | 每轮业务状态投影和待确认订单引用 |
+| `session_messages` | 每轮用户/助手消息 |
+| `user_profile_static` | 静态用户资料 |
+| `user_profile_dynamic` | 品类/品牌偏好、最近行为和客单价 |
 
-PGVector 字段保存在 `products`；订单成交快照保存在 `orders`。Redis 只保存连接和短期缓存，不保存业务事实。
+Redis 只保存短期文本事件日志，不保存连接状态、商品、订单、画像或会话业务事实。
 
-### 3.7 通信与接口
+## 12. 当前架构边界
 
-| 通道 | 数据 |
-| --- | --- |
-| `/ws/text/{session_id}` | 商品卡、推荐理由/话术增量、完整文本、流程状态 |
-| `/ws/audio/{session_id}` | 上行用户录音；下行 TTS 控制消息和二进制音频分片 |
-| `POST /api/v1/sessions/{sessionId}/close` | 显式结束会话并收敛静态画像 |
-
-文本连接依次发送 `recommendation.cards`、`text.delta`、`text.completed`。情感应答模型流每完成一个逗号、句号、问号等标点短句，就触发一次 TTS；语音连接即时发送该句的 `audio.start`、二进制音频分片和 `audio.end`，全部短句完成后发送 `audio.done`。ASR 同样按标点短句发送一次 `asr.sentence`，录音提交时发送 `asr.completed`。事件统一包含 `type`、`sessionId`、`turnId`、`seq` 和 `payload`，使用 `sessionId + turnId + seq` 唯一定位并排序。两个连接使用 `sessionId + turnId` 关联并支持重连。
-
-主要 HTTP API：
-
-| 范围 | API |
-| --- | --- |
-| 用户 | 店铺/商品查询、行为上报、本人订单查询 |
-| 商家 | 自有店铺/商品 CRUD、本店订单查询 |
-| 平台 | 商家查询与启停、全平台订单查询 |
-
-### 3.8 待确认事项
-
-1. 各商品品类的 `requiredSlots` 具体配置。
-2. 静态/动态画像的具体字段和有效期，在 Schema 与表设计阶段确定。
-3. Compliance Check 的关键词规则和兜底文本后续确定。
+1. 认证、密码登录、角色授权和平台接口保护尚未接入，当前请求头身份只适合本地演示。
+2. 品类槽位定义已数据库化，但槽位类型语义仍以枚举数组和应用侧规范为主；新增复杂类型需要扩展 schema、澄清解析和 SQL 匹配器。
+3. 向量重建接口同步执行，商品量增长后应改为后台任务并增加失败重试。
+4. Redis 重放窗口为 1 小时/300 条，不能替代长期消息审计；音频事件没有断点续播能力。
+5. LangSmith 追踪默认 fail-open，但启用生产追踪前必须补充敏感信息治理。
+6. TTS 当前由情感节点在最终 `compliance_check` 之前调度，依赖逐卡/增量过滤；生产化需把完整话术合规结果作为 TTS 前置闸门。
+7. 当前版本不包含支付、退款、物流、售后和真实电商平台对接。
