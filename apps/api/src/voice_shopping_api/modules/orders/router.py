@@ -14,7 +14,12 @@ from voice_shopping_api.modules.orders.service import (
     create_pending_order,
 )
 from voice_shopping_api.modules.sessions.service import finalize_session_profile
-from voice_shopping_api.schemas.domain import ItemsResponse, OrderCreate, OrderOut
+from voice_shopping_api.schemas.domain import (
+    CatalogOrderCreate,
+    ItemsResponse,
+    OrderCreate,
+    OrderOut,
+)
 
 router = APIRouter()
 Db = Annotated[AsyncSession, Depends(get_db_session)]
@@ -33,8 +38,17 @@ async def list_my_orders(session: Db, user_id: UserId) -> dict[str, object]:
 
 
 @router.post("", response_model=OrderOut, status_code=201)
-async def create_order(payload: OrderCreate, session: Db, user_id: UserId) -> dict[str, object]:
-    order = await create_pending_order(session, user_id, payload)
+async def create_order(
+    payload: CatalogOrderCreate, session: Db, user_id: UserId
+) -> dict[str, object]:
+    # The catalog endpoint has no server-owned conversation context. Retaining
+    # only its public fields also lets old clients with a local sessionId keep
+    # checking out without violating the orders/session foreign key.
+    order = await create_pending_order(
+        session,
+        user_id,
+        OrderCreate(**payload.model_dump()),
+    )
     await commit_or_conflict(session, "幂等键或订单数据冲突")
     return order
 

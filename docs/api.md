@@ -255,13 +255,12 @@ GET /api/v1/catalog/products?category=HEADPHONES&query=云雀
 {
   "productId": "20000000-0000-4000-8000-000000000001",
   "quantity": 1,
-  "idempotencyKey": "web-session-001-turn-002",
-  "sessionId": "30000000-0000-4000-8000-000000000001",
-  "sourceTurnId": "40000000-0000-4000-8000-000000000001"
+  "idempotencyKey": "web-catalog-001"
 }
 ```
 
 `quantity` 默认为 1，范围是 1 到 99；`idempotencyKey` 必填，长度 1 到 120。
+目录直购不绑定会话；`sessionId` 和 `sourceTurnId` 仅由服务端导购工作流在创建语音订单时写入。
 
 业务行为：
 

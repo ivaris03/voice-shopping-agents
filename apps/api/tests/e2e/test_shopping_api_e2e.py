@@ -2,6 +2,7 @@ from uuid import uuid4
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import text
 
 CUSTOMER_HEADERS = {
     "X-User-ID": "00000000-0000-4000-8000-000000000101",
@@ -10,7 +11,10 @@ CUSTOMER_HEADERS = {
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_customer_can_browse_create_and_cancel_order(e2e_client: AsyncClient) -> None:
+async def test_customer_can_browse_create_and_cancel_order(
+    e2e_client: AsyncClient,
+    e2e_connection,
+) -> None:
     products_response = await e2e_client.get(
         "/api/v1/catalog/products",
         params={"category": "HEADPHONES"},
@@ -27,6 +31,10 @@ async def test_customer_can_browse_create_and_cancel_order(e2e_client: AsyncClie
         "productId": product["id"],
         "quantity": 1,
         "idempotencyKey": f"e2e-{uuid4()}",
+        # A stale browser may still include its locally generated IDs. Catalog
+        # checkout must not turn either into a foreign-key-backed session link.
+        "sessionId": str(uuid4()),
+        "sourceTurnId": str(uuid4()),
     }
     create_response = await e2e_client.post(
         "/api/v1/orders",
@@ -39,6 +47,13 @@ async def test_customer_can_browse_create_and_cancel_order(e2e_client: AsyncClie
     assert created["status"] == "pending"
     assert created["productId"] == product["id"]
     assert created["quantity"] == 1
+    persisted = await e2e_connection.execute(
+        text("SELECT session_id, source_turn_id FROM orders WHERE id = :id"),
+        {"id": created["id"]},
+    )
+    persisted_row = persisted.mappings().one()
+    assert persisted_row["session_id"] is None
+    assert persisted_row["source_turn_id"] is None
 
     retry_response = await e2e_client.post(
         "/api/v1/orders",

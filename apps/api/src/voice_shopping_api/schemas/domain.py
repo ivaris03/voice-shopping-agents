@@ -214,10 +214,17 @@ class OrderOut(ApiModel):
     updated_at: datetime
 
 
-class OrderCreate(ApiModel):
+class CatalogOrderCreate(ApiModel):
+    """Public payload for a direct catalog checkout."""
+
     product_id: UUID
     quantity: int = Field(default=1, gt=0, le=99)
     idempotency_key: str = Field(min_length=1, max_length=120)
+
+
+class OrderCreate(CatalogOrderCreate):
+    """Internal order command used by the conversational workflow."""
+
     session_id: UUID | None = None
     source_turn_id: UUID | None = None
 

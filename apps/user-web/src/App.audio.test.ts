@@ -367,4 +367,61 @@ describe('assistant reply audio coordination', () => {
     expect(wrapper.text()).toContain('我想买一双通勤鞋。预算五百元。')
     wrapper.unmount()
   })
+
+  it('creates a catalog order without linking a browser-local session', async () => {
+    const product = {
+      id: '20000000-0000-4000-8000-000000000001',
+      merchantId: '10000000-0000-4000-8000-000000000001',
+      merchantName: '声动数码',
+      sku: 'HEADPHONE-A1',
+      name: '云雀 Air 降噪耳机',
+      categoryL1: 'ELECTRONICS',
+      categoryL2: 'HEADPHONES',
+      brand: '云雀',
+      description: '轻量头戴式主动降噪耳机。',
+      price: 699,
+      stock: 80,
+      attributes: {},
+      sellingPoints: [],
+      imageUrls: [],
+      status: 'on_sale',
+      createdAt: '',
+      updatedAt: '',
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      if (String(input).endsWith('/catalog/products')) {
+        return new Response(JSON.stringify({ items: [product] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ items: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(App)
+    await flushPromises()
+
+    const buyButton = wrapper.findAll('button').find((button) => button.text().trim() === '购买')
+    if (!buyButton) throw new Error('Catalog buy button was not rendered')
+    await buyButton.trigger('click')
+    await flushPromises()
+
+    const orderRequest = fetchMock.mock.calls.find(
+      ([input, init]) => String(input).endsWith('/orders') && init?.method === 'POST',
+    )
+    if (!orderRequest) throw new Error('Catalog order request was not sent')
+    const body = JSON.parse(String(orderRequest[1]?.body)) as Record<string, unknown>
+    expect(body).toMatchObject({
+      productId: product.id,
+      quantity: 1,
+      idempotencyKey: expect.stringMatching(/^web-catalog-/),
+    })
+    expect(body).not.toHaveProperty('sessionId')
+    expect(body).not.toHaveProperty('sourceTurnId')
+    wrapper.unmount()
+  })
 })

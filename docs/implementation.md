@@ -234,7 +234,7 @@ product.id in recentPurchased          -0.30
 - `unit_price`、数量和数据库生成的 `total_amount`。
 - `merchant_snapshot`：商家 ID 和名称。
 - `product_snapshot`：商品 ID、SKU、名称、品类和图片。
-- `session_id`、`source_turn_id`、幂等键和 15 分钟 `expires_at`。
+- 幂等键和 15 分钟 `expires_at`；语音导购创建的订单额外保存 `session_id`、`source_turn_id`，目录直购保持为空。
 
 创建不扣库存，只产生 `pending` 订单。
 

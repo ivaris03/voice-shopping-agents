@@ -9,6 +9,8 @@ from voice_shopping_api.modules.orders import router as orders_router
 USER_ID = UUID("00000000-0000-4000-8000-000000000101")
 PRODUCT_ID = UUID("20000000-0000-4000-8000-000000000001")
 MERCHANT_ID = UUID("10000000-0000-4000-8000-000000000001")
+CLIENT_SESSION_ID = UUID("30000000-0000-4000-8000-000000000101")
+CLIENT_TURN_ID = UUID("40000000-0000-4000-8000-000000000101")
 
 
 def _order() -> dict[str, object]:
@@ -55,6 +57,8 @@ def test_create_order_contract(client, monkeypatch: pytest.MonkeyPatch) -> None:
             "productId": str(PRODUCT_ID),
             "quantity": 2,
             "idempotencyKey": "contract-order-001",
+            "sessionId": str(CLIENT_SESSION_ID),
+            "sourceTurnId": str(CLIENT_TURN_ID),
         },
     )
 
@@ -66,6 +70,8 @@ def test_create_order_contract(client, monkeypatch: pytest.MonkeyPatch) -> None:
     assert body["totalAmount"] == "1398.00"
     assert captured["user_id"] == USER_ID
     assert captured["payload"].idempotency_key == "contract-order-001"
+    assert captured["payload"].session_id is None
+    assert captured["payload"].source_turn_id is None
     assert captured["committed"] is True
 
 

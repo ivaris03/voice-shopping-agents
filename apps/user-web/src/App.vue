@@ -856,8 +856,7 @@ async function buyProduct(productId: string) {
       body: JSON.stringify({
         productId,
         quantity: 1,
-        idempotencyKey: `web-${sessionId}-${crypto.randomUUID()}`,
-        sessionId,
+        idempotencyKey: `web-catalog-${crypto.randomUUID()}`,
       }),
     })
     await loadData()
