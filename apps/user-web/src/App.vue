@@ -4,6 +4,8 @@ import {
   ProductDetailModal,
   apiBaseUrl,
   audioWsBaseUrl,
+  merchantWebUrl,
+  platformWebUrl,
   requestJson,
   textWsBaseUrl,
   type ApiEvent,
@@ -67,6 +69,18 @@ const navItems = [
   { label: '语音导购', href: '#voice' },
   { label: '逛商品', href: '#products' },
   { label: '我的订单', href: '#orders' },
+]
+const workspaceLinks = [
+  {
+    label: '商家工作台',
+    description: '管理店铺、商品和库存',
+    href: merchantWebUrl,
+  },
+  {
+    label: '平台控制台',
+    description: '维护品类、商家和全量订单',
+    href: platformWebUrl,
+  },
 ]
 const customerId = '00000000-0000-4000-8000-000000000101'
 const sessionId = localStorage.getItem('voice-shopping-session') ?? crypto.randomUUID()
@@ -868,6 +882,7 @@ onBeforeUnmount(() => {
     title="声选"
     description="说出预算、场景和偏好，四个 Agent 会逐步澄清、精排商品并协助确认下单。"
     :nav-items="navItems"
+    :workspace-links="workspaceLinks"
     action-label="小林的账户"
   >
     <template #headline>开口说需求，<br />轻松买到对的。</template>

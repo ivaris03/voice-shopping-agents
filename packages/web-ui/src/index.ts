@@ -112,4 +112,11 @@ export interface ApiEvent<T = unknown> {
   payload: T
 }
 
-export { apiBaseUrl, audioWsBaseUrl, requestJson, textWsBaseUrl } from './api'
+export {
+  apiBaseUrl,
+  audioWsBaseUrl,
+  merchantWebUrl,
+  platformWebUrl,
+  requestJson,
+  textWsBaseUrl,
+} from './api'

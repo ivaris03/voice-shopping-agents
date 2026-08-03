@@ -7,6 +7,11 @@ defineProps<{
   description: string
   navItems: NavItem[]
   actionLabel: string
+  workspaceLinks?: Array<{
+    label: string
+    description: string
+    href: string
+  }>
 }>()
 </script>
 
@@ -20,6 +25,21 @@ defineProps<{
       <nav class="nav" aria-label="主导航">
         <a v-for="item in navItems" :key="item.href" :href="item.href">{{ item.label }}</a>
       </nav>
+      <details v-if="workspaceLinks?.length" class="workspace-switcher">
+        <summary class="workspace-switcher__trigger">切换工作台</summary>
+        <div class="workspace-switcher__menu" role="menu" aria-label="其他工作台">
+          <a
+            v-for="workspace in workspaceLinks"
+            :key="workspace.href"
+            class="workspace-switcher__item"
+            :href="workspace.href"
+            role="menuitem"
+          >
+            <strong>{{ workspace.label }}</strong>
+            <span>{{ workspace.description }}</span>
+          </a>
+        </div>
+      </details>
       <button class="action-button" type="button">{{ actionLabel }}</button>
     </header>
 
