@@ -7,7 +7,7 @@ FastAPI 模块化单体，包含用户/商家/平台 HTTP API、订单事务、�
 
 ```bash
 uv sync --project apps/api
-uv run --project apps/api uvicorn voice_shopping_api.main:app --reload --port 8000
+uv run --project apps/api python -m voice_shopping_api.server --reload --port 8000
 uv run --project apps/api pytest
 uv run --project apps/api ruff check .
 ```
@@ -25,5 +25,5 @@ E2E 测试推荐使用独立的 PostgreSQL/PGVector 测试库；可通过
 
 LangGraph 使用 PostgreSQL Checkpointer 持久化每个工作流节点；业务层的跨轮事实另外投影到
 `session_states.business_state`。默认复用 `VOICE_SHOPPING_DATABASE_URL`；如需单独的 checkpoint 数据库，设置
-`VOICE_SHOPPING_LANGGRAPH_CHECKPOINT_DATABASE_URL`。在 Windows 上，异步 psycopg 需要
-Selector event loop，因此开发环境请保留上述 `--reload` 参数。
+`VOICE_SHOPPING_LANGGRAPH_CHECKPOINT_DATABASE_URL`。在 Windows 上，上述启动器会让 Uvicorn
+工作进程通过 psycopg 兼容的 Selector loop factory 创建事件循环；请不要直接用 `uvicorn` 命令替代它。

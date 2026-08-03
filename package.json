@@ -7,7 +7,7 @@
     "dev:user": "pnpm --filter @voice-shopping/user-web dev",
     "dev:merchant": "pnpm --filter @voice-shopping/merchant-web dev",
     "dev:platform": "pnpm --filter @voice-shopping/platform-web dev",
-    "dev:api": "uv run --project apps/api uvicorn voice_shopping_api.main:app --reload --port 8000",
+    "dev:api": "uv run --project apps/api python -m voice_shopping_api.server --reload --port 8000",
     "build": "pnpm -r --if-present build",
     "typecheck": "pnpm -r --if-present typecheck",
     "test:api": "uv run --project apps/api pytest",

@@ -182,7 +182,7 @@ WITH product_seed (
             '10000000-0000-4000-8000-000000000001'::uuid,
             'HEADPHONE-A1', '云雀 Air 降噪耳机', 'ELECTRONICS', 'HEADPHONES', '云雀',
             '轻量头戴式主动降噪耳机，适合通勤。', 699.00::numeric, 80,
-            '{"form":"over-ear","noiseCancellation":true,"batteryHours":45,"color":"雾灰"}'::jsonb,
+            '{"form":"over-ear","connectivity":"bluetooth","noiseCancellation":true,"batteryHours":45,"color":"雾灰"}'::jsonb,
             ARRAY['主动降噪适合通勤', '约 45 小时续航', '轻量头戴设计'],
             ARRAY['https://example.com/images/products/headphone-a1-1.png'], 'on_sale', 1
         ),
@@ -191,7 +191,7 @@ WITH product_seed (
             '10000000-0000-4000-8000-000000000001'::uuid,
             'HEADPHONE-B2', '潮汐 Pro 真无线耳机', 'ELECTRONICS', 'HEADPHONES', '潮汐',
             '支持多设备连接的真无线降噪耳机。', 999.00::numeric, 45,
-            '{"form":"in-ear","noiseCancellation":true,"batteryHours":32,"waterResistance":"IPX5","color":"曜石黑"}'::jsonb,
+            '{"form":"in-ear","connectivity":"bluetooth","noiseCancellation":true,"batteryHours":32,"waterResistance":"IPX5","color":"曜石黑"}'::jsonb,
             ARRAY['双设备快速切换', '真无线主动降噪', 'IPX5 防水'],
             ARRAY['https://example.com/images/products/headphone-b2-1.png'], 'on_sale', 2
         ),
@@ -200,7 +200,7 @@ WITH product_seed (
             '10000000-0000-4000-8000-000000000001'::uuid,
             'HEADPHONE-C3', '原野 Lite 蓝牙耳机', 'ELECTRONICS', 'HEADPHONES', '原野',
             '长续航入门头戴式蓝牙耳机。', 329.00::numeric, 120,
-            '{"form":"over-ear","noiseCancellation":false,"batteryHours":60,"color":"米白"}'::jsonb,
+            '{"form":"over-ear","connectivity":"bluetooth","noiseCancellation":false,"batteryHours":60,"color":"米白"}'::jsonb,
             ARRAY['约 60 小时长续航', '入门价格友好', '柔软头戴佩戴舒适'],
             ARRAY['https://example.com/images/products/headphone-c3-1.png'], 'on_sale', 3
         ),

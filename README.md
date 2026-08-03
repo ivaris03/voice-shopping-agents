@@ -70,7 +70,8 @@ API 文档位于 `http://localhost:8000/docs`，三个前端分别位于
 `http://localhost:5173`、`http://localhost:5174` 和 `http://localhost:5175`。
 PostgreSQL 与 Redis 默认使用宿主机 `5432`、`6379` 端口。首次使用空数据库时，先创建
 `voice-shopping-agents` 数据库，再依次执行 `sql/schema.sql` 和 `sql/data.sql`；已有数据库
-无需重复导入。
+无需重复导入。已有演示库升级到本版本时，额外执行一次
+`sql/migrations/20260803_restore_default_shopping_contract.sql`，以补齐默认耳机导购所需的数据。
 
 复制 `.env.example` 为 `.env` 后可接入 DashScope 和 LangSmith。无 DashScope Key 时，
 文本 Agent 保持确定性可运行，TTS 使用浏览器语音降级；服务端 ASR、Embedding、Reranker

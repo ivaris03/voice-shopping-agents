@@ -152,7 +152,9 @@ async def test_profile_snapshot_uses_static_and_dynamic_profile_fields(
     assert snapshot["dynamic"]["categoryAffinity"]["HEADPHONES"] == pytest.approx(0.94)
     assert snapshot["dynamic"]["brandAffinity"]["云雀"] == pytest.approx(0.72)
     assert snapshot["dynamic"]["recentViewed"]
-    assert snapshot["dynamic"]["recentPurchased"] == []
+    recent_purchased = snapshot["dynamic"]["recentPurchased"]
+    assert isinstance(recent_purchased, list)
+    assert all(UUID(product_id) for product_id in recent_purchased)
 
 
 def find_product(catalog: dict[str, dict[str, Any]], keyword: str) -> dict[str, Any]:
@@ -299,6 +301,34 @@ async def test_commute_nc_headphones_within_budget(
     }
     for card in outcome["cards"]:
         assert card["scoreBreakdown"]["brandHit"] == 0.2  # 用户画像品牌命中
+
+
+@pytest.mark.asyncio
+async def test_default_commute_headphone_slots_keep_a_matching_product(
+    session: AsyncSession,
+    catalog: dict[str, dict[str, Any]],
+    required_slots: dict[str, list[str]],
+) -> None:
+    """The default UI prompt must still match after its required slot answers."""
+    outcome = await run_and_record(
+        session,
+        catalog,
+        required_slots,
+        name="默认通勤耳机完整槽位",
+        utterance="通勤降噪耳机，预算一千以内。蓝牙，头戴式。",
+        user_id=USER_101,
+        category="HEADPHONES",
+        slots={
+            "budgetMax": 1000,
+            "noiseCancellation": True,
+            "form": "over-ear",
+            "connectivity": "bluetooth",
+        },
+        model_enabled=False,
+    )
+
+    assert {product["name"] for product in outcome["candidates"]} == {"云雀 Air 降噪耳机"}
+    assert [card["name"] for card in outcome["cards"]] == ["云雀 Air 降噪耳机"]
 
 
 @pytest.mark.asyncio
