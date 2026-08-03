@@ -3,7 +3,8 @@
 基于 FastAPI、LangGraph、PostgreSQL/PGVector、Redis 和三个 Vue 应用实现的语音导购
 电商 MVP。产品范围见 [需求文档](docs/requirements.md)，系统设计见
 [架构文档](docs/architecture.md)，当前实现映射见
-[实现说明](docs/implementation.md)。
+[实现说明](docs/implementation.md)，后续开发拆解见
+[任务文档](docs/tasks.md)。
 
 ## 已实现能力
 
