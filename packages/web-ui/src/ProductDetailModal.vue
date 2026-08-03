@@ -44,6 +44,12 @@ function formatDate(value: string) {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('zh-CN')
 }
 
+function handleImageError(event: Event) {
+  const image = event.currentTarget
+  if (!(image instanceof HTMLImageElement)) return
+  image.hidden = true
+}
+
 function handleKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') emit('close')
 }
@@ -78,8 +84,8 @@ onBeforeUnmount(() => {
 
       <div class="product-detail-body">
         <div class="product-detail-visual" aria-hidden="true">
-          <img v-if="product.imageUrls?.length" :src="product.imageUrls[0]" :alt="product.name" />
-          <span v-else>{{ productInitial }}</span>
+          <img v-if="product.imageUrls?.length" :src="product.imageUrls[0]" :alt="product.name" @error="handleImageError" />
+          <span class="product-detail-visual__fallback">{{ productInitial }}</span>
         </div>
 
         <div class="product-detail-content">

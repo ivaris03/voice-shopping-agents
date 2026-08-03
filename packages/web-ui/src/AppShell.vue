@@ -11,7 +11,7 @@ defineProps<{
 </script>
 
 <template>
-  <div class="app-shell">
+  <div id="top" class="app-shell">
     <header class="topbar">
       <a class="brand" href="#top" :aria-label="`${title} 首页`">
         <span class="brand-mark" aria-hidden="true">声</span>
@@ -23,7 +23,7 @@ defineProps<{
       <button class="action-button" type="button">{{ actionLabel }}</button>
     </header>
 
-    <main id="top">
+    <main>
       <section class="hero">
         <div>
           <p class="eyebrow">{{ eyebrow }}</p>

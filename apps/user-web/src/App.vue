@@ -127,6 +127,49 @@ const visibleProducts = computed(() =>
     : products.value.slice(0, 12),
 )
 const successfulOrders = computed(() => orders.value.filter((order) => order.status === 'success').length)
+const pendingOrders = computed(() => orders.value.filter((order) => order.status === 'pending').length)
+
+const categoryLabels: Record<string, string> = {
+  HEADPHONES: '耳机',
+  COFFEE_MACHINE: '咖啡机',
+  RUNNING_SHOES: '跑鞋',
+  WATCHES: '腕表',
+  LIPSTICK: '口红',
+}
+const orderStatusLabels: Record<Order['status'], string> = {
+  pending: '待确认',
+  success: '已完成',
+  fail: '已取消',
+}
+const quickPrompts = ['通勤降噪耳机，预算一千以内', '适合日常跑步的鞋', '送给朋友的口红']
+
+function categoryLabel(value: string) {
+  return categoryLabels[value] ?? value.replaceAll('_', ' ')
+}
+
+function orderStatusLabel(value: Order['status']) {
+  return orderStatusLabels[value]
+}
+
+function formatPrice(value: number) {
+  return Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('zh-CN', { hour12: false })
+}
+
+function sendQuickPrompt(text: string) {
+  utterance.value = text
+  void sendUtterance()
+}
+
+function handleImageError(event: Event) {
+  const image = event.currentTarget
+  if (!(image instanceof HTMLImageElement)) return
+  image.hidden = true
+}
 
 async function loadData() {
   loading.value = true
@@ -747,18 +790,6 @@ function openRecommendation(card: RecommendationCard) {
   openProduct(recommendationToProduct(card))
 }
 
-function handleProductKeydown(event: KeyboardEvent, product: Product) {
-  if (event.key !== 'Enter' && event.key !== ' ') return
-  event.preventDefault()
-  openProduct(product)
-}
-
-function handleRecommendationKeydown(event: KeyboardEvent, card: RecommendationCard) {
-  if (event.key !== 'Enter' && event.key !== ' ') return
-  event.preventDefault()
-  openRecommendation(card)
-}
-
 function closeProductDetails() {
   selectedProduct.value = null
 }
@@ -858,9 +889,18 @@ onBeforeUnmount(() => {
 
       <section id="voice" class="section-panel voice-console">
         <div class="voice-controls">
-          <p class="eyebrow">LIVE SHOPPING AGENT</p>
-          <h2>把需求说给我听</h2>
-          <p style="color: rgba(255,255,255,.68); line-height: 1.7">支持推荐、对比、查询和二次确认下单；每次追问一到两个缺失条件。</p>
+          <div class="voice-heading-row">
+            <div>
+              <p class="eyebrow">LIVE SHOPPING AGENT</p>
+              <h2>把需求说给我听</h2>
+            </div>
+            <span class="voice-live-badge"><span class="status-dot"></span>在线</span>
+          </div>
+          <p class="voice-description">支持推荐、对比、查询和二次确认下单；每次只追问一到两个必要条件。</p>
+          <div class="voice-examples" aria-label="快速开始">
+            <span class="voice-examples__label">试着说</span>
+            <button v-for="prompt in quickPrompts" :key="prompt" class="voice-example" type="button" @click="sendQuickPrompt(prompt)">{{ prompt }}</button>
+          </div>
           <div class="voice-action-row">
             <button
               class="mic-button"
@@ -868,7 +908,14 @@ onBeforeUnmount(() => {
               type="button"
               :aria-label="isRecording ? '停止录音' : '开始录音'"
               @click="isRecording ? stopVoice() : startVoice()"
-            >{{ isRecording ? '■' : '●' }}</button>
+            >
+              <span class="mic-button__title">{{ isRecording ? '停止' : '开始说' }}</span>
+              <span class="mic-button__caption">{{ isRecording ? '提交本轮' : '语音输入' }}</span>
+            </button>
+            <div class="voice-action-copy">
+              <strong>{{ isRecording ? '正在听你说' : '点击开始说' }}</strong>
+              <span>{{ isRecording ? '说完后再次点击，提交这一轮需求' : '也可以在下方直接输入文字' }}</span>
+            </div>
             <button
               class="voice-pause-button"
               type="button"
@@ -877,77 +924,94 @@ onBeforeUnmount(() => {
               @click="toggleAssistantSpeechPause"
             >{{ isAssistantSpeechPaused ? '继续朗读' : '暂停朗读' }}</button>
           </div>
-          <div class="voice-status"><span class="status-dot"></span>{{ flowStatus }}</div>
+          <div class="voice-status" aria-live="polite"><span class="status-dot"></span>{{ flowStatus }}</div>
           <div class="voice-input-row">
             <input v-model="utterance" class="input" aria-label="导购消息" placeholder="例如：我想买一双通勤穿的鞋" @keyup.enter="sendUtterance" />
-            <button class="primary-button" type="button" @click="sendUtterance">发送</button>
+            <button class="primary-button voice-send-button" type="button" @click="sendUtterance">发送需求</button>
           </div>
         </div>
         <div class="conversation" aria-live="polite">
-          <div v-for="(message, index) in messages" :key="index" class="message" :class="`message--${message.role}`">
-            {{ message.text }}
+          <div class="conversation-header">
+            <div>
+              <strong>对话记录</strong>
+              <span>文字和语音会在这里同步</span>
+            </div>
+            <span v-if="messages.length > 1" class="conversation-count">{{ messages.length }} 条</span>
+          </div>
+          <div class="conversation-list">
+            <div v-for="(message, index) in messages" :key="index" class="message" :class="`message--${message.role}`">
+              <span class="message__role">{{ message.role === 'user' ? '你' : '声选导购' }}</span>
+              <span>{{ message.text }}</span>
+            </div>
           </div>
         </div>
       </section>
 
       <section v-if="recommendations.length" class="section-panel">
-        <div class="section-heading"><div><h2>为你精排的商品</h2><p>商品卡先展示，推荐理由随后按商品流式填充。</p></div></div>
+        <div class="section-heading"><div><span class="section-kicker">PERSONAL PICKS</span><h2>为你精排的商品</h2><p>先看匹配度，再打开详情或生成待确认订单。</p></div><span class="section-count">{{ recommendations.length }} 个推荐</span></div>
         <div class="product-grid">
           <article
             v-for="card in recommendations"
             :key="card.productId"
-            class="product-card"
-            role="button"
-            tabindex="0"
-            :aria-label="`查看${card.name}详情`"
-            @click="openRecommendation(card)"
-            @keydown="handleRecommendationKeydown($event, card)"
+            class="product-card product-card--recommendation"
           >
-            <div class="product-visual">{{ card.name.slice(0, 1) }}</div>
-            <div class="product-meta"><span class="badge">匹配 {{ Math.round(card.matchScore * 100) }}%</span><span class="muted">{{ card.merchantName }}</span></div>
-            <h3>{{ card.name }}</h3>
-            <p class="reason">{{ card.reason || '正在生成专属推荐理由…' }}</p>
-            <div class="card-footer"><span class="price">¥{{ card.price }}</span><button class="primary-button small-button" @click.stop="buyProduct(card.productId)">生成待确认订单</button></div>
+            <button class="product-card__details" type="button" :aria-label="`查看${card.name}详情`" @click="openRecommendation(card)">
+              <span class="product-visual" aria-hidden="true">
+                <img v-if="card.imageUrl" :src="card.imageUrl" alt="" loading="lazy" @error="handleImageError" />
+                <span class="product-visual__fallback">{{ card.name.slice(0, 1) }}</span>
+              </span>
+              <span class="product-meta"><span class="badge">匹配 {{ Math.round(card.matchScore * 100) }}%</span><span class="muted">{{ card.merchantName || '声选店铺' }}</span></span>
+              <span class="product-card-title">{{ card.name }}</span>
+              <span class="reason">{{ card.reason || '正在生成专属推荐理由…' }}</span>
+            </button>
+            <div class="product-card-footer"><span class="product-card-availability">有货 · {{ card.stock }} 件</span><span class="price">¥{{ formatPrice(card.price) }}</span><button class="primary-button small-button" type="button" @click="buyProduct(card.productId)">生成待确认订单</button></div>
           </article>
         </div>
       </section>
 
       <section id="products" class="section-panel">
         <div class="section-heading">
-          <div><h2>在售商品</h2><p>只展示启用店铺中有库存的商品。</p></div>
-          <select v-model="selectedCategory" class="select" style="width: auto"><option value="">精选品类</option><option v-for="category in categories" :key="category">{{ category }}</option></select>
+          <div><span class="section-kicker">BROWSE THE CATALOG</span><h2>在售商品</h2><p>只展示启用店铺中有库存的商品，先逛逛再让导购帮你挑。</p></div>
+          <span class="section-count">{{ visibleProducts.length }} / {{ products.length }} 件</span>
+        </div>
+        <div class="category-filter-row" aria-label="商品分类">
+          <button class="filter-chip" :class="{ 'filter-chip--active': !selectedCategory }" type="button" :aria-pressed="!selectedCategory" @click="selectedCategory = ''">全部 <span>{{ products.length }}</span></button>
+          <button v-for="category in categories" :key="category" class="filter-chip" :class="{ 'filter-chip--active': selectedCategory === category }" type="button" :aria-pressed="selectedCategory === category" @click="selectedCategory = category">{{ categoryLabel(category) }} <span>{{ products.filter((item) => item.categoryL2 === category).length }}</span></button>
         </div>
         <p v-if="loading" class="empty-state">正在加载商品…</p>
+        <p v-else-if="!visibleProducts.length" class="empty-state">这个分类暂时没有可售商品，换个分类试试。</p>
         <div v-else class="product-grid">
           <article
             v-for="product in visibleProducts"
             :key="product.id"
             class="product-card"
-            role="button"
-            tabindex="0"
-            :aria-label="`查看${product.name}详情`"
-            @click="openProduct(product)"
-            @keydown="handleProductKeydown($event, product)"
           >
-            <div class="product-visual">{{ product.name.slice(0, 1) }}</div>
-            <span class="badge">{{ product.categoryL2 }}</span>
-            <h3>{{ product.name }}</h3>
-            <p>{{ product.description }}</p>
-            <div class="card-footer"><span class="price">¥{{ product.price }}</span><button class="secondary-button small-button" @click.stop="buyProduct(product.id)">购买</button></div>
+            <button class="product-card__details" type="button" :aria-label="`查看${product.name}详情`" @click="openProduct(product)">
+              <span class="product-visual" aria-hidden="true">
+                <img v-if="product.imageUrls?.length" :src="product.imageUrls[0]" alt="" loading="lazy" @error="handleImageError" />
+                <span class="product-visual__fallback">{{ product.name.slice(0, 1) }}</span>
+              </span>
+              <span class="product-meta"><span class="badge">{{ categoryLabel(product.categoryL2) }}</span><span class="product-stock">有货 · {{ product.stock }} 件</span></span>
+              <span class="product-card-title">{{ product.name }}</span>
+              <span class="product-card-merchant">{{ product.brand || product.merchantName || '声选店铺' }}</span>
+              <span class="product-card-description">{{ product.description }}</span>
+            </button>
+            <div class="product-card-footer"><span class="price">¥{{ formatPrice(product.price) }}</span><button class="secondary-button small-button" type="button" @click="buyProduct(product.id)">购买</button></div>
           </article>
         </div>
       </section>
 
       <section id="orders" class="section-panel">
-        <div class="section-heading"><div><h2>我的订单</h2><p>待确认订单将在十五分钟后失效。</p></div></div>
-        <div class="table-wrap">
+        <div class="section-heading"><div><span class="section-kicker">YOUR ORDERS</span><h2>我的订单</h2><p>待确认订单将在十五分钟后失效，确认前会再次校验价格和库存。</p></div><span v-if="pendingOrders" class="badge badge--pending">{{ pendingOrders }} 笔待确认</span></div>
+        <p v-if="!orders.length" class="empty-state">还没有订单，先去逛逛商品或开始语音导购吧。</p>
+        <div v-else class="table-wrap">
           <table class="data-table">
             <thead><tr><th>商品</th><th>店铺</th><th>金额</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
             <tbody>
               <tr v-for="order in orders" :key="order.id">
-                <td>{{ order.productSnapshot.name }}</td><td>{{ order.merchantSnapshot.name }}</td><td>¥{{ order.totalAmount }}</td>
-                <td><span class="badge" :class="`badge--${order.status}`">{{ order.status }}</span></td>
-                <td>{{ new Date(order.createdAt).toLocaleString() }}</td>
+                <td><strong>{{ order.productSnapshot.name }}</strong></td><td>{{ order.merchantSnapshot.name }}</td><td class="order-total">¥{{ formatPrice(order.totalAmount) }}</td>
+                <td><span class="badge" :class="`badge--${order.status}`">{{ orderStatusLabel(order.status) }}</span></td>
+                <td><time :datetime="order.createdAt">{{ formatDateTime(order.createdAt) }}</time></td>
                 <td><div v-if="order.status === 'pending'" class="section-actions"><button class="secondary-button small-button" @click="updateOrder(order, 'confirm')">确认</button><button class="danger-button small-button" @click="updateOrder(order, 'cancel')">取消</button></div><span v-else class="muted">—</span></td>
               </tr>
             </tbody>
