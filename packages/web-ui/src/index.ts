@@ -1,5 +1,6 @@
 export { default as AppShell } from './AppShell.vue'
 export { default as FeatureCard } from './FeatureCard.vue'
+export { default as ProductDetailModal } from './ProductDetailModal.vue'
 
 export interface NavItem {
   label: string

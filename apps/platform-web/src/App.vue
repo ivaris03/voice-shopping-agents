@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   AppShell,
+  ProductDetailModal,
   requestJson,
   type Category,
   type CategoryLevelOne,
@@ -29,6 +30,7 @@ const categoryL1Form = reactive({ code: '' })
 const categoryForm = reactive({ categoryL1Id: '', categoryL2: '' })
 const slotForm = reactive({ categoryId: '', key: '', isRequired: true, enumValues: '' })
 const error = ref('')
+const selectedProduct = ref<Product | null>(null)
 const productQuery = ref('')
 const orderStatus = ref('')
 const enabledMerchants = computed(() => merchants.value.filter((item) => item.isEnabled).length)
@@ -183,6 +185,20 @@ async function toggleMerchant(merchant: Merchant) {
   }
 }
 
+function openProduct(product: Product) {
+  selectedProduct.value = product
+}
+
+function handleProductKeydown(event: KeyboardEvent, product: Product) {
+  if (event.key !== 'Enter' && event.key !== ' ') return
+  event.preventDefault()
+  openProduct(product)
+}
+
+function closeProductDetails() {
+  selectedProduct.value = null
+}
+
 onMounted(() => void loadData())
 </script>
 
@@ -266,13 +282,14 @@ onMounted(() => void loadData())
 
       <section id="products" class="section-panel">
         <div class="section-heading"><div><h2>商品总览</h2><p>跨商家检查价格、库存、品类与上下架状态。</p></div><input v-model="productQuery" class="input" style="width: 260px" placeholder="搜索商品、品牌或店铺" /></div>
-        <div class="table-wrap"><table class="data-table"><thead><tr><th>商品</th><th>店铺</th><th>标准品类</th><th>价格</th><th>库存</th><th>状态</th></tr></thead><tbody><tr v-for="product in visibleProducts" :key="product.id"><td><strong>{{ product.name }}</strong><br><span class="muted">{{ product.brand || '无品牌' }}</span></td><td>{{ product.merchantName }}</td><td>{{ product.categoryL2 }}</td><td>¥{{ product.price }}</td><td>{{ product.stock }}</td><td><span class="badge" :class="{ 'badge--disabled': product.status !== 'on_sale' }">{{ product.status }}</span></td></tr></tbody></table></div>
+        <div class="table-wrap"><table class="data-table"><thead><tr><th>商品</th><th>店铺</th><th>标准品类</th><th>价格</th><th>库存</th><th>状态</th></tr></thead><tbody><tr v-for="product in visibleProducts" :key="product.id" class="product-row" tabindex="0" :aria-label="`查看${product.name}详情`" @click="openProduct(product)" @keydown="handleProductKeydown($event, product)"><td><strong>{{ product.name }}</strong><br><span class="muted">{{ product.brand || '无品牌' }}</span></td><td>{{ product.merchantName }}</td><td>{{ product.categoryL2 }}</td><td>¥{{ product.price }}</td><td>{{ product.stock }}</td><td><span class="badge" :class="{ 'badge--disabled': product.status !== 'on_sale' }">{{ product.status }}</span></td></tr></tbody></table></div>
       </section>
 
       <section id="orders" class="section-panel">
         <div class="section-heading"><div><h2>全平台订单</h2><p>订单状态固定为 pending、success 和 fail。</p></div><select v-model="orderStatus" class="select" style="width: auto"><option value="">全部状态</option><option value="pending">pending</option><option value="success">success</option><option value="fail">fail</option></select></div>
         <div class="table-wrap"><table class="data-table"><thead><tr><th>商品</th><th>商家</th><th>用户</th><th>金额</th><th>状态</th><th>失败原因</th><th>时间</th></tr></thead><tbody><tr v-for="order in visibleOrders" :key="order.id"><td>{{ order.productSnapshot.name }}</td><td>{{ order.merchantSnapshot.name }}</td><td>{{ order.userId.slice(0, 8) }}…</td><td>¥{{ order.totalAmount }}</td><td><span class="badge" :class="`badge--${order.status}`">{{ order.status }}</span></td><td>{{ order.failureReason || '—' }}</td><td>{{ new Date(order.createdAt).toLocaleString() }}</td></tr></tbody></table></div>
       </section>
+      <ProductDetailModal v-if="selectedProduct" :product="selectedProduct" @close="closeProductDetails" />
     </div>
   </AppShell>
 </template>

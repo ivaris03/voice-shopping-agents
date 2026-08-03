@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   AppShell,
+  ProductDetailModal,
   requestJson,
   type Category,
   type ItemsResponse,
@@ -23,6 +24,7 @@ const categories = ref<Category[]>([])
 const loading = ref(true)
 const saving = ref(false)
 const error = ref('')
+const selectedProduct = ref<Product | null>(null)
 const storeForm = reactive({ name: '', slug: '', description: '' })
 const productForm = reactive({
   merchantId: '',
@@ -161,6 +163,20 @@ async function deleteProduct(product: Product) {
   await loadData()
 }
 
+function openProduct(product: Product) {
+  selectedProduct.value = product
+}
+
+function handleProductKeydown(event: KeyboardEvent, product: Product) {
+  if (event.key !== 'Enter' && event.key !== ' ') return
+  event.preventDefault()
+  openProduct(product)
+}
+
+function closeProductDetails() {
+  selectedProduct.value = null
+}
+
 onMounted(() => void loadData())
 </script>
 
@@ -236,7 +252,7 @@ onMounted(() => void loadData())
         <div v-else class="table-wrap" style="margin-top: 20px">
           <table class="data-table">
             <thead><tr><th>商品</th><th>店铺</th><th>价格</th><th>库存</th><th>状态</th><th>操作</th></tr></thead>
-            <tbody><tr v-for="product in products" :key="product.id"><td><strong>{{ product.name }}</strong><br><span class="muted">{{ product.sku }}</span></td><td>{{ product.merchantName }}</td><td>¥{{ product.price }}</td><td>{{ product.stock }}</td><td><span class="badge" :class="{ 'badge--disabled': product.status !== 'on_sale' }">{{ product.status }}</span></td><td><div class="section-actions"><button class="ghost-button small-button" @click="editInventory(product)">价格/库存</button><button class="secondary-button small-button" @click="toggleSale(product)">{{ product.status === 'on_sale' ? '下架' : '上架' }}</button><button class="danger-button small-button" @click="deleteProduct(product)">删除</button></div></td></tr></tbody>
+            <tbody><tr v-for="product in products" :key="product.id" class="product-row" tabindex="0" :aria-label="`查看${product.name}详情`" @click="openProduct(product)" @keydown="handleProductKeydown($event, product)"><td><strong>{{ product.name }}</strong><br><span class="muted">{{ product.sku }}</span></td><td>{{ product.merchantName }}</td><td>¥{{ product.price }}</td><td>{{ product.stock }}</td><td><span class="badge" :class="{ 'badge--disabled': product.status !== 'on_sale' }">{{ product.status }}</span></td><td><div class="section-actions"><button class="ghost-button small-button" @click.stop="editInventory(product)">价格/库存</button><button class="secondary-button small-button" @click.stop="toggleSale(product)">{{ product.status === 'on_sale' ? '下架' : '上架' }}</button><button class="danger-button small-button" @click.stop="deleteProduct(product)">删除</button></div></td></tr></tbody>
           </table>
         </div>
       </section>
@@ -245,6 +261,7 @@ onMounted(() => void loadData())
         <div class="section-heading"><div><h2>本店订单</h2><p>仅展示当前账号所拥有店铺的订单。</p></div></div>
         <div class="table-wrap"><table class="data-table"><thead><tr><th>商品</th><th>金额</th><th>状态</th><th>失败原因</th><th>时间</th></tr></thead><tbody><tr v-for="order in orders" :key="order.id"><td>{{ order.productSnapshot.name }}</td><td>¥{{ order.totalAmount }}</td><td><span class="badge" :class="`badge--${order.status}`">{{ order.status }}</span></td><td>{{ order.failureReason || '—' }}</td><td>{{ new Date(order.createdAt).toLocaleString() }}</td></tr></tbody></table></div>
       </section>
+      <ProductDetailModal v-if="selectedProduct" :product="selectedProduct" @close="closeProductDetails" />
     </div>
   </AppShell>
 </template>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   AppShell,
+  ProductDetailModal,
   apiBaseUrl,
   audioWsBaseUrl,
   requestJson,
@@ -75,6 +76,7 @@ const merchants = ref<Merchant[]>([])
 const products = ref<Product[]>([])
 const orders = ref<Order[]>([])
 const recommendations = ref<RecommendationCard[]>([])
+const selectedProduct = ref<Product | null>(null)
 const selectedCategory = ref('')
 const audioInputs = ref<AudioInputOption[]>([])
 const selectedAudioInputId = ref(localStorage.getItem('voice-shopping-audio-input') ?? '')
@@ -712,6 +714,60 @@ async function reportClick(productId: string) {
   }).catch(() => undefined)
 }
 
+function recommendationToProduct(card: RecommendationCard): Product {
+  const loadedProduct = products.value.find((product) => product.id === card.productId)
+  if (loadedProduct) return loadedProduct
+  return {
+    id: card.productId,
+    merchantId: card.merchantId,
+    merchantName: card.merchantName,
+    sku: '推荐商品',
+    name: card.name,
+    categoryL1: '',
+    categoryL2: '推荐商品',
+    brand: card.brand,
+    description: '',
+    price: card.price,
+    stock: card.stock,
+    attributes: {},
+    sellingPoints: card.sellingPoints,
+    imageUrls: card.imageUrl ? [card.imageUrl] : [],
+    status: 'on_sale',
+    createdAt: '',
+    updatedAt: '',
+  }
+}
+
+function openProduct(product: Product) {
+  selectedProduct.value = product
+  void reportClick(product.id)
+}
+
+function openRecommendation(card: RecommendationCard) {
+  openProduct(recommendationToProduct(card))
+}
+
+function handleProductKeydown(event: KeyboardEvent, product: Product) {
+  if (event.key !== 'Enter' && event.key !== ' ') return
+  event.preventDefault()
+  openProduct(product)
+}
+
+function handleRecommendationKeydown(event: KeyboardEvent, card: RecommendationCard) {
+  if (event.key !== 'Enter' && event.key !== ' ') return
+  event.preventDefault()
+  openRecommendation(card)
+}
+
+function closeProductDetails() {
+  selectedProduct.value = null
+}
+
+function buySelectedProduct() {
+  if (!selectedProduct.value) return
+  void buyProduct(selectedProduct.value.id)
+}
+
 async function buyProduct(productId: string) {
   error.value = ''
   try {
@@ -726,6 +782,7 @@ async function buyProduct(productId: string) {
       }),
     })
     await loadData()
+    closeProductDetails()
     document.querySelector('#orders')?.scrollIntoView({ behavior: 'smooth' })
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '创建订单失败'
@@ -836,12 +893,21 @@ onBeforeUnmount(() => {
       <section v-if="recommendations.length" class="section-panel">
         <div class="section-heading"><div><h2>为你精排的商品</h2><p>商品卡先展示，推荐理由随后按商品流式填充。</p></div></div>
         <div class="product-grid">
-          <article v-for="card in recommendations" :key="card.productId" class="product-card">
+          <article
+            v-for="card in recommendations"
+            :key="card.productId"
+            class="product-card"
+            role="button"
+            tabindex="0"
+            :aria-label="`查看${card.name}详情`"
+            @click="openRecommendation(card)"
+            @keydown="handleRecommendationKeydown($event, card)"
+          >
             <div class="product-visual">{{ card.name.slice(0, 1) }}</div>
             <div class="product-meta"><span class="badge">匹配 {{ Math.round(card.matchScore * 100) }}%</span><span class="muted">{{ card.merchantName }}</span></div>
             <h3>{{ card.name }}</h3>
             <p class="reason">{{ card.reason || '正在生成专属推荐理由…' }}</p>
-            <div class="card-footer"><span class="price">¥{{ card.price }}</span><button class="primary-button small-button" @click="buyProduct(card.productId)">生成待确认订单</button></div>
+            <div class="card-footer"><span class="price">¥{{ card.price }}</span><button class="primary-button small-button" @click.stop="buyProduct(card.productId)">生成待确认订单</button></div>
           </article>
         </div>
       </section>
@@ -853,7 +919,16 @@ onBeforeUnmount(() => {
         </div>
         <p v-if="loading" class="empty-state">正在加载商品…</p>
         <div v-else class="product-grid">
-          <article v-for="product in visibleProducts" :key="product.id" class="product-card" @click="reportClick(product.id)">
+          <article
+            v-for="product in visibleProducts"
+            :key="product.id"
+            class="product-card"
+            role="button"
+            tabindex="0"
+            :aria-label="`查看${product.name}详情`"
+            @click="openProduct(product)"
+            @keydown="handleProductKeydown($event, product)"
+          >
             <div class="product-visual">{{ product.name.slice(0, 1) }}</div>
             <span class="badge">{{ product.categoryL2 }}</span>
             <h3>{{ product.name }}</h3>
@@ -880,5 +955,12 @@ onBeforeUnmount(() => {
         </div>
       </section>
     </div>
+    <ProductDetailModal
+      v-if="selectedProduct"
+      :product="selectedProduct"
+      action-label="生成待确认订单"
+      @close="closeProductDetails"
+      @action="buySelectedProduct"
+    />
   </AppShell>
 </template>
