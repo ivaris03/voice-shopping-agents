@@ -279,7 +279,12 @@ def carry_forward_state(previous: ShoppingState) -> ShoppingState:
 def state_for_persistence(state: ShoppingState) -> ShoppingState:
     """Create the business projection stored in ``session_states``."""
 
-    return carry_forward_state(state)
+    persisted = carry_forward_state(state)
+    if state.get("clarification_status") == "READY":
+        # A completed clarification must not route a later unrelated turn back
+        # through the question that was just answered.
+        persisted["pending_question"] = None
+    return persisted
 
 
 OUTPUT_STATE_KEYS = tuple(ShoppingOutputState.__annotations__)

@@ -48,3 +48,15 @@ def test_profile_updates_are_the_only_profile_fact_carried_between_turns() -> No
     carried = carry_forward_state(persisted)
 
     assert carried == {"user_profile_updates": {"age": 32}}
+
+
+def test_completed_clarification_clears_its_pending_question_before_persistence() -> None:
+    persisted = state_for_persistence(
+        {
+            "clarification_status": "READY",
+            "pending_question": {"slot": "connectivity"},
+            "slots": {"form": "over-ear", "connectivity": "bluetooth"},
+        }
+    )
+
+    assert persisted["pending_question"] is None

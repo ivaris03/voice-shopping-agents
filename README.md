@@ -69,9 +69,24 @@ pnpm dev:platform
 API 文档位于 `http://localhost:8000/docs`，三个前端分别位于
 `http://localhost:5173`、`http://localhost:5174` 和 `http://localhost:5175`。
 PostgreSQL 与 Redis 默认使用宿主机 `5432`、`6379` 端口。首次使用空数据库时，先创建
-`voice-shopping-agents` 数据库，再依次执行 `sql/schema.sql` 和 `sql/data.sql`；已有数据库
-无需重复导入。已有演示库升级到本版本时，额外执行一次
-`sql/migrations/20260803_restore_default_shopping_contract.sql`，以补齐默认耳机导购所需的数据。
+`voice-shopping-agents` 数据库，再执行版本化迁移；本地演示附带播种数据：
+
+```bash
+pnpm db:migrate --seed-demo
+```
+
+已有数据库同样执行 `pnpm db:migrate`。迁移记录及校验和保存在
+`voice_shopping_schema_migrations`，已经应用的脚本不可改写；当前 schema 快照仍保留在
+`sql/schema.sql` 供审阅和历史参考。
+
+E2E 使用必须与应用库不同的 `VOICE_SHOPPING_TEST_DATABASE_URL`。复制 `.env.example` 后运行：
+
+```bash
+pnpm db:prepare-e2e
+pnpm test:e2e
+```
+
+测试运行时会反复重建这个库的 `public` schema，因此不能指向任何含业务数据的数据库。
 
 复制 `.env.example` 为 `.env` 后可接入 DashScope 和 LangSmith。无 DashScope Key 时，
 文本 Agent 保持确定性可运行，TTS 使用浏览器语音降级；服务端 ASR、Embedding、Reranker

@@ -11,6 +11,21 @@ CUSTOMER_HEADERS = {
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
+async def test_e2e_database_runs_migrations_and_demo_seed(e2e_connection) -> None:
+    migrations = await e2e_connection.execute(
+        text("SELECT version FROM voice_shopping_schema_migrations ORDER BY version")
+    )
+    assert [row["version"] for row in migrations.mappings()] == [
+        "00000000_initial_schema",
+        "20260803_restore_default_shopping_contract",
+        "20260804_migrate_legacy_catalog_and_profiles",
+    ]
+    product_count = await e2e_connection.scalar(text("SELECT count(*) FROM products"))
+    assert product_count and product_count > 0
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
 async def test_customer_can_browse_create_and_cancel_order(
     e2e_client: AsyncClient,
     e2e_connection,
@@ -77,3 +92,50 @@ async def test_customer_can_browse_create_and_cancel_order(
     )
     assert orders_response.status_code == 200
     assert any(order["id"] == created["id"] for order in orders_response.json()["items"])
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_customer_can_confirm_catalog_order_and_decrement_stock(
+    e2e_client: AsyncClient,
+    e2e_connection,
+) -> None:
+    products_response = await e2e_client.get(
+        "/api/v1/catalog/products",
+        params={"category": "HEADPHONES"},
+        headers=CUSTOMER_HEADERS,
+    )
+    product = next(item for item in products_response.json()["items"] if item["stock"] > 1)
+    stock_before = await e2e_connection.scalar(
+        text("SELECT stock FROM products WHERE id = :id"), {"id": product["id"]}
+    )
+
+    create_response = await e2e_client.post(
+        "/api/v1/orders",
+        headers=CUSTOMER_HEADERS,
+        json={
+            "productId": product["id"],
+            "quantity": 1,
+            "idempotencyKey": f"e2e-confirm-{uuid4()}",
+        },
+    )
+    assert create_response.status_code == 201
+    order_id = create_response.json()["id"]
+
+    confirm_response = await e2e_client.post(
+        f"/api/v1/orders/{order_id}/confirm",
+        headers=CUSTOMER_HEADERS,
+    )
+    assert confirm_response.status_code == 200
+    assert confirm_response.json()["status"] == "success"
+
+    persisted = await e2e_connection.execute(
+        text("SELECT status, confirmed_at FROM orders WHERE id = :id"), {"id": order_id}
+    )
+    persisted_order = persisted.mappings().one()
+    assert persisted_order["status"] == "success"
+    assert persisted_order["confirmed_at"] is not None
+    stock_after = await e2e_connection.scalar(
+        text("SELECT stock FROM products WHERE id = :id"), {"id": product["id"]}
+    )
+    assert stock_after == stock_before - 1

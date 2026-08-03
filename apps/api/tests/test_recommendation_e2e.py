@@ -4,7 +4,8 @@
 画像规则二次排序。为隔离"推荐"这一环节，用例直接给出已填槽位，绕过意图识别
 与澄清；意图相关节点（响应、下单）不在本套件覆盖内。
 
-依赖：本地演示库（``.env`` 中的 VOICE_SHOPPING_DATABASE_URL）与可选 DashScope Key。
+依赖：由 ``VOICE_SHOPPING_TEST_DATABASE_URL`` 指定的独立 PostgreSQL/PGVector 测试库与
+可选 DashScope Key。测试夹具会在模块开始前执行全部迁移并重新播种该库。
 
 - 数据库不可达时整模块跳过；
 - 模型不可用或调用失败时，Agent 按设计降级到确定性路径，过滤类断言不受影响，
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import AsyncIterator
 from typing import Any
 from uuid import UUID
 
@@ -23,12 +25,11 @@ import pytest
 import pytest_asyncio
 from langgraph.runtime import Runtime
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from voice_shopping_api.agents.nodes.recommendation import recommend_products
 from voice_shopping_api.agents.service import _catalog
 from voice_shopping_api.agents.state import ShoppingRuntimeDependencies, ShoppingState
-from voice_shopping_api.core.config import get_settings
 from voice_shopping_api.core.queries import PRODUCT_COLUMNS, rows
 from voice_shopping_api.core.taxonomy import list_categories
 from voice_shopping_api.modules.catalog.profile import profile_snapshot
@@ -38,6 +39,8 @@ USER_102 = UUID("00000000-0000-4000-8000-000000000102")  # 陈晨：咖啡机画
 USER_103 = UUID("00000000-0000-4000-8000-000000000103")  # 爱丽丝：跑鞋画像
 USER_104 = UUID("00000000-0000-4000-8000-000000000104")  # 大卫：冷启动空画像
 USER_105 = UUID("00000000-0000-4000-8000-000000000105")  # 埃里克：耳机/手表画像
+
+pytestmark = pytest.mark.e2e
 
 # 数值槽位：商品侧取值 >= 槽位要求即命中（与 service._attribute_condition 一致）。
 NUMERIC_SLOTS = frozenset({"batteryHours", "pressureBar", "waterTankMl", "capacityL"})
@@ -106,17 +109,9 @@ def complies(
 
 
 @pytest_asyncio.fixture(scope="module")
-async def session() -> AsyncSession:
-    settings = get_settings()
-    engine = create_async_engine(settings.database_url)
-    try:
-        async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
-    except Exception as exc:  # noqa: BLE001 - 数据库不可达时整模块跳过
-        pytest.skip(f"本地演示数据库不可达，跳过推荐 Agent 端到端测试：{exc}")
-    async with AsyncSession(engine) as db_session:
+async def session(e2e_engine) -> AsyncIterator[AsyncSession]:
+    async with AsyncSession(e2e_engine) as db_session:
         yield db_session
-    await engine.dispose()
 
 
 @pytest_asyncio.fixture(scope="module")

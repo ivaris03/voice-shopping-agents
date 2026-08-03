@@ -4,8 +4,6 @@
 -- 创建数据库：CREATE DATABASE "voice-shopping-agents";
 -- 执行建表：psql -d "voice-shopping-agents" -f sql/schema.sql
 
-BEGIN;
-
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -521,5 +519,3 @@ DROP TRIGGER IF EXISTS user_profile_dynamic_set_updated_at ON user_profile_dynam
 CREATE TRIGGER user_profile_dynamic_set_updated_at
 BEFORE UPDATE ON user_profile_dynamic
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
-COMMIT;

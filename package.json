@@ -8,9 +8,12 @@
     "dev:merchant": "pnpm --filter @voice-shopping/merchant-web dev",
     "dev:platform": "pnpm --filter @voice-shopping/platform-web dev",
     "dev:api": "uv run --project apps/api python -m voice_shopping_api.server --reload --port 8000",
+    "db:migrate": "uv run --project apps/api python apps/api/scripts/migrate.py",
+    "db:prepare-e2e": "uv run --project apps/api python apps/api/scripts/prepare_test_database.py",
     "build": "pnpm -r --if-present build",
     "typecheck": "pnpm -r --if-present typecheck",
     "test:api": "uv run --project apps/api pytest",
+    "test:e2e": "uv run --project apps/api pytest -m e2e",
     "lint:api": "uv run --project apps/api ruff check .",
     "format:api": "uv run --project apps/api ruff format ."
   }

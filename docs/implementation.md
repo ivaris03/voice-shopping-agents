@@ -290,7 +290,10 @@ product_cards
 
 `intent`、taxonomy 上下文、候选商品、画像快照、模型开关、理由/回复文本和完整订单详情不会进入 `session_states.business_state`。待确认订单由 `orders` 查询，状态投影只保存 `pending_order_id` 引用。
 
-LangGraph Checkpointer 开启时，`process_turn()` 以稳定 session UUID 作为 `thread_id`，优先恢复完整图状态；没有 checkpoint 时读取 `session_states` 最新投影。`sql/schema.sql` 对旧的 `workflow_state`、`user_profile_snapshot` 和 `langgraph_checkpoint_id` 列保留了可重跑迁移兼容逻辑。
+LangGraph Checkpointer 开启时，`process_turn()` 以稳定 session UUID 作为 `thread_id`，优先恢复完整图状态；没有 checkpoint 时读取 `session_states` 最新投影。数据库演进由
+`apps/api/scripts/migrate.py` 和 `sql/migrations/` 管理，`sql/schema.sql` 是当前初始 schema 快照。旧的
+`workflow_state`、taxonomy 命名和画像表在迁移中转换；无法无损映射的旧画像字段保留在
+`legacy_user_static_profiles` / `legacy_user_dynamic_profiles` 供审计。
 
 ## 10. WebSocket、事件顺序和重放
 

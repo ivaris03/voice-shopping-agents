@@ -612,7 +612,7 @@ TTS 正常采样率为 24 kHz WAV；模型没有产出时使用 16 kHz 静音 WA
 启动 API：
 
 ```bash
-uv run --project apps/api uvicorn voice_shopping_api.main:app --reload --port 8000
+uv run --project apps/api python -m voice_shopping_api.server --reload --port 8000
 ```
 
 运行接口相关测试：
@@ -623,11 +623,15 @@ uv run --project apps/api pytest -m service
 uv run --project apps/api pytest -m e2e
 ```
 
-E2E 推荐设置独立 PostgreSQL/PGVector 测试库：
+E2E 必须设置独立且可丢弃的 PostgreSQL/PGVector 测试库：
 
 ```powershell
-$env:VOICE_SHOPPING_TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/voice-shopping-api-test"
-uv run --project apps/api pytest -m e2e
+$env:VOICE_SHOPPING_TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/voice-shopping-agents-test"
+pnpm db:prepare-e2e
+pnpm test:e2e
 ```
+
+测试夹具会在每个 E2E 模块开始时重建该库的 `public` schema、执行迁移并播种演示数据；若未
+设置该变量，E2E 会跳过，且绝不会使用应用数据库。
 
 当前演示身份、接口范围和生产化限制见 [架构文档](architecture.md)、[实现说明](implementation.md) 和 [任务文档](tasks.md)。

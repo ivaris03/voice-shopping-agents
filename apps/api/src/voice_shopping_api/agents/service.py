@@ -662,6 +662,10 @@ async def process_turn(
             result.get("utterance", ""), result.get("slots", {})
         ),
     )
+    if result.get("clarification_status") == "READY":
+        # Keep emitted output aligned with the durable projection. A streamed
+        # graph update may omit a cleared optional field from a prior turn.
+        result["pending_question"] = None
     await _persist(session, result, user_id, session_id, turn_id)
     terminal_order = (result.get("pending_order") or {}).get("status") in {"success", "fail"}
     if terminal_order:
