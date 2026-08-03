@@ -217,10 +217,20 @@ def _question_for_slots(slots: list[str], taxonomy_questions: dict[str, str]) ->
 
 async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
     category = state.get("product_category")
-    required_slots = state.get("required_slots_by_category", REQUIRED_SLOTS).get(category or "", [])
-    allowed_slots = state.get("allowed_slots_by_category", REQUIRED_SLOTS).get(
-        category or "", required_slots
-    )
+    required_slots_by_category = state.get("required_slots_by_category")
+    allowed_slots_by_category = state.get("allowed_slots_by_category")
+    if required_slots_by_category and category in required_slots_by_category:
+        required_slots = required_slots_by_category[category]
+    elif "required_slots" in state:
+        required_slots = state["required_slots"]
+    else:
+        required_slots = REQUIRED_SLOTS.get(category or "", [])
+    if allowed_slots_by_category and category in allowed_slots_by_category:
+        allowed_slots = allowed_slots_by_category[category]
+    elif "allowed_slots" in state:
+        allowed_slots = state["allowed_slots"]
+    else:
+        allowed_slots = required_slots
     taxonomy_definitions = state.get("taxonomy_slot_definitions_by_category", {}).get(
         category or "", state.get("taxonomy_slot_definitions", {})
     )
@@ -305,6 +315,7 @@ async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
         )
     return {
         "required_slots": required_slots,
+        "allowed_slots": allowed_slots,
         "slots": result.slots,
         "clarification_status": result.status,
         "missing_slots": result.missing_slots,

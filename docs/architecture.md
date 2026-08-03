@@ -115,19 +115,27 @@ flowchart TD
 
 ### 4.2 状态生命周期
 
-`agents/state.py` 使用一个扁平 `ShoppingState`，通过 TypedDict mixin 标注字段生命周期：
+`agents/state.py` 使用一个扁平 `ShoppingState`，通过 TypedDict mixin 标注字段生命周期。图装配显式声明三类 LangGraph schema：
+
+- `ShoppingInputState`（`input_schema`）：接收当前话语、会话恢复事实、当前品类 taxonomy 和服务层准备的本轮快照。
+- `ShoppingState`（内部 state schema）：包含节点路由、澄清、召回、订单、合规和流式发布所需的完整扁平状态。
+- `ShoppingOutputState`（`output_schema`）：只返回本轮对话进度、商品卡、订单结果、合规状态和最终安全回复；taxonomy、候选商品、模型开关、会话元数据和画像快照不会从图输出。
+
+`ShoppingRuntimeDependencies` 作为 `context_schema` 注入数据库召回、订单事务和发布器。无 checkpointer 的多轮调用可以把输出中的 `required_slots`、`allowed_slots`、`slots` 和 `pending_question` 作为下一轮输入；完整 taxonomy 仍由服务层按轮加载。
+
+状态组如下：
 
 | 状态组 | 内容 | 生命周期 |
 | --- | --- | --- |
 | TurnState | session/turn/user、当前话语、最近历史、模型开关 | 当前轮 |
-| ConversationState | 意图、品类、品类变化、槽位、澄清问题 | 跨轮业务事实 |
+| ConversationState | 意图、品类、品类变化、当前允许槽位、槽位、澄清问题 | 跨轮业务事实 |
 | TaxonomyState | 当前 DB 品类及槽位的只读上下文 | 当前轮，不持久化 |
 | ProfileState | 会话内静态画像候选 | 跨轮候选，结束时收敛 |
 | RecommendationState | 画像快照、候选商品、商品卡、上一轮卡片 | 画像快照和候选为当前轮；商品卡可跨轮引用 |
 | OrderState | 当前待确认或终态订单引用 | 订单表为事实源，状态只保留当前轮结果 |
 | ResponseState | 理由、话术、合规和流式标记 | 当前轮展示输出 |
 
-扁平状态是为了避免 StateGraph 默认更新语义下的嵌套对象整体覆盖。每个节点只返回自己负责的局部键，运行时再合并成完整状态。
+扁平状态是为了避免 StateGraph 默认更新语义下的嵌套对象整体覆盖。每个节点只返回自己负责的局部键，运行时再合并成完整状态；输入和输出 schema 只控制图边界，不改变内部状态合并。
 
 ### 4.3 运行时依赖注入
 

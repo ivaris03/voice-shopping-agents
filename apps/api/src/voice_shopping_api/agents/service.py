@@ -17,9 +17,12 @@ from voice_shopping_api.agents.state import (
     BUSINESS_STATE_VERSION,
     CatalogFilters,
     ProductReason,
+    ShoppingInputState,
+    ShoppingOutputState,
     ShoppingRuntimeDependencies,
     ShoppingState,
     carry_forward_state,
+    state_for_output,
     state_for_persistence,
 )
 from voice_shopping_api.core.config import get_settings
@@ -508,7 +511,7 @@ async def process_turn(
     on_events: Callable[[list[dict[str, Any]]], Awaitable[None]] | None = None,
     on_speech_sentence: Callable[[str], Awaitable[None]] | None = None,
     profile_updates: Mapping[str, Any] | None = None,
-) -> tuple[ShoppingState, list[dict[str, Any]]]:
+) -> tuple[ShoppingOutputState, list[dict[str, Any]]]:
     settings = get_settings()
     session_id = stable_uuid(session_key)
     turn_id = stable_uuid(f"{session_key}:{turn_key}")
@@ -547,7 +550,7 @@ async def process_turn(
         extract_static_profile_candidates(utterance, carried_forward.get("slots", {})),
         profile_updates,
     )
-    state_input: ShoppingState = {
+    state_input: ShoppingInputState = {
         **carried_forward,
         **taxonomy_context,
         "session_id": session_key,
@@ -556,22 +559,12 @@ async def process_turn(
         "utterance": utterance.strip(),
         "conversation_history": await _conversation_history(session, session_id),
         "model_enabled": model_enabled,
-        "intent": {},
         "catalog_products": [],
         "user_profile_snapshot": await profile_snapshot(session, user_id),
         "user_profile_updates": profile_candidates,
         "previous_product_cards": carried_forward.get("product_cards", []),
         "product_cards": [],
         "pending_order": pending_order,
-        "emotion_style": "",
-        "reasons": [],
-        "speech_text": "",
-        "final_reply": "",
-        "reasons_streamed": False,
-        "speech_streamed": False,
-        "speech_audio_streamed": False,
-        "compliance_blocked": False,
-        "violation_sentence": None,
     }
     result: ShoppingState = dict(state_input)
     next_sequence = 1
@@ -691,5 +684,5 @@ async def process_turn(
     )
     if on_events:
         await on_events(events)
-        return result, []
-    return result, events
+        return state_for_output(result), []
+    return state_for_output(result), events

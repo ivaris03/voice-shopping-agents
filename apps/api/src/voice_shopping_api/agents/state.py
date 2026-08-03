@@ -83,6 +83,7 @@ class ConversationState(TypedDict, total=False):
     product_category: str
     category_changed: bool
     required_slots: list[str]
+    allowed_slots: list[str]
     slots: dict[str, Any]
     clarification_status: Literal["ASK", "READY"]
     missing_slots: list[str]
@@ -136,6 +137,76 @@ class ResponseState(TypedDict, total=False):
     speech_audio_streamed: bool
 
 
+class ShoppingInputState(TypedDict, total=False):
+    """Data accepted when starting or resuming one shopping turn.
+
+    LangGraph filters graph input through this schema before it reaches the
+    internal state.  Runtime-only dependencies belong to
+    ``ShoppingRuntimeDependencies`` instead of this mapping.
+    """
+
+    session_id: str
+    turn_id: str
+    user_id: str
+    utterance: str
+    conversation_history: list[str]
+    model_enabled: bool
+
+    # Cross-turn facts and deterministic inputs needed to seed this turn.
+    product_category: str
+    slots: dict[str, Any]
+    pending_question: dict[str, Any] | None
+    user_profile_updates: dict[str, Any]
+    user_profile_snapshot: dict[str, Any]
+    previous_product_cards: list[dict[str, Any]]
+    product_cards: list[dict[str, Any]]
+    pending_order: dict[str, Any] | None
+    required_slots: list[str]
+    allowed_slots: list[str]
+
+    # The service loads these read-only values for the current turn.  They are
+    # internal graph inputs and are intentionally omitted from the output.
+    required_slots_by_category: dict[str, list[str]]
+    allowed_slots_by_category: dict[str, list[str]]
+    taxonomy_slot_definitions: dict[str, dict[str, Any]]
+    taxonomy_slot_definitions_by_category: dict[str, dict[str, dict[str, Any]]]
+    taxonomy_slot_questions: dict[str, str]
+    taxonomy_category_names: dict[str, str]
+    taxonomy_categories: list[dict[str, Any]]
+    catalog_products: list[dict[str, Any]]
+
+
+class ShoppingOutputState(TypedDict, total=False):
+    """Public result of a completed shopping turn.
+
+    Draft speech, taxonomy, catalog candidates, session metadata and profile
+    snapshots remain internal state.  In particular, ``final_reply`` is the
+    post-compliance value that can be sent to the client.
+    """
+
+    intent: Intent
+    starts_new_product_request: bool
+    product_category: str
+    category_changed: bool
+    required_slots: list[str]
+    allowed_slots: list[str]
+    slots: dict[str, Any]
+    clarification_status: Literal["ASK", "READY"]
+    missing_slots: list[str]
+    pending_question: dict[str, Any] | None
+    user_profile_updates: dict[str, Any]
+    product_cards: list[dict[str, Any]]
+    emotion_style: str
+    pending_order: dict[str, Any] | None
+    reasons: list[dict[str, str]]
+    final_reply: str
+    compliance_blocked: bool
+    violation_sentence: str | None
+    reasons_streamed: bool
+    speech_streamed: bool
+    speech_audio_streamed: bool
+
+
 class CatalogFilters(TypedDict, total=False):
     """Deterministic recall constraints pushed into the catalog SQL."""
 
@@ -160,6 +231,11 @@ class ShoppingRuntimeDependencies:
     reason_publisher: ReasonPublisher | None = None
     speech_delta_publisher: SpeechDeltaPublisher | None = None
     speech_sentence_publisher: SpeechSentencePublisher | None = None
+
+
+# Alias used when describing the graph's context boundary.  Keep the longer
+# name as the public compatibility name used by existing nodes and tests.
+ShoppingContext = ShoppingRuntimeDependencies
 
 
 class ShoppingState(
@@ -204,3 +280,12 @@ def state_for_persistence(state: ShoppingState) -> ShoppingState:
     """Create the business projection stored in ``session_states``."""
 
     return carry_forward_state(state)
+
+
+OUTPUT_STATE_KEYS = tuple(ShoppingOutputState.__annotations__)
+
+
+def state_for_output(state: ShoppingState) -> ShoppingOutputState:
+    """Project complete graph state onto the LangGraph output contract."""
+
+    return {key: state[key] for key in OUTPUT_STATE_KEYS if key in state}

@@ -25,6 +25,8 @@ from voice_shopping_api.agents.service import _handle_order, state_events
 from voice_shopping_api.agents.state import (
     IntentResult,
     ProductReason,
+    ShoppingInputState,
+    ShoppingOutputState,
     ShoppingRuntimeDependencies,
     carry_forward_state,
     state_for_persistence,
@@ -232,6 +234,19 @@ def test_state_persistence_keeps_only_cross_turn_conversation_facts() -> None:
 
     assert state_for_persistence(state) == expected
     assert carry_forward_state(state) == expected
+
+
+def test_workflow_declares_explicit_langgraph_io_and_context_schemas() -> None:
+    input_properties = shopping_workflow.get_input_jsonschema()["properties"]
+    output_properties = shopping_workflow.get_output_jsonschema()["properties"]
+
+    assert set(input_properties) == set(ShoppingInputState.__annotations__)
+    assert set(output_properties) == set(ShoppingOutputState.__annotations__)
+    assert shopping_workflow.context_schema is ShoppingRuntimeDependencies
+    assert "taxonomy_categories" in input_properties
+    assert "taxonomy_categories" not in output_properties
+    assert "catalog_products" not in output_properties
+    assert "final_reply" in output_properties
 
 
 @pytest.mark.asyncio

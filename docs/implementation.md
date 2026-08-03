@@ -71,10 +71,18 @@ START
 
 ### 3.2 状态契约
 
-`ShoppingState` 保持扁平键，通过以下 TypedDict mixin 说明字段生命周期：
+`StateGraph` 使用三个显式 schema，`ShoppingState` 只作为图内完整状态：
+
+- `ShoppingInputState` 作为 `input_schema`，承载当前轮请求、会话业务事实、当前 taxonomy 和服务层加载的推荐输入。
+- `ShoppingState` 作为内部 state schema，承载节点之间需要合并的全部扁平键。
+- `ShoppingOutputState` 作为 `output_schema`，只暴露对话进度、商品卡、订单/合规结果和最终安全回复。
+
+`ShoppingRuntimeDependencies` 作为 `context_schema` 注入 catalog loader、订单 handler 和各类发布器。候选商品、taxonomy、用户画像快照、模型开关和 draft speech 不属于图输出；当前品类的 `required_slots` / `allowed_slots` 会保留在输出中，支持无 checkpointer 的多轮调用。
+
+`ShoppingState` 继续通过以下 TypedDict mixin 说明字段生命周期：
 
 - `TurnState`：`session_id`、`turn_id`、`user_id`、当前 `utterance`、最近 6 条消息、`model_enabled`。
-- `ConversationState`：`intent`、`product_category`、`category_changed`、`required_slots`、`slots`、澄清状态和 `pending_question`。
+- `ConversationState`：`intent`、`product_category`、`category_changed`、`required_slots`、`allowed_slots`、`slots`、澄清状态和 `pending_question`。
 - `TaxonomyState`：本轮从数据库加载的所有品类、槽位、枚举和问题文案；不持久化。
 - `ProfileState`：会话内 `user_profile_updates`。
 - `RecommendationState`：只读画像快照、候选商品、当前/上一轮商品卡和情绪风格。
