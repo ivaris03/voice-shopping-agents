@@ -719,18 +719,19 @@ async def test_intent_system_prompt_contains_all_category_slot_configuration(
 ) -> None:
     captured: dict[str, object] = {}
 
-    async def fake_chat_json(system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
+    async def fake_structured_chat(
+        system_prompt: str, payload: dict[str, object], schema: type[object]
+    ) -> IntentResult:
         captured["system_prompt"] = system_prompt
         captured["payload"] = payload
-        return {
-            "intent": {
-                "type": "PRODUCT_RECOMMENDATION",
-                "confidence": 0.98,
-                "product_category": "HEADPHONES",
-            }
-        }
+        assert schema is IntentResult
+        return IntentResult(
+            type="PRODUCT_RECOMMENDATION",
+            confidence=0.98,
+            product_category="HEADPHONES",
+        )
 
-    monkeypatch.setattr(model_module, "_chat_json", fake_chat_json)
+    monkeypatch.setattr(model_module, "_structured_chat", fake_structured_chat)
     categories = [
         {
             "categoryL1": "ELECTRONICS",
@@ -1095,12 +1096,15 @@ async def test_product_reason_model_uses_one_product_card_payload(
 ) -> None:
     captured: dict[str, object] = {}
 
-    async def fake_chat_json(system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
+    async def fake_structured_chat(
+        system_prompt: str, payload: dict[str, object], schema: type[object]
+    ) -> ProductReason:
         captured["system_prompt"] = system_prompt
         captured["payload"] = payload
-        return {"product_id": "product-1", "reason": "适合你的通勤场景。"}
+        assert schema is ProductReason
+        return ProductReason(product_id="product-1", reason="适合你的通勤场景。")
 
-    monkeypatch.setattr(model_module, "_chat_json", fake_chat_json)
+    monkeypatch.setattr(model_module, "_structured_chat", fake_structured_chat)
     result = await model_module.generate_product_reason(
         "推荐通勤耳机",
         {"productId": "product-1", "name": "通勤耳机"},

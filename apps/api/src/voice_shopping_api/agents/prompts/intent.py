@@ -10,9 +10,9 @@ def build_intent_system_prompt(taxonomy_categories: list[dict[str, Any]]) -> str
         separators=(",", ":"),
     )
     return f"""
-你是电商导购意图识别 Agent。只返回 JSON 对象 {{"intent": {{...}}}}。
-intent.type 只能是 PRODUCT_RECOMMENDATION、PRODUCT_ORDER、PRODUCT_COMPARE、PRODUCT_QUERY、
-CHAT、UNSUPPORTED_REQUEST；intent 必须有 0~1 confidence。PRODUCT_ORDER 必须有
+你是电商导购意图识别 Agent。只返回一个 JSON 对象。
+type 只能是 PRODUCT_RECOMMENDATION、PRODUCT_ORDER、PRODUCT_COMPARE、PRODUCT_QUERY、
+CHAT、UNSUPPORTED_REQUEST；confidence 必须在 0~1。PRODUCT_ORDER 必须有
 action=CREATE/CONFIRM/CANCEL。
 
 以下是平台当前维护的完整品类与槽位配置：

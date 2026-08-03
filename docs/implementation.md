@@ -95,7 +95,7 @@ START
 
 `process_turn()` 用 `bool(settings.dashscope_api_key)` 设置 `model_enabled`：
 
-- 开启时使用 DashScope ChatQwen、Embedding 和 Reranker，并对模型 JSON 用 Pydantic 结构校验；Agent 模型禁止额外字段。
+- 开启时使用 DashScope ChatQwen、Embedding 和 Reranker。意图识别、槽位抽取和单商品推荐理由通过 LangChain `with_structured_output()` 分别绑定 `IntentResult`、`SlotExtractionResult` 和 `ProductReason`；三类结果在模型边界直接完成 Pydantic 校验，Agent 模型禁止额外字段。情感回复仍保留 JSON mode，因为它需要兼容增量话术和短句发布。
 - 未开启或模型调用异常时，意图节点回退关键词位置选择，澄清节点回退规则抽取，推荐节点回退确定性排序，理由节点回退固定模板。
 - 模型失败只影响当前能力，不会让商品事实、订单事务或会话持久化绕过服务端校验。
 

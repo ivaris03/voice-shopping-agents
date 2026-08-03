@@ -3,6 +3,7 @@ from typing import Any
 import pytest
 
 from voice_shopping_api.agents import model as model_module
+from voice_shopping_api.agents.state import IntentResult
 from voice_shopping_api.core import embeddings as embeddings_module
 from voice_shopping_api.core import observability as observability_module
 
@@ -24,6 +25,34 @@ class _FakeChatModel:
                 "usage_metadata": {"input_tokens": 4, "output_tokens": 5, "total_tokens": 9},
             },
         )()
+
+    def with_structured_output(
+        self, schema: type[Any], *, include_raw: bool = False, **_: Any
+    ) -> Any:
+        assert include_raw is True
+
+        class _StructuredRunnable:
+            async def ainvoke(self, messages: list[tuple[str, str]]) -> Any:
+                assert messages[0][0] == "system"
+                assert messages[1][0] == "human"
+                raw = type(
+                    "Message",
+                    (),
+                    {
+                        "usage_metadata": {
+                            "input_tokens": 6,
+                            "output_tokens": 7,
+                            "total_tokens": 13,
+                        }
+                    },
+                )()
+                return {
+                    "raw": raw,
+                    "parsed": schema(type="CHAT", confidence=0.99),
+                    "parsing_error": None,
+                }
+
+        return _StructuredRunnable()
 
     async def astream(self, messages: list[tuple[str, str]]) -> Any:
         assert messages[0][0] == "system"
@@ -98,6 +127,20 @@ async def test_chat_json_uses_chat_qwen(monkeypatch: pytest.MonkeyPatch) -> None
     assert _FakeChatModel.init_kwargs["model_kwargs"] == {
         "response_format": {"type": "json_object"}
     }
+
+
+@pytest.mark.asyncio
+async def test_structured_chat_returns_the_requested_pydantic_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(model_module, "ChatQwen", _FakeChatModel)
+
+    result = await model_module._structured_chat(
+        "system prompt", {"utterance": "你好"}, IntentResult
+    )
+
+    assert result == IntentResult(type="CHAT", confidence=0.99)
+    assert "model_kwargs" not in _FakeChatModel.init_kwargs
 
 
 @pytest.mark.asyncio

@@ -18,6 +18,7 @@ from voice_shopping_api.agents.prompts import (
     build_intent_system_prompt,
 )
 from voice_shopping_api.agents.state import (
+    AgentModel,
     EmotionalResponseResult,
     IntentResult,
     ProductReason,
@@ -91,26 +92,30 @@ class _InstructionalRerankClient:
         return self.response
 
 
-def _chat_model() -> ChatQwen:
+def _chat_model(*, json_mode: bool = False) -> ChatQwen:
     settings = get_settings()
     if not settings.dashscope_api_key:
         raise RuntimeError("DashScope API key is not configured")
+    kwargs: dict[str, Any] = {
+        "model": settings.agent_model,
+        "api_key": settings.dashscope_api_key,
+        "base_url": settings.dashscope_chat_base_url,
+        "enable_thinking": False,
+        "temperature": 0.1,
+        "timeout": 30,
+        "max_retries": 2,
+    }
+    if json_mode:
+        kwargs["model_kwargs"] = {"response_format": {"type": "json_object"}}
     return ChatQwen(
-        model=settings.agent_model,
-        api_key=settings.dashscope_api_key,
-        base_url=settings.dashscope_chat_base_url,
-        model_kwargs={"response_format": {"type": "json_object"}},
-        enable_thinking=False,
-        temperature=0.1,
-        timeout=30,
-        max_retries=2,
+        **kwargs,
     )
 
 
 @traceable(name="dashscope-chat", run_type="llm", tags=["dashscope", "chat"])
 async def _chat_json(system_prompt: str, payload: dict[str, Any]) -> Any:
     settings = get_settings()
-    message = await _chat_model().ainvoke(
+    message = await _chat_model(json_mode=True).ainvoke(
         [
             ("system", system_prompt),
             ("human", json.dumps(payload, ensure_ascii=False)),
@@ -118,6 +123,42 @@ async def _chat_json(system_prompt: str, payload: dict[str, Any]) -> Any:
     )
     _mark_model_run(settings.agent_model, _message_usage(message))
     return _parse_json(_message_content(message))
+
+
+@traceable(
+    name="dashscope-chat-structured",
+    run_type="llm",
+    tags=["dashscope", "chat", "structured"],
+)
+async def _structured_chat(
+    system_prompt: str,
+    payload: dict[str, Any],
+    schema: type[AgentModel],
+) -> AgentModel:
+    """Invoke Qwen with a Pydantic-constrained output and retain usage data."""
+    settings = get_settings()
+    result = await _chat_model().with_structured_output(
+        schema,
+        include_raw=True,
+    ).ainvoke(
+        [
+            ("system", system_prompt),
+            ("human", json.dumps(payload, ensure_ascii=False)),
+        ]
+    )
+    if isinstance(result, schema):
+        return result
+    if not isinstance(result, dict):
+        raise TypeError("Structured model response must be a parsed Pydantic object")
+    raw = result.get("raw")
+    _mark_model_run(settings.agent_model, _message_usage(raw))
+    parsing_error = result.get("parsing_error")
+    if parsing_error:
+        raise parsing_error
+    parsed = result.get("parsed")
+    if isinstance(parsed, schema):
+        return parsed
+    return schema.model_validate(parsed)
 
 
 async def embed_query(query: str) -> list[float]:
@@ -212,11 +253,11 @@ async def recognize_with_model(
     conversation_history: list[str],
     taxonomy_categories: list[dict[str, Any]],
 ) -> IntentResult:
-    result = await _chat_json(
+    return await _structured_chat(
         build_intent_system_prompt(taxonomy_categories),
         {"utterance": utterance, "recentConversation": conversation_history[-6:]},
+        IntentResult,
     )
-    return IntentResult.model_validate(result["intent"])
 
 
 async def clarify_with_model(
@@ -228,7 +269,7 @@ async def clarify_with_model(
     slot_definitions: dict[str, dict[str, Any]],
     conversation_history: list[str],
 ) -> dict[str, Any]:
-    result = await _chat_json(
+    result = await _structured_chat(
         CLARIFICATION_SYSTEM_PROMPT,
         {
             "utterance": utterance,
@@ -239,8 +280,9 @@ async def clarify_with_model(
             "slotDefinitions": slot_definitions,
             "recentConversation": conversation_history[-6:],
         },
+        SlotExtractionResult,
     )
-    return SlotExtractionResult.model_validate(result).slots
+    return result.slots
 
 
 async def _stream_chat_json(
@@ -316,7 +358,7 @@ async def _stream_chat_json(
                 for sentence in sentences:
                     await on_speech_sentence(sentence)
 
-    async for chunk in _chat_model().astream(
+    async for chunk in _chat_model(json_mode=True).astream(
         [
             ("system", system_prompt),
             ("human", json.dumps(payload, ensure_ascii=False)),
@@ -373,15 +415,15 @@ async def generate_product_reason(
 ) -> ProductReason:
     """Generate and validate one reason for one immutable product card."""
     product_id = str(product_card["productId"])
-    result = await _chat_json(
+    reason = await _structured_chat(
         PRODUCT_REASON_SYSTEM_PROMPT,
         {
             "utterance": utterance,
             "emotionStyle": emotion_style,
             "productCard": product_card,
         },
+        ProductReason,
     )
-    reason = ProductReason.model_validate(result)
     if reason.product_id != product_id:
         raise ValueError("模型返回的商品 ID 与输入商品事实不一致")
     if not reason.reason.strip():
