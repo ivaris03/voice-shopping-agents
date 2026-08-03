@@ -1,7 +1,7 @@
 import pytest
 
-from voice_shopping_api.realtime import router as realtime_router
-from voice_shopping_api.realtime import speech
+from voice_shopping_api.realtime import asr, speech, tts
+from voice_shopping_api.realtime import hub as realtime_hub
 
 
 class _FakeRecognition:
@@ -53,9 +53,9 @@ async def test_publish_audio_synthesizes_and_pushes_each_sentence(
         calls.append(text_value)
         yield f"audio:{text_value}".encode()
 
-    monkeypatch.setattr(realtime_router, "synthesize_chunks", fake_synthesize_chunks)
+    monkeypatch.setattr(realtime_hub, "synthesize_chunks", fake_synthesize_chunks)
     connection = _FakeAudioConnection()
-    hub = realtime_router.RealtimeHub.__new__(realtime_router.RealtimeHub)
+    hub = realtime_hub.RealtimeHub.__new__(realtime_hub.RealtimeHub)
     hub.audio_connections = {"session-1": {connection}}
 
     await hub.publish_audio("session-1", "turn-1", "第一句。第二句！")
@@ -87,30 +87,30 @@ async def test_publish_audio_synthesizes_and_pushes_each_sentence(
 
 @pytest.mark.asyncio
 async def test_streaming_asr_exposes_sentence_final_results(monkeypatch) -> None:
-    monkeypatch.setattr(speech, "Recognition", _FakeRecognition)
-    asr = speech.StreamingAsr()
+    monkeypatch.setattr(asr, "Recognition", _FakeRecognition)
+    streaming_asr = asr.StreamingAsr()
 
-    asr.add_completed_sentence("第一句。")
-    assert await asr.next_completed_sentence() == "第一句。"
+    streaming_asr.add_completed_sentence("第一句。")
+    assert await streaming_asr.next_completed_sentence() == "第一句。"
 
-    assert await asr.stop() == "第一句。"
-    assert await asr.next_completed_sentence() is None
+    assert await streaming_asr.stop() == "第一句。"
+    assert await streaming_asr.next_completed_sentence() is None
 
 
 @pytest.mark.asyncio
 async def test_asr_splits_punctuation_and_flushes_only_the_unfinished_tail(monkeypatch) -> None:
-    monkeypatch.setattr(speech, "Recognition", _FakeRecognition)
-    asr = speech.StreamingAsr()
+    monkeypatch.setattr(asr, "Recognition", _FakeRecognition)
+    streaming_asr = asr.StreamingAsr()
 
-    asr.accept_transcript("我想买一双，", sentence_final=False)
-    asr.accept_transcript("我想买一双，通勤鞋？", sentence_final=True)
-    asr.accept_transcript("预算五百", sentence_final=False)
+    streaming_asr.accept_transcript("我想买一双，", sentence_final=False)
+    streaming_asr.accept_transcript("我想买一双，通勤鞋？", sentence_final=True)
+    streaming_asr.accept_transcript("预算五百", sentence_final=False)
 
-    assert await asr.next_completed_sentence() == "我想买一双，"
-    assert await asr.next_completed_sentence() == "通勤鞋？"
-    assert await asr.stop() == "我想买一双，通勤鞋？预算五百"
-    assert await asr.next_completed_sentence() == "预算五百"
-    assert await asr.next_completed_sentence() is None
+    assert await streaming_asr.next_completed_sentence() == "我想买一双，"
+    assert await streaming_asr.next_completed_sentence() == "通勤鞋？"
+    assert await streaming_asr.stop() == "我想买一双，通勤鞋？预算五百"
+    assert await streaming_asr.next_completed_sentence() == "预算五百"
+    assert await streaming_asr.next_completed_sentence() is None
 
 
 @pytest.mark.asyncio
@@ -125,18 +125,18 @@ async def test_asr_trace_records_safe_usage_summary(monkeypatch) -> None:
     def fake_finish(handle, **kwargs) -> None:
         finished.append(kwargs)
 
-    monkeypatch.setattr(speech, "start_trace", fake_start)
-    monkeypatch.setattr(speech, "finish_trace", fake_finish)
-    monkeypatch.setattr(speech, "Recognition", _FakeRecognition)
+    monkeypatch.setattr(asr, "start_trace", fake_start)
+    monkeypatch.setattr(asr, "finish_trace", fake_finish)
+    monkeypatch.setattr(asr, "Recognition", _FakeRecognition)
 
-    asr = speech.StreamingAsr(session_id="session-1", turn_id="turn-1")
-    await asr.start()
-    await asr.send(b"\x00" * 4)
-    asr.add_completed_sentence("不要上传这句原文")
-    asr.record_usage({"duration": 100})
-    asr.record_usage({"duration": 25})
+    streaming_asr = asr.StreamingAsr(session_id="session-1", turn_id="turn-1")
+    await streaming_asr.start()
+    await streaming_asr.send(b"\x00" * 4)
+    streaming_asr.add_completed_sentence("不要上传这句原文")
+    streaming_asr.record_usage({"duration": 100})
+    streaming_asr.record_usage({"duration": 25})
 
-    assert await asr.stop() == "不要上传这句原文"
+    assert await streaming_asr.stop() == "不要上传这句原文"
     assert started[0][0] == "dashscope-asr"
     assert finished[0]["metadata"]["audio_bytes"] == 4
     assert finished[0]["metadata"]["billed_audio_duration_ms"] == 125
@@ -156,15 +156,15 @@ async def test_tts_stream_uses_dashscope_audio_format(monkeypatch) -> None:
             calls.update(kwargs)
             return iter([_FakeTtsChunk(audio_data=b"wav-1"), _FakeTtsChunk(audio_data=b"wav-2")])
 
-    monkeypatch.setattr(speech, "HttpSpeechSynthesizer", _FakeSynthesizer)
+    monkeypatch.setattr(tts, "HttpSpeechSynthesizer", _FakeSynthesizer)
     monkeypatch.setattr(
-        speech,
+        tts,
         "start_trace",
         lambda name, **kwargs: started.append((name, kwargs)) or object(),
     )
-    monkeypatch.setattr(speech, "finish_trace", lambda handle, **kwargs: finished.append(kwargs))
+    monkeypatch.setattr(tts, "finish_trace", lambda handle, **kwargs: finished.append(kwargs))
     monkeypatch.setattr(
-        speech,
+        tts,
         "get_settings",
         lambda: type(
             "Settings",
@@ -179,7 +179,7 @@ async def test_tts_stream_uses_dashscope_audio_format(monkeypatch) -> None:
         )(),
     )
 
-    chunks = [chunk async for chunk in speech.synthesize_chunks("你好")]
+    chunks = [chunk async for chunk in tts.synthesize_chunks("你好")]
 
     assert chunks == [b"wav-1", b"wav-2"]
     assert calls["audio_format"] == "wav"

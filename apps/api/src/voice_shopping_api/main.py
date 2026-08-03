@@ -10,7 +10,7 @@ from voice_shopping_api.agents.checkpointer import close_checkpointer
 from voice_shopping_api.api.router import api_router
 from voice_shopping_api.core.config import get_settings
 from voice_shopping_api.core.database import engine
-from voice_shopping_api.realtime.router import hub as realtime_hub
+from voice_shopping_api.realtime.hub import hub as realtime_hub
 from voice_shopping_api.realtime.router import router as realtime_router
 from voice_shopping_api.schemas.common import HealthResponse
 
