@@ -14,8 +14,8 @@ from voice_shopping_api.agents.state import (
     EmotionalResponseResult,
     ProductReason,
     ReasonPublisher,
+    ShoppingRuntimeDependencies,
     ShoppingState,
-    ShoppingWorkflowContext,
 )
 from voice_shopping_api.core.text import split_sentences
 
@@ -96,7 +96,7 @@ def _build_speech(reasons: list[ProductReason]) -> str:
 
 async def _publish_speech(
     speech: str,
-    context: ShoppingWorkflowContext | None,
+    context: ShoppingRuntimeDependencies | None,
 ) -> tuple[bool, bool]:
     if context is None:
         return False, False
@@ -116,7 +116,7 @@ async def _publish_speech(
 
 
 async def order_response(
-    state: ShoppingState, runtime: Runtime[ShoppingWorkflowContext]
+    state: ShoppingState, runtime: Runtime[ShoppingRuntimeDependencies]
 ) -> dict[str, Any]:
     context = runtime.context
     if context is None or context.order_handler is None:
@@ -126,7 +126,7 @@ async def order_response(
 
 
 async def emotional_response(
-    state: ShoppingState, runtime: Runtime[ShoppingWorkflowContext]
+    state: ShoppingState, runtime: Runtime[ShoppingRuntimeDependencies]
 ) -> dict[str, Any]:
     if state.get("clarification_status") == "ASK":
         speech = (state.get("pending_question") or {}).get("question", QUESTIONS["productCategory"])

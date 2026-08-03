@@ -151,7 +151,7 @@ ReasonPublisher = Callable[[ProductReason], Awaitable[None]]
 
 
 @dataclass(frozen=True)
-class ShoppingWorkflowContext:
+class ShoppingRuntimeDependencies:
     """Non-persisted dependencies available to workflow nodes for one turn."""
 
     catalog_loader: CatalogLoader

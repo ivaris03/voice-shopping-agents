@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from voice_shopping_api.agents.nodes.recommendation import recommend_products
 from voice_shopping_api.agents.service import _catalog
-from voice_shopping_api.agents.state import ShoppingState, ShoppingWorkflowContext
+from voice_shopping_api.agents.state import ShoppingRuntimeDependencies, ShoppingState
 from voice_shopping_api.core.config import get_settings
 from voice_shopping_api.core.queries import PRODUCT_COLUMNS, rows
 from voice_shopping_api.core.taxonomy import list_categories
@@ -175,7 +175,7 @@ async def run_scenario(
     """直接驱动推荐 Agent（召回 + 精排），返回运行结果。"""
     snapshot = profile if profile is not None else await profile_snapshot(session, user_id)
     runtime = Runtime(
-        context=ShoppingWorkflowContext(
+        context=ShoppingRuntimeDependencies(
             catalog_loader=lambda query, enabled, filters_used: _catalog(
                 session, query, enabled, filters_used
             )

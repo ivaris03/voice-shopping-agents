@@ -9,8 +9,8 @@ from voice_shopping_api.agents.nodes.constants import REQUIRED_SLOTS
 from voice_shopping_api.agents.state import (
     CatalogFilters,
     ProductRecommendationResult,
+    ShoppingRuntimeDependencies,
     ShoppingState,
-    ShoppingWorkflowContext,
 )
 
 logger = logging.getLogger(__name__)
@@ -68,7 +68,7 @@ def _rule_adjustments(
 
 
 async def recommend_products(
-    state: ShoppingState, runtime: Runtime[ShoppingWorkflowContext]
+    state: ShoppingState, runtime: Runtime[ShoppingRuntimeDependencies]
 ) -> dict[str, Any]:
     intent = (state.get("intent") or {}).get("type")
     previous_cards = state.get("previous_product_cards", [])
@@ -136,7 +136,7 @@ async def recommend_products(
 
 
 async def _retrieve_catalog(
-    state: ShoppingState, runtime: Runtime[ShoppingWorkflowContext]
+    state: ShoppingState, runtime: Runtime[ShoppingRuntimeDependencies]
 ) -> list[dict[str, Any]]:
     """Fetch candidates for the recommendation node's ranking phase."""
     context = runtime.context

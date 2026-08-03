@@ -16,8 +16,8 @@ from voice_shopping_api.agents.nodes.response import is_compliant
 from voice_shopping_api.agents.state import (
     CatalogFilters,
     ProductReason,
+    ShoppingRuntimeDependencies,
     ShoppingState,
-    ShoppingWorkflowContext,
     carry_forward_state,
     state_for_persistence,
 )
@@ -595,7 +595,7 @@ async def process_turn(
     async for stream_item in workflow.astream(
         state_input,
         config=run_config,
-        context=ShoppingWorkflowContext(
+        context=ShoppingRuntimeDependencies(
             catalog_loader=lambda query, enabled, filters: _catalog(
                 session, query, enabled, filters
             ),

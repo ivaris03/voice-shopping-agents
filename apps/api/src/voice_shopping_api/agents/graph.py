@@ -9,7 +9,7 @@ from voice_shopping_api.agents.nodes.response import (
     emotional_response,
     order_response,
 )
-from voice_shopping_api.agents.state import ShoppingState, ShoppingWorkflowContext
+from voice_shopping_api.agents.state import ShoppingRuntimeDependencies, ShoppingState
 
 
 def _route_intent(state: ShoppingState) -> str:
@@ -31,7 +31,7 @@ def _route_clarification(state: ShoppingState) -> str:
 
 def build_workflow(*, checkpointer: BaseCheckpointSaver | None = None):
     """Assemble the graph; business rules remain inside the individual nodes."""
-    graph = StateGraph(ShoppingState, context_schema=ShoppingWorkflowContext)
+    graph = StateGraph(ShoppingState, context_schema=ShoppingRuntimeDependencies)
     graph.add_node("intent_agent", recognize_intent)
     graph.add_node("clarification_agent", clarify_requirements)
     graph.add_node("recommendation_agent", recommend_products)

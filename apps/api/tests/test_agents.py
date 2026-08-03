@@ -19,7 +19,7 @@ from voice_shopping_api.agents.service import _handle_order, state_events
 from voice_shopping_api.agents.state import (
     IntentResult,
     ProductReason,
-    ShoppingWorkflowContext,
+    ShoppingRuntimeDependencies,
     carry_forward_state,
     state_for_persistence,
 )
@@ -154,7 +154,7 @@ async def test_slot_answers_keep_memory_and_recommend_when_requirements_are_comp
         retrievals.append(filters)
         return [product]
 
-    context = ShoppingWorkflowContext(catalog_loader=load_catalog)
+    context = ShoppingRuntimeDependencies(catalog_loader=load_catalog)
     first = await shopping_workflow.ainvoke(
         {
             "utterance": "我要买一双鞋。",
@@ -289,7 +289,7 @@ async def test_recommendation_agent_retrieves_after_clarification_is_ready() -> 
             "user_profile_snapshot": {},
             "model_enabled": False,
         },
-        context=ShoppingWorkflowContext(catalog_loader=load_catalog),
+        context=ShoppingRuntimeDependencies(catalog_loader=load_catalog),
     )
 
     query, model_enabled, filters = retrievals[0]
@@ -324,7 +324,7 @@ async def test_order_node_executes_the_context_order_handler() -> None:
             "previous_product_cards": [{"productId": "product-1", "name": "测试商品"}],
             "model_enabled": False,
         },
-        context=ShoppingWorkflowContext(
+        context=ShoppingRuntimeDependencies(
             catalog_loader=load_catalog,
             order_handler=handle_order,
         ),
@@ -359,7 +359,7 @@ async def test_selected_product_order_creates_a_pending_order_before_confirmatio
             ],
             "model_enabled": False,
         },
-        context=ShoppingWorkflowContext(
+        context=ShoppingRuntimeDependencies(
             catalog_loader=load_catalog,
             order_handler=handle_order,
         ),
@@ -1048,7 +1048,7 @@ async def test_product_reasons_are_generated_concurrently_and_published_by_produ
             "product_cards": cards,
         },
         Runtime(
-            context=ShoppingWorkflowContext(
+            context=ShoppingRuntimeDependencies(
                 catalog_loader=load_catalog,
                 reason_publisher=publish_reason,
             )
