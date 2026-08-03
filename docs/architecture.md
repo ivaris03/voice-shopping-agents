@@ -96,7 +96,7 @@ flowchart TD
     S --> A["语音 WS：音频流"]
 ```
 
-LangGraph 的 PostgreSQL Checkpointer 负责持久化每个节点后的 `ShoppingState`，使工作流能在下一轮继续恢复；本项目使用 `sessionId` 作为 `configurable.thread_id`，并同时作为 LangSmith 的 `metadata.thread_id`。`ShoppingState` 在图中保持扁平键，避免节点更新时覆盖嵌套对象；代码按生命周期拆成当轮输入、跨轮对话、只读 taxonomy、画像候选、推荐、订单和展示输出七组 TypedDict。`session_states` 保存跨轮业务事实：品类、槽位、静态画像候选、商品卡、展示风格和待处理订单；画像只读快照、候选商品、模型开关、历史和回复文本均不作为下一轮输入。
+LangGraph 的 PostgreSQL Checkpointer 负责持久化每个节点后的 `ShoppingState`，使工作流能在下一轮继续恢复；本项目使用 `sessions.id` 的字符串形式作为 `configurable.thread_id`，并同时作为 LangSmith 的 `metadata.thread_id`。`ShoppingState` 在图中保持扁平键，避免节点更新时覆盖嵌套对象；代码按生命周期拆成当轮输入、跨轮对话、只读 taxonomy、画像候选、推荐、订单和展示输出七组 TypedDict。`session_states` 只保存业务状态投影：品类、槽位、静态画像候选、澄清问题和最近商品卡；画像只读快照、候选商品、模型开关、历史、回复文本和订单详情均不作为业务状态投影，订单以 `orders` 为准。
 
 LangSmith 记录整条 StateGraph Trace，并以 `sessionId`、`turnId`、意图和 Agent 节点作为元数据，用于查看节点输入输出、模型调用、延迟、Token 消耗和错误。Trace 只用于可观测与评估，不保存业务状态；用户原话、画像和订单数据写入前需要脱敏。
 
@@ -166,7 +166,7 @@ ruleAdjustments:
 | `user_profile_dynamic` | 品类/品牌行为偏好、最近浏览/购买和客单价 |
 | `sessions` | 会话基本信息 |
 | `session_messages` | 会话消息和轮次 ID |
-| `session_states` | `ShoppingState`、画像候选/快照和待确认订单 |
+| `session_states` | 业务状态投影、画像候选和待确认订单引用 |
 
 PGVector 字段保存在 `products`；订单成交快照保存在 `orders`。Redis 只保存连接和短期缓存，不保存业务事实。
 

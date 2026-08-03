@@ -14,6 +14,7 @@ from voice_shopping_api.agents.graph import build_workflow, shopping_workflow
 from voice_shopping_api.agents.model import embed_query
 from voice_shopping_api.agents.nodes.response import is_compliant
 from voice_shopping_api.agents.state import (
+    BUSINESS_STATE_VERSION,
     CatalogFilters,
     ProductReason,
     ShoppingRuntimeDependencies,
@@ -42,19 +43,19 @@ _checkpointed_workflow: tuple[object, Any] | None = None
 _checkpointed_workflow_lock = asyncio.Lock()
 
 
-async def _workflow_for_turn() -> Any:
+async def _workflow_for_turn() -> tuple[Any, bool]:
     checkpointer = await get_checkpointer()
     if checkpointer is None:
-        return shopping_workflow
+        return shopping_workflow, False
     global _checkpointed_workflow
     if _checkpointed_workflow and _checkpointed_workflow[0] is checkpointer:
-        return _checkpointed_workflow[1]
+        return _checkpointed_workflow[1], True
     async with _checkpointed_workflow_lock:
         if _checkpointed_workflow and _checkpointed_workflow[0] is checkpointer:
-            return _checkpointed_workflow[1]
+            return _checkpointed_workflow[1], True
         workflow = build_workflow(checkpointer=checkpointer)
         _checkpointed_workflow = (checkpointer, workflow)
-        return workflow
+        return workflow, True
 
 
 def _json_default(value: Any) -> str:
@@ -63,11 +64,11 @@ def _json_default(value: Any) -> str:
     return str(value)
 
 
-async def _load_previous(session: AsyncSession, session_id: UUID) -> ShoppingState:
+async def _load_business_state(session: AsyncSession, session_id: UUID) -> ShoppingState:
     result = await session.execute(
         text(
             """
-            SELECT workflow_state FROM session_states
+            SELECT business_state FROM session_states
             WHERE session_id = :session_id ORDER BY created_at DESC LIMIT 1
             """
         ),
@@ -375,29 +376,31 @@ async def _persist(
     )
     persistable = state_for_persistence(state)
     payload = json.dumps(persistable, ensure_ascii=False, default=_json_default)
-    profile = json.dumps(state.get("user_profile_snapshot", {}), ensure_ascii=False)
     pending = state.get("pending_order") or {}
+    pending_order_id = (
+        pending.get("id") if pending.get("status", "pending") == "pending" else None
+    )
     await session.execute(
         text(
             """
             INSERT INTO session_states (
-                session_id, turn_id, workflow_state, user_profile_snapshot, pending_order_id
+                session_id, turn_id, state_version, business_state, pending_order_id
             ) VALUES (
-                :session_id, :turn_id, CAST(:state AS jsonb), CAST(:profile AS jsonb),
+                :session_id, :turn_id, :state_version, CAST(:state AS jsonb),
                 CAST(:pending_order_id AS uuid)
             )
             ON CONFLICT (session_id, turn_id) DO UPDATE SET
-                workflow_state = EXCLUDED.workflow_state,
-                user_profile_snapshot = EXCLUDED.user_profile_snapshot,
+                state_version = EXCLUDED.state_version,
+                business_state = EXCLUDED.business_state,
                 pending_order_id = EXCLUDED.pending_order_id
             """
         ),
         {
             "session_id": session_id,
             "turn_id": turn_id,
+            "state_version": BUSINESS_STATE_VERSION,
             "state": payload,
-            "profile": profile,
-            "pending_order_id": pending.get("id"),
+            "pending_order_id": pending_order_id,
         },
     )
     await session.execute(
@@ -507,8 +510,34 @@ async def process_turn(
     settings = get_settings()
     session_id = stable_uuid(session_key)
     turn_id = stable_uuid(f"{session_key}:{turn_key}")
-    previous = await _load_previous(session, session_id)
+    workflow, checkpoint_enabled = await _workflow_for_turn()
+    run_config = {
+        "run_name": "voice-shopping-turn",
+        "configurable": {"thread_id": str(session_id)},
+        "tags": [settings.environment, f"model:{settings.agent_model}"],
+        "metadata": {
+            "thread_id": str(session_id),
+            "turn_id": turn_key,
+            "environment": settings.environment,
+            "agent_model": settings.agent_model,
+            "embedding_model": settings.embedding_model,
+            "reranker_model": settings.reranker_model,
+        },
+    }
+    previous: ShoppingState = {}
+    if checkpoint_enabled:
+        checkpoint = await workflow.aget_state(run_config)
+        if isinstance(checkpoint.values, Mapping):
+            previous = dict(checkpoint.values)
+    if not previous:
+        previous = await _load_business_state(session, session_id)
     carried_forward = carry_forward_state(previous)
+    pending_order_id = await _latest_pending_order_id(session, user_id, session_id)
+    pending_order = (
+        {"id": str(pending_order_id), "status": "pending"}
+        if pending_order_id
+        else None
+    )
     model_enabled = bool(settings.dashscope_api_key)
     taxonomy_context = await _taxonomy_context(session)
     profile_candidates = merge_static_profile_patches(
@@ -531,6 +560,8 @@ async def process_turn(
         "user_profile_updates": profile_candidates,
         "previous_product_cards": carried_forward.get("product_cards", []),
         "product_cards": [],
+        "pending_order": pending_order,
+        "emotion_style": "",
         "reasons": [],
         "speech_text": "",
         "final_reply": "",
@@ -538,19 +569,6 @@ async def process_turn(
         "speech_streamed": False,
         "speech_audio_streamed": False,
         "compliance_blocked": False,
-    }
-    run_config = {
-        "run_name": "voice-shopping-turn",
-        "configurable": {"thread_id": session_key},
-        "tags": [settings.environment, f"model:{settings.agent_model}"],
-        "metadata": {
-            "thread_id": session_key,
-            "turn_id": turn_key,
-            "environment": settings.environment,
-            "agent_model": settings.agent_model,
-            "embedding_model": settings.embedding_model,
-            "reranker_model": settings.reranker_model,
-        },
     }
     result: ShoppingState = dict(state_input)
     next_sequence = 1
@@ -591,7 +609,6 @@ async def process_turn(
             },
         )
 
-    workflow = await _workflow_for_turn()
     async for stream_item in workflow.astream(
         state_input,
         config=run_config,
@@ -660,20 +677,6 @@ async def process_turn(
             close_session=True,
         )
         result["user_profile_snapshot"] = await profile_snapshot(session, user_id)
-        await session.execute(
-            text(
-                """
-                UPDATE session_states
-                SET user_profile_snapshot = CAST(:profile AS jsonb)
-                WHERE session_id = :session_id AND turn_id = :turn_id
-                """
-            ),
-            {
-                "session_id": session_id,
-                "turn_id": turn_id,
-                "profile": json.dumps(result["user_profile_snapshot"], ensure_ascii=False),
-            },
-        )
     await session.commit()
     events = state_events(
         result,

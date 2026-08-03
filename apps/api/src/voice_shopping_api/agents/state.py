@@ -174,9 +174,9 @@ class ShoppingState(
     """The StateGraph contract, grouped above by lifecycle instead of by node."""
 
 
-# Only durable conversation facts are carried to the next request. Taxonomy,
+# Only durable business facts are carried to the next request. Taxonomy,
 # candidate products, the read-only profile snapshot and generated text are
-# per-turn data; profile update candidates are accumulated until finalization.
+# per-turn data; order details remain in the orders domain table.
 PERSISTED_STATE_KEYS = frozenset(
     {
         "product_category",
@@ -184,10 +184,9 @@ PERSISTED_STATE_KEYS = frozenset(
         "user_profile_updates",
         "pending_question",
         "product_cards",
-        "emotion_style",
-        "pending_order",
     }
 )
+BUSINESS_STATE_VERSION = 1
 
 
 def carry_forward_state(previous: ShoppingState) -> ShoppingState:
@@ -201,6 +200,6 @@ def carry_forward_state(previous: ShoppingState) -> ShoppingState:
 
 
 def state_for_persistence(state: ShoppingState) -> ShoppingState:
-    """Create the small business snapshot stored in ``session_states``."""
+    """Create the business projection stored in ``session_states``."""
 
     return carry_forward_state(state)

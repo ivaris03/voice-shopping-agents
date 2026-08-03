@@ -42,7 +42,7 @@ async def finalize_session_profile(
     state_result = await session.execute(
         text(
             """
-            SELECT workflow_state
+            SELECT business_state
             FROM session_states
             WHERE session_id = :session_id
             ORDER BY created_at DESC

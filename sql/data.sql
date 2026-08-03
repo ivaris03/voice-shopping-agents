@@ -3,8 +3,7 @@
 
 BEGIN;
 
--- 固定范围清理：仅重置本文件维护的演示会话和订单数据，避免待确认订单
--- 在重复导入后已经过期，或订单终态与 session_states 中的 pending 状态冲突。
+-- 固定范围清理：仅重置本文件维护的演示会话、业务状态投影和订单数据。
 DELETE FROM session_states
 WHERE session_id IN (
     '30000000-0000-4000-8000-000000000001',
@@ -832,64 +831,62 @@ ON CONFLICT (id) DO UPDATE SET
     product_snapshot = EXCLUDED.product_snapshot;
 
 INSERT INTO session_states (
-    id, session_id, turn_id, workflow_state, user_profile_snapshot,
-    pending_order_id, langgraph_checkpoint_id
+    id, session_id, turn_id, state_version, business_state, pending_order_id
 )
 VALUES
     (
         '60000000-0000-4000-8000-000000000001',
         '30000000-0000-4000-8000-000000000001',
         '31000000-0000-4000-8000-000000000001',
-        '{"utterance":"我想买一个通勤用的降噪耳机，预算一千以内。","intents":[{"type":"PRODUCT_RECOMMENDATION","confidence":0.98}],"actionQueue":["PRODUCT_RECOMMENDATION"],"productCategory":"HEADPHONES","requiredSlots":["budget","useCase","noiseCancellation"],"slots":{"budget":{"max":1000},"useCase":"commute","noiseCancellation":true},"clarificationStatus":"READY","productCards":[{"productId":"20000000-0000-4000-8000-000000000001"},{"productId":"20000000-0000-4000-8000-000000000002"},{"productId":"20000000-0000-4000-8000-000000000003"}],"emotionStyle":"warm-professional"}',
-        '{"static":{"gender":"male","age":29,"city":"上海","heightCm":178,"weightKg":68,"skinType":"normal","techSavvy":"mid","budgetBand":"mid","locale":"zh_cn"},"dynamic":{"categoryAffinity":{"HEADPHONES":0.94},"brandAffinity":{"云雀":0.72,"潮汐":0.55},"recentViewed":["20000000-0000-4000-8000-000000000001","20000000-0000-4000-8000-000000000002"],"recentPurchased":[],"priceSensitivity":0.35,"avgOrderAmount":null},"capturedAt":"2026-08-02T00:00:00Z"}',
-        NULL, 'demo-checkpoint-001'
+        1,
+        '{"product_category":"HEADPHONES","slots":{"budgetMax":1000,"useCase":"commute","noiseCancellation":true},"pending_question":null,"product_cards":[{"productId":"20000000-0000-4000-8000-000000000001"},{"productId":"20000000-0000-4000-8000-000000000002"},{"productId":"20000000-0000-4000-8000-000000000003"}],"user_profile_updates":{}}',
+        NULL
     ),
     (
         '60000000-0000-4000-8000-000000000002',
         '30000000-0000-4000-8000-000000000001',
         '31000000-0000-4000-8000-000000000002',
-        '{"utterance":"就买第一款。","intents":[{"type":"PRODUCT_ORDER","action":"CREATE","confidence":0.99}],"actionQueue":["PRODUCT_ORDER"],"pendingOrder":{"orderId":"50000000-0000-4000-8000-000000000001","status":"pending","expiresInSeconds":900}}',
-        '{"static":{"gender":"male","age":29,"city":"上海","heightCm":178,"weightKg":68,"skinType":"normal","techSavvy":"mid","budgetBand":"mid","locale":"zh_cn"},"dynamic":{"categoryAffinity":{"HEADPHONES":0.94},"brandAffinity":{"云雀":0.72,"潮汐":0.55},"recentViewed":["20000000-0000-4000-8000-000000000001","20000000-0000-4000-8000-000000000002"],"recentPurchased":[],"priceSensitivity":0.35,"avgOrderAmount":null},"capturedAt":"2026-08-02T00:02:00Z"}',
-        '50000000-0000-4000-8000-000000000001', 'demo-checkpoint-002'
+        1,
+        '{"product_category":"HEADPHONES","slots":{"budgetMax":1000,"useCase":"commute","noiseCancellation":true},"pending_question":null,"product_cards":[],"user_profile_updates":{}}',
+        '50000000-0000-4000-8000-000000000001'
     ),
     (
         '60000000-0000-4000-8000-000000000101',
         '30000000-0000-4000-8000-000000000003',
         '33000000-0000-4000-8000-000000000001',
-        '{"utterance":"帮我写一份周报。","intents":[{"type":"UNSUPPORTED_REQUEST","confidence":0.99}],"actionQueue":["UNSUPPORTED_REQUEST"],"finalReply":"抱歉，我目前只能协助商品推荐、查询、对比和下单。你可以告诉我想买什么商品。"}',
-        '{"static":{"gender":null,"age":null,"city":null,"heightCm":null,"weightKg":null,"skinType":null,"techSavvy":null,"budgetBand":null,"locale":"zh_cn"},"dynamic":{"categoryAffinity":{},"brandAffinity":{},"recentViewed":[],"recentPurchased":[],"priceSensitivity":null,"avgOrderAmount":null},"capturedAt":"2026-08-02T01:00:00Z"}',
-        NULL, 'demo-checkpoint-unsupported-001'
+        1,
+        '{"user_profile_updates":{}}',
+        NULL
     ),
     (
         '60000000-0000-4000-8000-000000000102',
         '30000000-0000-4000-8000-000000000004',
         '34000000-0000-4000-8000-000000000001',
-        '{"utterance":"我想买双跑鞋。","intents":[{"type":"PRODUCT_RECOMMENDATION","confidence":0.98}],"actionQueue":["PRODUCT_RECOMMENDATION"],"productCategory":"RUNNING_SHOES","requiredSlots":["budgetMax","useCase"],"slots":{},"clarificationStatus":"ASK","missingSlots":["budgetMax","useCase"],"pendingQuestion":{"slot":"budgetMax","question":"你的预算上限是多少？"}}',
-        '{"static":{"gender":"female","age":28,"city":"北京","heightCm":168,"weightKg":55,"skinType":"normal","techSavvy":"expert","budgetBand":"mid","locale":"zh_cn"},"dynamic":{"categoryAffinity":{"RUNNING_SHOES":0.93},"brandAffinity":{"Nike":0.75,"Asics":0.68,"HOKA":0.46},"recentViewed":["20000000-0000-4000-8000-000000000101","20000000-0000-4000-8000-000000000106","20000000-0000-4000-8000-000000000110"],"recentPurchased":[],"priceSensitivity":0.40,"avgOrderAmount":null},"capturedAt":"2026-08-02T01:30:00Z"}',
-        NULL, 'demo-checkpoint-clarify-001'
+        1,
+        '{"product_category":"RUNNING_SHOES","slots":{},"pending_question":{"slot":"budgetMax","question":"你的预算上限是多少？"},"user_profile_updates":{}}',
+        NULL
     ),
     (
         '60000000-0000-4000-8000-000000000103',
         '30000000-0000-4000-8000-000000000004',
         '34000000-0000-4000-8000-000000000002',
-        '{"utterance":"一千元以内。","intents":[{"type":"PRODUCT_RECOMMENDATION","confidence":0.97}],"actionQueue":["PRODUCT_RECOMMENDATION"],"productCategory":"RUNNING_SHOES","requiredSlots":["budgetMax","useCase"],"slots":{"budgetMax":1000},"clarificationStatus":"ASK","missingSlots":["useCase"],"pendingQuestion":{"slot":"useCase","question":"主要用于什么场景？"}}',
-        '{"static":{"gender":"female","age":28,"city":"北京","heightCm":168,"weightKg":55,"skinType":"normal","techSavvy":"expert","budgetBand":"mid","locale":"zh_cn"},"dynamic":{"categoryAffinity":{"RUNNING_SHOES":0.93},"brandAffinity":{"Nike":0.75,"Asics":0.68,"HOKA":0.46},"recentViewed":["20000000-0000-4000-8000-000000000101","20000000-0000-4000-8000-000000000106","20000000-0000-4000-8000-000000000110"],"recentPurchased":[],"priceSensitivity":0.40,"avgOrderAmount":null},"capturedAt":"2026-08-02T01:32:00Z"}',
-        NULL, 'demo-checkpoint-clarify-002'
+        1,
+        '{"product_category":"RUNNING_SHOES","slots":{"budgetMax":1000},"pending_question":{"slot":"useCase","question":"主要用于什么场景？"},"user_profile_updates":{}}',
+        NULL
     ),
     (
         '60000000-0000-4000-8000-000000000104',
         '30000000-0000-4000-8000-000000000004',
         '34000000-0000-4000-8000-000000000003',
-        '{"utterance":"主要是日常路跑训练。","intents":[{"type":"PRODUCT_RECOMMENDATION","confidence":0.98}],"actionQueue":["PRODUCT_RECOMMENDATION"],"productCategory":"RUNNING_SHOES","requiredSlots":["budgetMax","useCase"],"slots":{"budgetMax":1000,"useCase":"daily-road-running"},"clarificationStatus":"READY","missingSlots":[],"productCards":[{"productId":"20000000-0000-4000-8000-000000000101"},{"productId":"20000000-0000-4000-8000-000000000110"},{"productId":"20000000-0000-4000-8000-000000000106"}],"emotionStyle":"encouraging-professional"}',
-        '{"static":{"gender":"female","age":28,"city":"北京","heightCm":168,"weightKg":55,"skinType":"normal","techSavvy":"expert","budgetBand":"mid","locale":"zh_cn"},"dynamic":{"categoryAffinity":{"RUNNING_SHOES":0.93},"brandAffinity":{"Nike":0.75,"Asics":0.68,"HOKA":0.46},"recentViewed":["20000000-0000-4000-8000-000000000101","20000000-0000-4000-8000-000000000106","20000000-0000-4000-8000-000000000110"],"recentPurchased":[],"priceSensitivity":0.40,"avgOrderAmount":null},"capturedAt":"2026-08-02T01:35:00Z"}',
-        NULL, 'demo-checkpoint-clarify-003'
+        1,
+        '{"product_category":"RUNNING_SHOES","slots":{"budgetMax":1000,"useCase":"daily-road-running"},"pending_question":null,"product_cards":[{"productId":"20000000-0000-4000-8000-000000000101"},{"productId":"20000000-0000-4000-8000-000000000110"},{"productId":"20000000-0000-4000-8000-000000000106"}],"user_profile_updates":{}}',
+        NULL
     )
 ON CONFLICT (id) DO UPDATE SET
     session_id = EXCLUDED.session_id,
     turn_id = EXCLUDED.turn_id,
-    workflow_state = EXCLUDED.workflow_state,
-    user_profile_snapshot = EXCLUDED.user_profile_snapshot,
-    pending_order_id = EXCLUDED.pending_order_id,
-    langgraph_checkpoint_id = EXCLUDED.langgraph_checkpoint_id;
+    state_version = EXCLUDED.state_version,
+    business_state = EXCLUDED.business_state,
+    pending_order_id = EXCLUDED.pending_order_id;
 
 COMMIT;

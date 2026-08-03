@@ -57,7 +57,8 @@
 成功订单使用更高权重、维护最近购买，并重新计算成功订单平均客单价。
 
 每轮从文本或语音转写中提取高置信度静态资料，并把它们累积为
-`ShoppingState.user_profile_updates`，该字段跨轮保存到 `session_states.workflow_state`。
+`ShoppingState.user_profile_updates`，该字段作为业务状态投影保存到
+`session_states.business_state`。
 `POST /api/v1/sessions/{sessionId}/close`、WebSocket `session.close`、页面连接全部断开，
 以及订单进入 `success` 或 `fail` 终态时，调用会话画像收敛服务：显式渠道资料优先于对话抽取，
 只用非空、通过表约束校验的字段合并更新 `user_profile_static`。推荐轮次开始时仍生成只读

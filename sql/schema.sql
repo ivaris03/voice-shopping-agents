@@ -112,11 +112,22 @@ CREATE TABLE IF NOT EXISTS category_l2 (
     CONSTRAINT category_l2_slots_disjoint CHECK (NOT (required_slots && optional_slots))
 );
 
-ALTER TABLE category_l2
-    ADD CONSTRAINT category_l2_category_l1_fk
-    FOREIGN KEY (category_l1_id)
-    REFERENCES category_l1(id)
-    ON DELETE RESTRICT;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'category_l2_category_l1_fk'
+          AND conrelid = 'category_l2'::regclass
+    ) THEN
+        ALTER TABLE category_l2
+            ADD CONSTRAINT category_l2_category_l1_fk
+            FOREIGN KEY (category_l1_id)
+            REFERENCES category_l1(id)
+            ON DELETE RESTRICT;
+    END IF;
+END;
+$$;
 
 CREATE INDEX IF NOT EXISTS category_l2_l1_idx ON category_l2 (category_l1, category_l2);
 
@@ -302,22 +313,95 @@ CREATE TRIGGER sessions_set_updated_at
 BEFORE UPDATE ON sessions
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
--- 每轮保存一份可恢复的 ShoppingState；画像候选和只读画像快照一并固化在该轮记录中，
--- 会话结束时再把候选资料收敛回 user_profile_static。
+-- 每轮保存一份业务状态投影；LangGraph 的完整 State 由它自己的 checkpointer 管理，
+-- 这里仅保存需要被业务层查询、审计或在无 checkpoint 时引导 Graph 的事实。
 CREATE TABLE IF NOT EXISTS session_states (
-    id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    session_id              uuid NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    turn_id                 uuid NOT NULL,
-    workflow_state          jsonb NOT NULL,
-    user_profile_snapshot   jsonb NOT NULL DEFAULT '{}'::jsonb,
-    pending_order_id        uuid REFERENCES orders(id) ON DELETE SET NULL,
-    langgraph_checkpoint_id text,
-    created_at              timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at              timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT session_states_workflow_object_check CHECK (jsonb_typeof(workflow_state) = 'object'),
-    CONSTRAINT session_states_profile_object_check CHECK (jsonb_typeof(user_profile_snapshot) = 'object'),
+    id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id       uuid NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    turn_id          uuid NOT NULL,
+    state_version    integer NOT NULL DEFAULT 1,
+    business_state   jsonb NOT NULL DEFAULT '{}'::jsonb,
+    pending_order_id uuid REFERENCES orders(id) ON DELETE SET NULL,
+    created_at       timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT session_states_version_check CHECK (state_version > 0),
+    CONSTRAINT session_states_business_object_check
+        CHECK (jsonb_typeof(business_state) = 'object'),
     CONSTRAINT session_states_session_turn_uq UNIQUE (session_id, turn_id)
 );
+
+-- Existing local databases may still have the pre-LangGraph-projection columns.
+-- Keep schema.sql re-runnable while moving those databases to the new contract.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'session_states'
+          AND column_name = 'workflow_state'
+    ) AND NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'session_states'
+          AND column_name = 'business_state'
+    ) THEN
+        ALTER TABLE session_states RENAME COLUMN workflow_state TO business_state;
+    ELSIF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'session_states'
+          AND column_name = 'workflow_state'
+    ) THEN
+        ALTER TABLE session_states DROP COLUMN workflow_state;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'session_states'
+          AND column_name = 'business_state'
+    ) THEN
+        ALTER TABLE session_states
+            ADD COLUMN business_state jsonb NOT NULL DEFAULT '{}'::jsonb;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'session_states'
+          AND column_name = 'state_version'
+    ) THEN
+        ALTER TABLE session_states
+            ADD COLUMN state_version integer NOT NULL DEFAULT 1;
+    END IF;
+
+    ALTER TABLE session_states
+        DROP COLUMN IF EXISTS user_profile_snapshot,
+        DROP COLUMN IF EXISTS langgraph_checkpoint_id;
+END;
+$$;
+
+ALTER TABLE session_states
+    ALTER COLUMN business_state SET DEFAULT '{}'::jsonb,
+    ALTER COLUMN business_state SET NOT NULL,
+    ALTER COLUMN state_version SET DEFAULT 1,
+    ALTER COLUMN state_version SET NOT NULL;
+
+ALTER TABLE session_states
+    DROP CONSTRAINT IF EXISTS session_states_workflow_object_check,
+    DROP CONSTRAINT IF EXISTS session_states_profile_object_check,
+    DROP CONSTRAINT IF EXISTS session_states_business_object_check,
+    DROP CONSTRAINT IF EXISTS session_states_version_check;
+
+ALTER TABLE session_states
+    ADD CONSTRAINT session_states_version_check CHECK (state_version > 0),
+    ADD CONSTRAINT session_states_business_object_check
+        CHECK (jsonb_typeof(business_state) = 'object');
 
 CREATE INDEX IF NOT EXISTS session_states_latest_idx
     ON session_states (session_id, created_at DESC);

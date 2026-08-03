@@ -222,8 +222,6 @@ def test_state_persistence_keeps_only_cross_turn_conversation_facts() -> None:
         "slots": {"form": "in-ear"},
         "pending_question": {"slot": "connectivity"},
         "product_cards": [{"productId": "product-1"}],
-        "emotion_style": "warm-professional",
-        "pending_order": {"id": "order-1"},
     }
 
     assert state_for_persistence(state) == expected
