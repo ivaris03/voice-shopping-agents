@@ -14,7 +14,7 @@ import {
   type Order,
   type Product,
 } from '@voice-shopping/web-ui'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 interface RecommendationCard {
   productId: string
@@ -102,6 +102,26 @@ const flowStatus = ref('正在连接导购…')
 const messages = ref<ChatMessage[]>([
   { role: 'assistant', text: '你好，我是声选导购。告诉我想买什么，我每次会问一到两个必要问题。' },
 ])
+const conversationElement = ref<HTMLElement | null>(null)
+let conversationScrollPending = false
+
+function scrollConversationToBottom() {
+  if (conversationScrollPending) return
+  conversationScrollPending = true
+  void nextTick(() => {
+    conversationScrollPending = false
+    const element = conversationElement.value
+    if (!element) return
+    element.scrollTop = element.scrollHeight
+  })
+}
+
+watch(
+  messages,
+  () => scrollConversationToBottom(),
+  { deep: true, flush: 'post' },
+)
+
 const isRecording = ref(false)
 const isAssistantSpeaking = ref(false)
 const isAssistantSpeechPaused = ref(false)
@@ -880,15 +900,13 @@ onBeforeUnmount(() => {
   <AppShell
     eyebrow="VOICE COMMERCE · USER"
     title="声选"
-    description="说出预算、场景和偏好，四个 Agent 会逐步澄清、精排商品并协助确认下单。"
+    description="说出预算、场景和偏好，导购会帮你澄清需求、推荐商品并确认下单。"
     :nav-items="navItems"
+    :hero-compact="true"
     :workspace-links="workspaceLinks"
     action-label="小林的账户"
   >
-    <template #headline>开口说需求，<br />轻松买到对的。</template>
-    <template #hero-action>
-      <a class="primary-button" href="#voice">开始语音导购</a>
-    </template>
+    <template #headline>开口说需求，轻松买到对的。</template>
     <template #hero-panel>
       <div class="hero-panel">
         <span class="hero-panel__label">实时供给概览</span>
@@ -912,10 +930,6 @@ onBeforeUnmount(() => {
             <span class="voice-live-badge"><span class="status-dot"></span>在线</span>
           </div>
           <p class="voice-description">支持推荐、对比、查询和二次确认下单；每次只追问一到两个必要条件。</p>
-          <div class="voice-examples" aria-label="快速开始">
-            <span class="voice-examples__label">试着说</span>
-            <button v-for="prompt in quickPrompts" :key="prompt" class="voice-example" type="button" @click="sendQuickPrompt(prompt)">{{ prompt }}</button>
-          </div>
           <div class="voice-action-row">
             <button
               class="mic-button"
@@ -944,8 +958,12 @@ onBeforeUnmount(() => {
             <input v-model="utterance" class="input" aria-label="导购消息" placeholder="例如：我想买一双通勤穿的鞋" @keyup.enter="sendUtterance" />
             <button class="primary-button voice-send-button" type="button" @click="sendUtterance">发送需求</button>
           </div>
+          <div class="voice-examples" aria-label="快速开始">
+            <span class="voice-examples__label">试着说</span>
+            <button v-for="prompt in quickPrompts" :key="prompt" class="voice-example" type="button" @click="sendQuickPrompt(prompt)">{{ prompt }}</button>
+          </div>
         </div>
-        <div class="conversation" aria-live="polite">
+        <div ref="conversationElement" class="conversation" aria-live="polite">
           <div class="conversation-header">
             <div>
               <strong>对话记录</strong>

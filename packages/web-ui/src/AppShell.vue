@@ -7,6 +7,7 @@ defineProps<{
   description: string
   navItems: NavItem[]
   actionLabel: string
+  heroCompact?: boolean
   workspaceLinks?: Array<{
     label: string
     description: string
@@ -44,7 +45,7 @@ defineProps<{
     </header>
 
     <main>
-      <section class="hero">
+      <section class="hero" :class="{ 'hero--compact': heroCompact }">
         <div>
           <p class="eyebrow">{{ eyebrow }}</p>
           <h1><slot name="headline" /></h1>
