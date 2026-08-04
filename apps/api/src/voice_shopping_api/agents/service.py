@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
+from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,7 +40,11 @@ from voice_shopping_api.modules.orders.service import (
     confirm_order,
     create_pending_order,
 )
-from voice_shopping_api.modules.sessions.service import finalize_session_profile
+from voice_shopping_api.modules.sessions.service import (
+    SESSION_CLOSED_DETAIL,
+    ensure_active_session,
+    finalize_session_profile,
+)
 from voice_shopping_api.schemas.domain import OrderCreate
 
 _checkpointed_workflow: tuple[object, Any] | None = None
@@ -67,15 +72,24 @@ def _json_default(value: Any) -> str:
     return str(value)
 
 
-async def _load_business_state(session: AsyncSession, session_id: UUID) -> ShoppingState:
+async def _load_business_state(
+    session: AsyncSession, session_id: UUID, user_id: UUID
+) -> ShoppingState:
     result = await session.execute(
         text(
             """
-            SELECT business_state FROM session_states
-            WHERE session_id = :session_id ORDER BY created_at DESC LIMIT 1
+            SELECT ss.business_state
+            FROM session_states AS ss
+            JOIN sessions AS s
+              ON s.id = ss.session_id
+             AND s.user_id = :user_id
+             AND s.status = 'active'
+            WHERE ss.session_id = :session_id
+            ORDER BY ss.created_at DESC
+            LIMIT 1
             """
         ),
-        {"session_id": session_id},
+        {"session_id": session_id, "user_id": user_id},
     )
     value = result.scalar_one_or_none()
     return dict(value) if value else {}
@@ -256,16 +270,24 @@ async def _taxonomy_context(session: AsyncSession) -> dict[str, Any]:
     }
 
 
-async def _conversation_history(session: AsyncSession, session_id: UUID) -> list[str]:
+async def _conversation_history(
+    session: AsyncSession, session_id: UUID, user_id: UUID
+) -> list[str]:
     result = await session.execute(
         text(
             """
-            SELECT role || ': ' || content AS summary
-            FROM session_messages WHERE session_id = :session_id
-            ORDER BY created_at DESC, seq DESC LIMIT 6
+            SELECT sm.role || ': ' || sm.content AS summary
+            FROM session_messages AS sm
+            JOIN sessions AS s
+              ON s.id = sm.session_id
+             AND s.user_id = :user_id
+             AND s.status = 'active'
+            WHERE sm.session_id = :session_id
+            ORDER BY sm.created_at DESC, sm.seq DESC
+            LIMIT 6
             """
         ),
-        {"session_id": session_id},
+        {"session_id": session_id, "user_id": user_id},
     )
     return list(reversed(result.scalars().all()))
 
@@ -287,9 +309,17 @@ async def _latest_pending_order_id(
     result = await session.execute(
         text(
             """
-            SELECT id FROM orders
-            WHERE user_id = :user_id AND session_id = :session_id AND status = 'pending'
-            ORDER BY created_at DESC LIMIT 1
+            SELECT o.id
+            FROM orders AS o
+            JOIN sessions AS s
+              ON s.id = o.session_id
+             AND s.user_id = o.user_id
+             AND s.status = 'active'
+            WHERE o.user_id = :user_id
+              AND o.session_id = :session_id
+              AND o.status = 'pending'
+            ORDER BY o.created_at DESC
+            LIMIT 1
             """
         ),
         {"user_id": user_id, "session_id": session_id},
@@ -365,18 +395,20 @@ async def _persist(
     session_id: UUID,
     turn_id: UUID,
 ) -> None:
-    await session.execute(
+    session_update = await session.execute(
         text(
             """
-            INSERT INTO sessions (id, user_id, last_turn_id, last_active_at)
-            VALUES (:id, :user_id, :turn_id, CURRENT_TIMESTAMP)
-            ON CONFLICT (id) DO UPDATE SET
-                last_turn_id = EXCLUDED.last_turn_id,
-                last_active_at = EXCLUDED.last_active_at
+            UPDATE sessions
+            SET last_turn_id = :turn_id,
+                last_active_at = CURRENT_TIMESTAMP
+            WHERE id = :id AND user_id = :user_id AND status = 'active'
+            RETURNING id
             """
         ),
         {"id": session_id, "user_id": user_id, "turn_id": turn_id},
     )
+    if session_update.scalar_one_or_none() is None:
+        raise HTTPException(status_code=409, detail=SESSION_CLOSED_DETAIL)
     persistable = state_for_persistence(state)
     payload = json.dumps(persistable, ensure_ascii=False, default=_json_default)
     pending = state.get("pending_order") or {}
@@ -515,7 +547,13 @@ async def process_turn(
     settings = get_settings()
     session_id = stable_uuid(session_key)
     turn_id = stable_uuid(f"{session_key}:{turn_key}")
+    # Lock the owned active row for the whole turn. This prevents a close
+    # request from racing with graph execution and makes all session-scoped
+    # reads below safe against cross-user access.
+    session_record = await ensure_active_session(session, session_id, user_id)
     workflow, checkpoint_enabled = await _workflow_for_turn()
+    if session_record.get("_created"):
+        checkpoint_enabled = False
     run_config = {
         "run_name": "voice-shopping-turn",
         "configurable": {"thread_id": str(session_id)},
@@ -535,7 +573,7 @@ async def process_turn(
         if isinstance(checkpoint.values, Mapping):
             previous = dict(checkpoint.values)
     if not previous:
-        previous = await _load_business_state(session, session_id)
+        previous = await _load_business_state(session, session_id, user_id)
     carried_forward = carry_forward_state(previous)
     pending_order_id = await _latest_pending_order_id(session, user_id, session_id)
     pending_order = (
@@ -557,7 +595,9 @@ async def process_turn(
         "turn_id": turn_key,
         "user_id": str(user_id),
         "utterance": utterance.strip(),
-        "conversation_history": await _conversation_history(session, session_id),
+        "conversation_history": await _conversation_history(
+            session, session_id, user_id
+        ),
         "model_enabled": model_enabled,
         "catalog_products": [],
         "user_profile_snapshot": await profile_snapshot(session, user_id),
