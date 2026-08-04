@@ -11,16 +11,7 @@ import {
   type Order,
   type Product,
 } from '@voice-shopping/web-ui'
-import { computed, onMounted, reactive, ref } from 'vue'
-
-const navItems = [
-  { label: '平台概览', href: '#overview' },
-  { label: '品类管理', href: '#categories' },
-  { label: '商家治理', href: '#merchants' },
-  { label: '店铺总览', href: '#stores' },
-  { label: '商品总览', href: '#products' },
-  { label: '全量订单', href: '#orders' },
-]
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
 interface MerchantGroup {
   ownerUserId: string
@@ -28,30 +19,61 @@ interface MerchantGroup {
   stores: Merchant[]
 }
 
+type ProductStockFilter = 'all' | 'available' | 'low' | 'out'
+
+const navItems = [
+  { label: '品类管理', href: '#/taxonomy' },
+  { label: '商品浏览', href: '#/products' },
+  { label: '商家治理', href: '#/merchants' },
+  { label: '全量订单', href: '#/orders' },
+]
+
+const currentRoute = ref('/taxonomy')
 const merchants = ref<Merchant[]>([])
 const products = ref<Product[]>([])
 const orders = ref<Order[]>([])
 const categories = ref<Category[]>([])
 const categoryLevelOnes = ref<CategoryLevelOne[]>([])
+const loading = ref(true)
 const categorySaving = ref(false)
+const statusSaving = ref(false)
+const error = ref('')
+const selectedProduct = ref<Product | null>(null)
+
 const categoryL1Form = reactive({ code: '' })
 const categoryForm = reactive({ categoryL1Id: '', categoryL2: '' })
 const slotForm = reactive({ categoryId: '', key: '', isRequired: true, enumValues: '' })
-const error = ref('')
-const selectedProduct = ref<Product | null>(null)
-const selectedMerchantKey = ref('')
-const selectedStoreId = ref('')
+const disabledReason = ref('')
+
+const selectedMerchantKeys = ref<string[]>([])
+const selectedStoreIds = ref<string[]>([])
 const productQuery = ref('')
+const productStatus = ref('')
+const productCategory = ref('')
+const productStock = ref<ProductStockFilter>('all')
 const orderStatus = ref('')
+
+const isTaxonomyPage = computed(() => currentRoute.value === '/taxonomy')
+const isProductPage = computed(() => currentRoute.value === '/products')
+const isMerchantPage = computed(() => currentRoute.value === '/merchants')
+const isOrdersPage = computed(() => currentRoute.value === '/orders')
+const isLevelOneEditor = computed(() => currentRoute.value === '/taxonomy/level-one/new')
+const isLevelTwoEditor = computed(() => currentRoute.value === '/taxonomy/level-two/new')
+const isSlotEditor = computed(() => /^\/taxonomy\/slot\/(new|edit\/[^/]+)$/.test(currentRoute.value))
+const isTaxonomyEditor = computed(() => isLevelOneEditor.value || isLevelTwoEditor.value || isSlotEditor.value)
+const slotEditorId = computed(() => currentRoute.value.match(/^\/taxonomy\/slot\/edit\/(.+)$/)?.[1] ?? '')
+const editingSlot = computed(() => categories.value.flatMap((category) => category.slots).find((slot) => slot.id === slotEditorId.value))
+const statusStoreId = computed(() => currentRoute.value.match(/^\/merchants\/([^/]+)\/status$/)?.[1] ?? '')
+const statusStore = computed(() => merchants.value.find((store) => store.id === statusStoreId.value))
+const isStatusEditor = computed(() => Boolean(statusStoreId.value))
+const isOperationPage = computed(() => isTaxonomyEditor.value || isStatusEditor.value)
+
 const merchantGroups = computed<MerchantGroup[]>(() => {
   const groups = new Map<string, MerchantGroup>()
   for (const store of merchants.value) {
-    const existing = groups.get(store.ownerUserId)
-    if (existing) {
-      existing.stores.push(store)
-      continue
-    }
-    groups.set(store.ownerUserId, {
+    const group = groups.get(store.ownerUserId)
+    if (group) group.stores.push(store)
+    else groups.set(store.ownerUserId, {
       ownerUserId: store.ownerUserId,
       ownerDisplayName: store.ownerDisplayName || `商家账号 ${store.ownerUserId.slice(0, 8)}…`,
       stores: [store],
@@ -59,22 +81,103 @@ const merchantGroups = computed<MerchantGroup[]>(() => {
   }
   return [...groups.values()]
 })
-const selectedMerchant = computed(() => merchantGroups.value.find((merchant) => merchant.ownerUserId === selectedMerchantKey.value))
-const selectedStore = computed(() => selectedMerchant.value?.stores.find((store) => store.id === selectedStoreId.value))
+const availableStores = computed(() => {
+  if (!selectedMerchantKeys.value.length) return merchants.value
+  return merchants.value.filter((store) => selectedMerchantKeys.value.includes(store.ownerUserId))
+})
+const visibleProducts = computed(() => {
+  const query = productQuery.value.trim().toLowerCase()
+  return products.value.filter((product) => {
+    const store = merchants.value.find((item) => item.id === product.merchantId)
+    const matchesQuery = !query || `${product.name} ${product.sku} ${product.brand ?? ''} ${product.merchantName ?? ''}`.toLowerCase().includes(query)
+    const matchesMerchant = !selectedMerchantKeys.value.length || Boolean(store && selectedMerchantKeys.value.includes(store.ownerUserId))
+    const matchesStore = !selectedStoreIds.value.length || selectedStoreIds.value.includes(product.merchantId)
+    const matchesStatus = !productStatus.value || product.status === productStatus.value
+    const matchesCategory = !productCategory.value || product.categoryL2 === productCategory.value
+    const matchesStock = productStock.value === 'all'
+      || (productStock.value === 'available' && product.stock > 0)
+      || (productStock.value === 'low' && product.stock > 0 && product.stock <= 10)
+      || (productStock.value === 'out' && product.stock <= 0)
+    return matchesQuery && matchesMerchant && matchesStore && matchesStatus && matchesCategory && matchesStock
+  })
+})
+const visibleOrders = computed(() => orderStatus.value ? orders.value.filter((item) => item.status === orderStatus.value) : orders.value)
 const enabledStores = computed(() => merchants.value.filter((item) => item.isEnabled).length)
 const successfulOrders = computed(() => orders.value.filter((item) => item.status === 'success'))
 const grossMerchandiseValue = computed(() => successfulOrders.value.reduce((sum, item) => sum + Number(item.totalAmount), 0))
-const visibleProducts = computed(() => {
-  if (!selectedStoreId.value) return []
-  const query = productQuery.value.trim().toLowerCase()
-  const storeProducts = products.value.filter((item) => item.merchantId === selectedStoreId.value)
-  if (!query) return storeProducts
-  return storeProducts.filter((item) => `${item.name} ${item.brand ?? ''} ${item.merchantName ?? ''}`.toLowerCase().includes(query))
+const taxonomyGroups = computed(() => categoryLevelOnes.value.map((levelOne) => ({
+  levelOne,
+  categories: categories.value.filter((category) => category.categoryL1Id === levelOne.id),
+})))
+const activeNavHref = computed(() => {
+  if (isProductPage.value) return '#/products'
+  if (isMerchantPage.value || isStatusEditor.value) return '#/merchants'
+  if (isOrdersPage.value) return '#/orders'
+  return '#/taxonomy'
 })
-const visibleOrders = computed(() =>
-  orderStatus.value ? orders.value.filter((item) => item.status === orderStatus.value) : orders.value,
-)
+const pageHeadline = computed(() => {
+  if (isLevelOneEditor.value) return '搭建品类树的第一层。'
+  if (isLevelTwoEditor.value) return '让二级品类有清晰归属。'
+  if (isSlotEditor.value) return editingSlot.value ? '更新商品可理解的属性。' : '把可筛选的商品属性定义清楚。'
+  if (isStatusEditor.value) return statusStore.value?.isEnabled ? '谨慎调整店铺的供给状态。' : '恢复店铺到可售供给中。'
+  if (isProductPage.value) return '从全局看见，每一件商品。'
+  if (isMerchantPage.value) return '用清晰边界，管理每一家店。'
+  if (isOrdersPage.value) return '用全局数据，守住交易质量。'
+  return '让商品结构，始终井然有序。'
+})
+const pageDescription = computed(() => {
+  if (isOperationPage.value) return '这是独立的操作页面，完成后会回到对应的管理视图。'
+  if (isProductPage.value) return '默认全局浏览；可按商家、店铺单选或多选，再叠加商品条件过滤。'
+  if (isMerchantPage.value) return '店铺启停会实时影响用户端的商品浏览和 Agent 推荐候选。'
+  if (isOrdersPage.value) return '查看全平台订单状态与交易结果，快速识别异常记录。'
+  return '集中展示一级分类、二级分类与槽位，新增操作在独立页面完成。'
+})
+
+function routeFromHash() {
+  const route = window.location.hash.replace(/^#/, '') || '/taxonomy'
+  const allowed = ['/taxonomy', '/products', '/merchants', '/orders', '/taxonomy/level-one/new', '/taxonomy/level-two/new', '/taxonomy/slot/new'].includes(route)
+    || /^\/taxonomy\/slot\/edit\/[^/]+$/.test(route)
+    || /^\/merchants\/[^/]+\/status$/.test(route)
+  if (!allowed) {
+    window.location.hash = '#/taxonomy'
+    return
+  }
+  currentRoute.value = route
+  window.scrollTo({ top: 0, behavior: 'auto' })
+}
+
+function goTo(route: string) {
+  if (currentRoute.value === route) {
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+    return
+  }
+  window.location.hash = `#${route}`
+}
+
+function formatPrice(value: number) {
+  return Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('zh-CN', { hour12: false })
+}
+
+function categoryLabel(value: string) {
+  return value.replaceAll('_', ' ')
+}
+
+function parseEnumValues(value: string): Array<string | number | boolean> {
+  return [...new Set(value.split(/[,，]+/).map((item) => item.trim()).filter(Boolean))].map((item) => {
+    if (item === 'true') return true
+    if (item === 'false') return false
+    const number = Number(item)
+    return Number.isFinite(number) ? number : item
+  })
+}
+
 async function loadData() {
+  loading.value = true
   error.value = ''
   try {
     const [merchantData, productData, orderData, categoryData, categoryL1Data] = await Promise.all([
@@ -89,45 +192,100 @@ async function loadData() {
     orders.value = orderData.items
     categories.value = categoryData.items
     categoryLevelOnes.value = categoryL1Data.items
-    if (selectedMerchantKey.value && !merchantGroups.value.some((merchant) => merchant.ownerUserId === selectedMerchantKey.value)) {
-      selectedMerchantKey.value = ''
-      selectedStoreId.value = ''
-      selectedProduct.value = null
-    } else if (selectedStoreId.value && !selectedMerchant.value?.stores.some((store) => store.id === selectedStoreId.value)) {
-      selectedStoreId.value = ''
-      selectedProduct.value = null
-    }
-    if (!categoryForm.categoryL1Id && categoryLevelOnes.value[0]) {
-      categoryForm.categoryL1Id = categoryLevelOnes.value[0].id
-    }
+    selectedMerchantKeys.value = selectedMerchantKeys.value.filter((key) => merchantGroups.value.some((group) => group.ownerUserId === key))
+    selectedStoreIds.value = selectedStoreIds.value.filter((id) => merchants.value.some((store) => store.id === id))
+    if (!categoryForm.categoryL1Id && categoryLevelOnes.value[0]) categoryForm.categoryL1Id = categoryLevelOnes.value[0].id
     if (!slotForm.categoryId && categories.value[0]) slotForm.categoryId = categories.value[0].id
+    if (slotEditorId.value && !editingSlot.value) goTo('/taxonomy')
+    if (statusStoreId.value && !statusStore.value) goTo('/merchants')
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '平台数据加载失败'
+  } finally {
+    loading.value = false
   }
 }
 
-function parseEnumValues(value: string): Array<string | number | boolean> {
-  return [...new Set(value.split(/[,，]+/).map((item) => item.trim()).filter(Boolean))].map((item) => {
-    if (item === 'true') return true
-    if (item === 'false') return false
-    const number = Number(item)
-    return item !== '' && Number.isFinite(number) ? number : item
+function resetSlotForm(slot?: CategorySlot) {
+  const category = slot ? categories.value.find((item) => item.slots.some((item) => item.id === slot.id)) : undefined
+  Object.assign(slotForm, {
+    categoryId: category?.id ?? categories.value[0]?.id ?? '',
+    key: slot?.key ?? '',
+    isRequired: slot?.isRequired ?? true,
+    enumValues: slot?.enumValues.map(String).join('，') ?? '',
   })
 }
+
+watch(currentRoute, () => {
+  if (isSlotEditor.value) resetSlotForm(editingSlot.value)
+  if (isStatusEditor.value) disabledReason.value = statusStore.value?.disabledReason ?? '平台人工审核'
+})
+watch(categories, () => {
+  if (isSlotEditor.value) resetSlotForm(editingSlot.value)
+})
+watch(selectedMerchantKeys, (keys) => {
+  if (!keys.length) return
+  const allowedStoreIds = new Set(merchants.value.filter((store) => keys.includes(store.ownerUserId)).map((store) => store.id))
+  selectedStoreIds.value = selectedStoreIds.value.filter((storeId) => allowedStoreIds.has(storeId))
+})
 
 async function createCategoryLevelOne() {
   if (!categoryL1Form.code.trim()) return
   categorySaving.value = true
+  error.value = ''
   try {
-    await requestJson('/platform/category-level-ones', {
-      method: 'POST',
-      body: JSON.stringify({ code: categoryL1Form.code.trim() }),
-    })
+    await requestJson('/platform/category-level-ones', { method: 'POST', body: JSON.stringify({ code: categoryL1Form.code.trim() }) })
     categoryL1Form.code = ''
     await loadData()
+    goTo('/taxonomy')
   } catch (failure) {
     error.value = failure instanceof Error ? failure.message : '一级分类创建失败'
-  } finally { categorySaving.value = false }
+  } finally {
+    categorySaving.value = false
+  }
+}
+
+async function createCategory() {
+  if (!categoryForm.categoryL1Id || !categoryForm.categoryL2.trim()) return
+  categorySaving.value = true
+  error.value = ''
+  try {
+    await requestJson('/platform/categories', {
+      method: 'POST',
+      body: JSON.stringify({ categoryL1Id: categoryForm.categoryL1Id, categoryL2: categoryForm.categoryL2.trim() }),
+    })
+    categoryForm.categoryL2 = ''
+    await loadData()
+    goTo('/taxonomy')
+  } catch (failure) {
+    error.value = failure instanceof Error ? failure.message : '二级分类创建失败'
+  } finally {
+    categorySaving.value = false
+  }
+}
+
+async function saveSlot() {
+  const enumValues = parseEnumValues(slotForm.enumValues)
+  if (!slotForm.categoryId || !slotForm.key.trim() || !enumValues.length) return
+  categorySaving.value = true
+  error.value = ''
+  try {
+    if (editingSlot.value) {
+      await requestJson(`/platform/category-slots/${editingSlot.value.id}`, {
+        method: 'PATCH', body: JSON.stringify({ isRequired: slotForm.isRequired, enumValues }),
+      })
+    } else {
+      await requestJson(`/platform/categories/${slotForm.categoryId}/slots`, {
+        method: 'POST', body: JSON.stringify({ key: slotForm.key.trim(), isRequired: slotForm.isRequired, enumValues }),
+      })
+    }
+    resetSlotForm()
+    await loadData()
+    goTo('/taxonomy')
+  } catch (failure) {
+    error.value = failure instanceof Error ? failure.message : '槽位保存失败'
+  } finally {
+    categorySaving.value = false
+  }
 }
 
 async function deleteCategoryLevelOne(category: CategoryLevelOne) {
@@ -140,251 +298,166 @@ async function deleteCategoryLevelOne(category: CategoryLevelOne) {
   }
 }
 
-async function createCategory() {
-  if (!categoryForm.categoryL1Id || !categoryForm.categoryL2.trim()) return
-  categorySaving.value = true
+async function deleteCategory(category: Category) {
+  if (!window.confirm(`确认删除二级分类“${category.categoryL2}”吗？`)) return
   try {
-    await requestJson('/platform/categories', {
-      method: 'POST',
-      body: JSON.stringify({
-        categoryL1Id: categoryForm.categoryL1Id,
-        categoryL2: categoryForm.categoryL2.trim(),
-      }),
-    })
-    categoryForm.categoryL2 = ''
+    await requestJson(`/platform/categories/${category.id}`, { method: 'DELETE' })
     await loadData()
   } catch (failure) {
-    error.value = failure instanceof Error ? failure.message : '分类创建失败'
-  } finally { categorySaving.value = false }
-}
-
-async function createSlot() {
-  const enumValues = parseEnumValues(slotForm.enumValues)
-  if (!slotForm.categoryId || !slotForm.key.trim() || !enumValues.length) return
-  categorySaving.value = true
-  try {
-    await requestJson(`/platform/categories/${slotForm.categoryId}/slots`, {
-      method: 'POST',
-      body: JSON.stringify({
-        key: slotForm.key.trim(),
-        isRequired: slotForm.isRequired,
-        enumValues,
-      }),
-    })
-    Object.assign(slotForm, { key: '', isRequired: true, enumValues: '' })
-    await loadData()
-  } catch (failure) {
-    error.value = failure instanceof Error ? failure.message : '槽位创建失败'
-  } finally { categorySaving.value = false }
-}
-
-async function editSlot(slot: CategorySlot) {
-  const values = window.prompt('枚举值（逗号分隔，至少一个）', slot.enumValues.join(', '))
-  if (values === null) return
-  const enumValues = parseEnumValues(values)
-  if (!enumValues.length) {
-    error.value = '槽位必须至少保留一个枚举值'
-    return
+    error.value = failure instanceof Error ? failure.message : '二级分类删除失败'
   }
-  await requestJson(`/platform/category-slots/${slot.id}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ enumValues }),
-  })
-  await loadData()
 }
 
 async function deleteSlot(slot: CategorySlot) {
   if (!window.confirm(`确认删除槽位“${slot.key}”吗？`)) return
-  await requestJson(`/platform/category-slots/${slot.id}`, { method: 'DELETE' })
-  await loadData()
-}
-
-async function deleteCategory(category: Category) {
-  if (!window.confirm(`确认删除二级分类“${category.categoryL2}”吗？`)) return
-  await requestJson(`/platform/categories/${category.id}`, { method: 'DELETE' })
-  await loadData()
-}
-
-async function toggleMerchant(merchant: Merchant) {
-  let reason: string | undefined
-  if (merchant.isEnabled) {
-    const value = window.prompt(`请输入禁用“${merchant.name}”的原因`, '平台人工审核')
-    if (!value?.trim()) return
-    reason = value.trim()
-  }
   try {
-    await requestJson<Merchant>(`/platform/merchants/${merchant.id}/status`, {
-      method: 'PATCH',
-      body: JSON.stringify({ isEnabled: !merchant.isEnabled, disabledReason: reason }),
-    })
+    await requestJson(`/platform/category-slots/${slot.id}`, { method: 'DELETE' })
     await loadData()
   } catch (failure) {
-    error.value = failure instanceof Error ? failure.message : '商家状态更新失败'
+    error.value = failure instanceof Error ? failure.message : '槽位删除失败'
   }
+}
+
+function openSlotEditor(slot?: CategorySlot) {
+  goTo(slot ? `/taxonomy/slot/edit/${slot.id}` : '/taxonomy/slot/new')
+}
+
+function selectAllMerchants() {
+  selectedMerchantKeys.value = merchantGroups.value.map((merchant) => merchant.ownerUserId)
+  selectedStoreIds.value = []
+}
+
+function clearProductScope() {
+  selectedMerchantKeys.value = []
+  selectedStoreIds.value = []
+}
+
+function clearProductFilters() {
+  clearProductScope()
+  productQuery.value = ''
+  productStatus.value = ''
+  productCategory.value = ''
+  productStock.value = 'all'
 }
 
 function openProduct(product: Product) {
   selectedProduct.value = product
 }
 
-function handleProductKeydown(event: KeyboardEvent, product: Product) {
-  if (event.key !== 'Enter' && event.key !== ' ') return
-  event.preventDefault()
-  openProduct(product)
-}
-
 function closeProductDetails() {
   selectedProduct.value = null
 }
 
-function selectMerchant(merchant: MerchantGroup) {
-  selectedMerchantKey.value = merchant.ownerUserId
-  selectedStoreId.value = ''
-  selectedProduct.value = null
-  productQuery.value = ''
-  document.querySelector('#stores')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+function openStatusEditor(store: Merchant) {
+  goTo(`/merchants/${store.id}/status`)
 }
 
-function handleMerchantKeydown(event: KeyboardEvent, merchant: MerchantGroup) {
-  if (event.key !== 'Enter' && event.key !== ' ') return
-  event.preventDefault()
-  selectMerchant(merchant)
+async function saveStoreStatus() {
+  if (!statusStore.value) return
+  if (statusStore.value.isEnabled && !disabledReason.value.trim()) {
+    error.value = '禁用店铺时必须填写原因'
+    return
+  }
+  statusSaving.value = true
+  error.value = ''
+  try {
+    await requestJson(`/platform/merchants/${statusStore.value.id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        isEnabled: !statusStore.value.isEnabled,
+        disabledReason: statusStore.value.isEnabled ? disabledReason.value.trim() : undefined,
+      }),
+    })
+    await loadData()
+    goTo('/merchants')
+  } catch (failure) {
+    error.value = failure instanceof Error ? failure.message : '店铺状态更新失败'
+  } finally {
+    statusSaving.value = false
+  }
 }
 
-function selectStore(store: Merchant) {
-  selectedStoreId.value = store.id
-  selectedProduct.value = null
-  productQuery.value = ''
-  document.querySelector('#products')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-}
+onMounted(() => {
+  routeFromHash()
+  window.addEventListener('hashchange', routeFromHash)
+  void loadData()
+})
 
-function handleStoreKeydown(event: KeyboardEvent, store: Merchant) {
-  if (event.key !== 'Enter' && event.key !== ' ') return
-  event.preventDefault()
-  selectStore(store)
-}
-
-function clearSelectedMerchant() {
-  selectedMerchantKey.value = ''
-  selectedStoreId.value = ''
-  selectedProduct.value = null
-  productQuery.value = ''
-}
-
-function clearSelectedStore() {
-  selectedStoreId.value = ''
-  selectedProduct.value = null
-  productQuery.value = ''
-}
-
-onMounted(() => void loadData())
+onBeforeUnmount(() => window.removeEventListener('hashchange', routeFromHash))
 </script>
 
 <template>
   <AppShell
     eyebrow="VOICE COMMERCE · PLATFORM"
     title="声选平台"
-    description="集中查看全量商家、商品和订单，以商家启停状态实时控制用户端供给。"
+    :description="pageDescription"
     :nav-items="navItems"
+    :active-nav-href="activeNavHref"
+    :hero-compact="true"
     action-label="平台管理员"
   >
-    <template #headline>看清平台全局，<br />守住交易边界。</template>
-    <template #hero-action><a class="primary-button" href="#overview">打开运营总览</a></template>
-    <template #hero-panel><div class="hero-panel"><span class="hero-panel__label">平台健康度</span><div><p class="hero-panel__value">{{ enabledStores }}/{{ merchants.length }} 店铺启用</p><p class="hero-panel__note">店铺禁用后，其在售商品会立即从用户浏览和 Agent 推荐候选中移除。</p></div></div></template>
+    <template #headline>{{ pageHeadline }}</template>
+    <template #hero-action>
+      <div v-if="isTaxonomyPage" class="section-actions"><button class="primary-button" type="button" @click="goTo('/taxonomy/level-one/new')">新增一级品类</button><button class="secondary-button" type="button" @click="goTo('/taxonomy/level-two/new')">新增二级品类</button><button class="ghost-button" type="button" @click="openSlotEditor()">新增槽位</button></div>
+      <button v-else-if="isOperationPage" class="ghost-button" type="button" @click="goTo(isStatusEditor ? '/merchants' : '/taxonomy')">返回管理页</button>
+      <button v-else-if="isProductPage" class="ghost-button" type="button" @click="clearProductFilters">重置筛选</button>
+    </template>
+    <template #hero-panel>
+      <div class="hero-panel"><span class="hero-panel__label">平台健康度</span><div><p class="hero-panel__value">{{ enabledStores }}/{{ merchants.length }} 店铺启用</p><p class="hero-panel__note">{{ products.length }} 件商品 · {{ successfulOrders.length }} 笔成功订单 · 成交 ¥{{ formatPrice(grossMerchandiseValue) }}</p></div></div>
+    </template>
 
     <div class="workspace">
       <p v-if="error" class="error-banner">{{ error }}</p>
-      <section id="overview" class="stat-grid">
-        <article class="stat-card"><span class="stat-label">全部商家</span><span class="stat-value">{{ merchantGroups.length }}</span></article>
-        <article class="stat-card"><span class="stat-label">全部商品</span><span class="stat-value">{{ products.length }}</span></article>
-        <article class="stat-card"><span class="stat-label">成功订单</span><span class="stat-value">{{ successfulOrders.length }}</span></article>
-        <article class="stat-card"><span class="stat-label">平台成交额</span><span class="stat-value">¥{{ grossMerchandiseValue }}</span></article>
-      </section>
 
-      <section id="categories" class="section-panel">
-        <div class="section-heading"><div><h2>品类与槽位</h2><p>先创建一级分类，再创建关联的二级分类；每个槽位都必须配置枚举值。</p></div></div>
-        <h3>1. 创建一级分类</h3>
-        <form class="form-grid" @submit.prevent="createCategoryLevelOne">
-          <label class="form-field form-field--wide">一级分类编码<input v-model="categoryL1Form.code" class="input" placeholder="ELECTRONICS" required /></label>
-          <button class="primary-button" type="submit" :disabled="categorySaving">新增一级分类</button>
-        </form>
-        <div class="slot-list">
-          <span v-for="item in categoryLevelOnes" :key="item.id" class="slot-chip">
-            {{ item.code }}
-            <button class="danger-button small-button" type="button" @click="deleteCategoryLevelOne(item)">删除</button>
-          </span>
-        </div>
-        <h3>2. 创建二级分类</h3>
-        <form class="form-grid" @submit.prevent="createCategory">
-          <label class="form-field">关联一级分类<select v-model="categoryForm.categoryL1Id" class="select" required><option value="" disabled>请选择一级分类</option><option v-for="item in categoryLevelOnes" :key="item.id" :value="item.id">{{ item.code }}</option></select></label>
-          <label class="form-field">二级分类<input v-model="categoryForm.categoryL2" class="input" placeholder="HEADPHONES" required /></label>
-          <button class="primary-button" type="submit" :disabled="categorySaving || !categoryLevelOnes.length">新增二级分类</button>
-        </form>
-        <h3>3. 创建槽位</h3>
-        <form class="form-grid" @submit.prevent="createSlot">
-          <label class="form-field">所属二级分类<select v-model="slotForm.categoryId" class="select" required><option value="" disabled>请选择二级分类</option><option v-for="category in categories" :key="category.id" :value="category.id">{{ category.categoryL1 }} / {{ category.categoryL2 }}</option></select></label>
-          <label class="form-field">槽位 Key<input v-model="slotForm.key" class="input" placeholder="connectivity" required /></label>
-          <label class="form-field">是否必填<select v-model="slotForm.isRequired" class="select"><option :value="true">必填</option><option :value="false">选填</option></select></label>
-          <label class="form-field form-field--wide">枚举值（逗号分隔）<input v-model="slotForm.enumValues" class="input" placeholder="bluetooth, wired" required /></label>
-          <button class="primary-button" type="submit" :disabled="categorySaving || !categories.length">新增槽位</button>
-        </form>
-        <div class="taxonomy-list">
-          <article v-for="category in categories" :key="category.id" class="taxonomy-group">
-            <div class="taxonomy-heading">
-              <div><span class="badge">一级 · {{ category.categoryL1 }}</span><h3>{{ category.categoryL2 }}</h3></div>
-              <div class="section-actions"><button class="danger-button small-button" @click="deleteCategory(category)">删除二级分类</button></div>
-            </div>
-            <div class="slot-list">
-              <span v-for="slot in category.slots" :key="slot.id" class="slot-chip" :class="{ 'slot-chip--optional': !slot.isRequired }">
-                {{ slot.key }} · {{ slot.isRequired ? '必填' : '选填' }} · {{ slot.enumValues.join(' / ') }}
-                <button class="ghost-button small-button" type="button" @click="editSlot(slot)">编辑</button>
-                <button class="danger-button small-button" type="button" @click="deleteSlot(slot)">删除</button>
-              </span>
-              <span v-if="!category.slots.length" class="muted">暂未配置槽位，请先创建带枚举值的槽位</span>
+      <section v-if="isTaxonomyPage" class="section-panel">
+        <div class="section-heading"><div><span class="section-kicker">TAXONOMY MAP</span><h2>分类、品类与槽位</h2><p>完整结构集中在此页；新增一级、二级分类和槽位均进入独立操作页。</p></div><span class="section-count">{{ categoryLevelOnes.length }} 个一级分类 · {{ categories.length }} 个二级分类</span></div>
+        <p v-if="loading" class="empty-state">正在加载品类结构…</p>
+        <p v-else-if="!taxonomyGroups.length" class="empty-state">还没有分类，请先新增一级分类。</p>
+        <div v-else class="taxonomy-list">
+          <article v-for="group in taxonomyGroups" :key="group.levelOne.id" class="taxonomy-group">
+            <div class="taxonomy-heading"><div><span class="badge">一级分类</span><h3>{{ group.levelOne.code }}</h3></div><button v-if="!group.categories.length" class="danger-button small-button" type="button" @click="deleteCategoryLevelOne(group.levelOne)">删除一级分类</button></div>
+            <p v-if="!group.categories.length" class="muted">暂无二级分类。</p>
+            <div v-else class="taxonomy-children">
+              <article v-for="category in group.categories" :key="category.id" class="taxonomy-child">
+                <div class="taxonomy-heading"><div><span class="badge">二级分类</span><h3>{{ category.categoryL2 }}</h3></div><button class="danger-button small-button" type="button" @click="deleteCategory(category)">删除二级分类</button></div>
+                <div class="slot-list"><span v-for="slot in category.slots" :key="slot.id" class="slot-chip" :class="{ 'slot-chip--optional': !slot.isRequired }">{{ slot.key }} · {{ slot.isRequired ? '必填' : '选填' }} · {{ slot.enumValues.join(' / ') }}<button class="ghost-button small-button" type="button" @click="openSlotEditor(slot)">编辑</button><button class="danger-button small-button" type="button" @click="deleteSlot(slot)">删除</button></span><span v-if="!category.slots.length" class="muted">暂无槽位。</span></div>
+              </article>
             </div>
           </article>
         </div>
       </section>
 
-      <section id="merchants" class="section-panel">
-        <div class="section-heading"><div><h2>商家治理</h2><p>先选择商家，再进入该商家下的店铺；禁用必须记录原因。</p></div></div>
-        <div class="store-grid">
-          <article v-for="merchant in merchantGroups" :key="merchant.ownerUserId" class="store-card selectable-card" :class="{ 'store-card--selected': selectedMerchantKey === merchant.ownerUserId }" role="button" tabindex="0" :aria-pressed="selectedMerchantKey === merchant.ownerUserId" :aria-label="`查看${merchant.ownerDisplayName}的店铺`" @click="selectMerchant(merchant)" @keydown="handleMerchantKeydown($event, merchant)">
-            <span class="badge">{{ merchant.stores.length }} 家店铺</span>
-            <h3>{{ merchant.ownerDisplayName }}</h3><p>商家账号下的店铺与商品供给</p>
-            <div class="card-footer"><span class="muted">{{ merchant.stores.reduce((count, store) => count + store.productCount, 0) }} 件商品</span><span class="select-hint">点击查看店铺</span></div>
-          </article>
+      <section v-else-if="isProductPage" class="section-panel">
+        <div class="section-heading"><div><span class="section-kicker">GLOBAL CATALOG</span><h2>全局商品浏览</h2><p>未选择范围时展示全部商品；勾选商家或店铺即可进行单选、多选组合筛选。</p></div><span class="section-count">{{ visibleProducts.length }} / {{ products.length }} 件</span></div>
+        <div class="scope-filter-grid">
+          <section class="selection-pane"><div class="selection-pane__heading"><strong>按商家筛选</strong><div class="section-actions"><button class="ghost-button small-button" type="button" @click="selectAllMerchants">全选</button><button class="ghost-button small-button" type="button" @click="clearProductScope">清空</button></div></div><div class="checkbox-list"><label v-for="merchant in merchantGroups" :key="merchant.ownerUserId" class="selection-option"><input v-model="selectedMerchantKeys" type="checkbox" :value="merchant.ownerUserId" /><span><strong>{{ merchant.ownerDisplayName }}</strong><small>{{ merchant.stores.length }} 家店铺</small></span></label></div></section>
+          <section class="selection-pane"><div class="selection-pane__heading"><strong>按店铺筛选</strong><span class="muted">可多选</span></div><div class="checkbox-list"><label v-for="store in availableStores" :key="store.id" class="selection-option"><input v-model="selectedStoreIds" type="checkbox" :value="store.id" /><span><strong>{{ store.name }}</strong><small>{{ store.productCount }} 件商品 · {{ store.isEnabled ? '启用' : '禁用' }}</small></span></label><span v-if="!availableStores.length" class="muted">没有匹配的店铺。</span></div></section>
         </div>
+        <div class="filter-toolbar filter-toolbar--platform" aria-label="商品条件筛选"><label class="form-field filter-toolbar__search">搜索商品<input v-model="productQuery" class="input" placeholder="商品名、SKU、品牌或店铺" /></label><label class="form-field">状态<select v-model="productStatus" class="select"><option value="">全部状态</option><option value="on_sale">在售</option><option value="draft">草稿</option><option value="off_sale">已下架</option></select></label><label class="form-field">品类<select v-model="productCategory" class="select"><option value="">全部品类</option><option v-for="category in categories" :key="category.id" :value="category.categoryL2">{{ categoryLabel(category.categoryL2) }}</option></select></label><label class="form-field">库存<select v-model="productStock" class="select"><option value="all">全部库存</option><option value="available">有库存</option><option value="low">低库存（≤10）</option><option value="out">缺货</option></select></label></div>
+        <p v-if="loading" class="empty-state">正在加载全局商品…</p>
+        <p v-else-if="!visibleProducts.length" class="empty-state">当前范围没有符合条件的商品。</p>
+        <div v-else class="table-wrap"><table class="data-table"><thead><tr><th>商品</th><th>商家 / 店铺</th><th>标准品类</th><th>价格</th><th>库存</th><th>状态</th></tr></thead><tbody><tr v-for="product in visibleProducts" :key="product.id" class="product-row" tabindex="0" @click="openProduct(product)"><td><strong>{{ product.name }}</strong><br /><span class="muted">{{ product.sku }} · {{ product.brand || '无品牌' }}</span></td><td>{{ product.merchantName }}</td><td>{{ categoryLabel(product.categoryL2) }}</td><td class="order-total">¥{{ formatPrice(product.price) }}</td><td>{{ product.stock }}</td><td><span class="badge" :class="{ 'badge--disabled': product.status !== 'on_sale' }">{{ product.status === 'on_sale' ? '在售' : product.status === 'draft' ? '草稿' : '已下架' }}</span></td></tr></tbody></table></div>
       </section>
 
-      <section id="stores" class="section-panel">
-        <template v-if="selectedMerchant">
-          <div class="section-heading"><div><h2>{{ selectedMerchant.ownerDisplayName }} · 店铺</h2><p>请选择一个店铺，查看该店铺下的商品情况。</p></div><button class="ghost-button" type="button" @click="clearSelectedMerchant">返回商家</button></div>
-          <div class="store-grid">
-            <article v-for="store in selectedMerchant.stores" :key="store.id" class="store-card selectable-card" :class="{ 'store-card--selected': selectedStoreId === store.id }" role="button" tabindex="0" :aria-pressed="selectedStoreId === store.id" :aria-label="`查看${store.name}商品`" @click="selectStore(store)" @keydown="handleStoreKeydown($event, store)">
-              <span class="badge" :class="{ 'badge--disabled': !store.isEnabled }">{{ store.isEnabled ? '已启用' : '已禁用' }}</span>
-              <h3>{{ store.name }}</h3><p>{{ store.description }}</p>
-              <p v-if="store.disabledReason" class="reason">禁用原因：{{ store.disabledReason }}</p>
-              <div class="card-footer"><span class="muted">{{ store.productCount }} 件商品</span><div class="section-actions"><span class="select-hint">点击查看商品</span><button :class="store.isEnabled ? 'danger-button' : 'secondary-button'" class="small-button" @click.stop="toggleMerchant(store)">{{ store.isEnabled ? '禁用店铺' : '恢复启用' }}</button></div></div>
-            </article>
-          </div>
-        </template>
-        <p v-else class="empty-state">请先点击上方“商家治理”中的商家，再选择店铺。</p>
+      <section v-else-if="isMerchantPage" class="section-panel">
+        <div class="section-heading"><div><span class="section-kicker">MERCHANT GOVERNANCE</span><h2>商家与店铺</h2><p>每个店铺的启停状态都会即时影响用户端和 Agent 可见的供给范围。</p></div></div>
+        <div class="merchant-group-list"><section v-for="merchant in merchantGroups" :key="merchant.ownerUserId" class="merchant-group"><div class="merchant-group__heading"><div><span class="badge">{{ merchant.stores.length }} 家店铺</span><h3>{{ merchant.ownerDisplayName }}</h3></div><span class="muted">{{ merchant.stores.reduce((total, store) => total + store.productCount, 0) }} 件商品</span></div><div class="store-grid"><article v-for="store in merchant.stores" :key="store.id" class="store-card"><span class="badge" :class="{ 'badge--disabled': !store.isEnabled }">{{ store.isEnabled ? '已启用' : '已禁用' }}</span><h3>{{ store.name }}</h3><p>{{ store.description || '暂无店铺介绍。' }}</p><p v-if="store.disabledReason" class="reason">禁用原因：{{ store.disabledReason }}</p><div class="card-footer"><span class="muted">{{ store.productCount }} 件商品</span><button :class="store.isEnabled ? 'danger-button' : 'secondary-button'" class="small-button" type="button" @click="openStatusEditor(store)">{{ store.isEnabled ? '禁用店铺' : '恢复启用' }}</button></div></article></div></section></div>
       </section>
 
-      <section id="products" class="section-panel">
-        <div class="section-heading"><div><h2>{{ selectedStore ? `${selectedStore.name} · 商品总览` : '商品总览' }}</h2><p>{{ selectedStore ? '当前仅展示所选店铺的商品；点击商品行可查看完整详情。' : '请依次选择商家和店铺，再查看商品详情。' }}</p></div><div v-if="selectedStore" class="section-actions"><input v-model="productQuery" class="input" style="width: 260px" placeholder="搜索当前店铺商品" /><button class="ghost-button" type="button" @click="clearSelectedStore">返回店铺</button></div></div>
-        <p v-if="!selectedMerchant" class="empty-state">请先点击上方“商家治理”中的商家。</p>
-        <p v-else-if="!selectedStore" class="empty-state">已选择商家，请在上方店铺列表中继续选择一个店铺。</p>
-        <p v-else-if="!visibleProducts.length" class="empty-state">该店铺暂无匹配商品。</p>
-        <div v-else class="table-wrap"><table class="data-table"><thead><tr><th>商品</th><th>店铺</th><th>标准品类</th><th>价格</th><th>库存</th><th>状态</th></tr></thead><tbody><tr v-for="product in visibleProducts" :key="product.id" class="product-row" tabindex="0" :aria-label="`查看${product.name}详情`" @click="openProduct(product)" @keydown="handleProductKeydown($event, product)"><td><strong>{{ product.name }}</strong><br><span class="muted">{{ product.brand || '无品牌' }}</span></td><td>{{ product.merchantName }}</td><td>{{ product.categoryL2 }}</td><td>¥{{ product.price }}</td><td>{{ product.stock }}</td><td><span class="badge" :class="{ 'badge--disabled': product.status !== 'on_sale' }">{{ product.status }}</span></td></tr></tbody></table></div>
+      <section v-else-if="isOrdersPage" class="section-panel">
+        <div class="section-heading"><div><span class="section-kicker">PLATFORM ORDERS</span><h2>全平台订单</h2><p>从结果看交易状态，关注待确认和失败订单。</p></div><label class="form-field compact-field">订单状态<select v-model="orderStatus" class="select"><option value="">全部状态</option><option value="pending">待确认</option><option value="success">已完成</option><option value="fail">已取消</option></select></label></div>
+        <p v-if="!visibleOrders.length" class="empty-state">当前没有匹配的订单。</p>
+        <div v-else class="table-wrap"><table class="data-table"><thead><tr><th>商品</th><th>商家</th><th>用户</th><th>金额</th><th>状态</th><th>失败原因</th><th>时间</th></tr></thead><tbody><tr v-for="order in visibleOrders" :key="order.id"><td>{{ order.productSnapshot.name }}</td><td>{{ order.merchantSnapshot.name }}</td><td>{{ order.userId.slice(0, 8) }}…</td><td class="order-total">¥{{ formatPrice(order.totalAmount) }}</td><td><span class="badge" :class="`badge--${order.status}`">{{ order.status === 'pending' ? '待确认' : order.status === 'success' ? '已完成' : '已取消' }}</span></td><td>{{ order.failureReason || '—' }}</td><td><time :datetime="order.createdAt">{{ formatDateTime(order.createdAt) }}</time></td></tr></tbody></table></div>
       </section>
 
-      <section id="orders" class="section-panel">
-        <div class="section-heading"><div><h2>全平台订单</h2><p>订单状态固定为 pending、success 和 fail。</p></div><select v-model="orderStatus" class="select" style="width: auto"><option value="">全部状态</option><option value="pending">pending</option><option value="success">success</option><option value="fail">fail</option></select></div>
-        <div class="table-wrap"><table class="data-table"><thead><tr><th>商品</th><th>商家</th><th>用户</th><th>金额</th><th>状态</th><th>失败原因</th><th>时间</th></tr></thead><tbody><tr v-for="order in visibleOrders" :key="order.id"><td>{{ order.productSnapshot.name }}</td><td>{{ order.merchantSnapshot.name }}</td><td>{{ order.userId.slice(0, 8) }}…</td><td>¥{{ order.totalAmount }}</td><td><span class="badge" :class="`badge--${order.status}`">{{ order.status }}</span></td><td>{{ order.failureReason || '—' }}</td><td>{{ new Date(order.createdAt).toLocaleString() }}</td></tr></tbody></table></div>
-      </section>
-      <ProductDetailModal v-if="selectedProduct" :product="selectedProduct" @close="closeProductDetails" />
+      <section v-else-if="isLevelOneEditor" class="section-panel operation-page"><div class="operation-page__intro"><span class="section-kicker">LEVEL ONE CATEGORY</span><h2>新增一级品类</h2><p>一级品类是二级品类与商品属性的顶层组织方式。</p></div><form class="form-grid operation-form" @submit.prevent="createCategoryLevelOne"><label class="form-field form-field--wide">一级分类编码<input v-model="categoryL1Form.code" class="input" placeholder="ELECTRONICS" required /></label><div class="form-actions form-field--full"><button class="ghost-button" type="button" @click="goTo('/taxonomy')">取消</button><button class="primary-button" type="submit" :disabled="categorySaving">{{ categorySaving ? '创建中…' : '创建一级品类' }}</button></div></form></section>
+
+      <section v-else-if="isLevelTwoEditor" class="section-panel operation-page"><div class="operation-page__intro"><span class="section-kicker">LEVEL TWO CATEGORY</span><h2>新增二级品类</h2><p>二级品类将直接用于商品归类、筛选和 Agent 的推荐条件。</p></div><form class="form-grid operation-form" @submit.prevent="createCategory"><label class="form-field">关联一级分类<select v-model="categoryForm.categoryL1Id" class="select" required><option value="" disabled>请选择一级分类</option><option v-for="item in categoryLevelOnes" :key="item.id" :value="item.id">{{ item.code }}</option></select></label><label class="form-field">二级分类编码<input v-model="categoryForm.categoryL2" class="input" placeholder="HEADPHONES" required /></label><div class="form-actions form-field--full"><button class="ghost-button" type="button" @click="goTo('/taxonomy')">取消</button><button class="primary-button" type="submit" :disabled="categorySaving || !categoryLevelOnes.length">{{ categorySaving ? '创建中…' : '创建二级品类' }}</button></div></form></section>
+
+      <section v-else-if="isSlotEditor" class="section-panel operation-page"><div class="operation-page__intro"><span class="section-kicker">PRODUCT SLOT</span><h2>{{ editingSlot ? '编辑槽位' : '新增槽位' }}</h2><p>槽位的可选值会成为商品资料的标准化参数，并帮助 Agent 澄清用户需求。</p></div><form class="form-grid operation-form" @submit.prevent="saveSlot"><label class="form-field">所属二级分类<select v-model="slotForm.categoryId" class="select" :disabled="Boolean(editingSlot)" required><option value="" disabled>请选择二级分类</option><option v-for="category in categories" :key="category.id" :value="category.id">{{ category.categoryL1 }} / {{ category.categoryL2 }}</option></select></label><label class="form-field">槽位 Key<input v-model="slotForm.key" class="input" :disabled="Boolean(editingSlot)" placeholder="connectivity" required /></label><label class="form-field">是否必填<select v-model="slotForm.isRequired" class="select"><option :value="true">必填</option><option :value="false">选填</option></select></label><label class="form-field form-field--wide">枚举值（逗号分隔）<input v-model="slotForm.enumValues" class="input" placeholder="bluetooth, wired" required /></label><div class="form-actions form-field--full"><button class="ghost-button" type="button" @click="goTo('/taxonomy')">取消</button><button class="primary-button" type="submit" :disabled="categorySaving || !categories.length">{{ categorySaving ? '保存中…' : editingSlot ? '保存修改' : '创建槽位' }}</button></div></form></section>
+
+      <section v-else-if="isStatusEditor && statusStore" class="section-panel operation-page"><div class="operation-page__intro"><span class="section-kicker">STORE STATUS</span><h2>{{ statusStore.isEnabled ? '禁用店铺' : '恢复店铺' }}</h2><p>{{ statusStore.name }} {{ statusStore.isEnabled ? '被禁用后，其商品会从用户端和 Agent 候选中移除。' : '恢复后会按商品自身状态重新参与供给。' }}</p></div><form class="form-stack operation-form" @submit.prevent="saveStoreStatus"><label v-if="statusStore.isEnabled" class="form-field">禁用原因<textarea v-model="disabledReason" class="textarea" required /></label><p v-else class="empty-state">确认恢复后，该店铺在售且有库存的商品将重新可被用户浏览。</p><div class="form-actions"><button class="ghost-button" type="button" @click="goTo('/merchants')">取消</button><button :class="statusStore.isEnabled ? 'danger-button' : 'primary-button'" type="submit" :disabled="statusSaving">{{ statusSaving ? '保存中…' : statusStore.isEnabled ? '确认禁用' : '确认恢复' }}</button></div></form></section>
     </div>
+    <ProductDetailModal v-if="selectedProduct && isProductPage" :product="selectedProduct" @close="closeProductDetails" />
   </AppShell>
 </template>

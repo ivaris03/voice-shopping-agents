@@ -104,6 +104,7 @@ describe('assistant reply audio coordination', () => {
   beforeEach(() => {
     FakeWebSocket.instances = []
     localStorage.clear()
+    window.location.hash = '#/voice'
     speak.mockClear()
     cancel.mockClear()
     pause.mockClear()
@@ -426,6 +427,7 @@ describe('assistant reply audio coordination', () => {
   })
 
   it('creates a catalog order without linking a browser-local session', async () => {
+    window.location.hash = '#/browse'
     const product = catalogProduct()
     const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       if (String(input).endsWith('/catalog/products')) {
@@ -465,6 +467,7 @@ describe('assistant reply audio coordination', () => {
   })
 
   it('blocks a second catalog checkout while the first request is in flight', async () => {
+    window.location.hash = '#/browse'
     const product = catalogProduct()
     let resolveOrder: ((response: Response) => void) | undefined
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -522,6 +525,7 @@ describe('assistant reply audio coordination', () => {
   })
 
   it('reuses a catalog idempotency key when the user retries a failed request', async () => {
+    window.location.hash = '#/browse'
     const product = catalogProduct()
     let orderAttempts = 0
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

@@ -67,9 +67,9 @@ interface AudioInputOption {
 }
 
 const navItems = [
-  { label: '语音导购', href: '#voice' },
-  { label: '逛商品', href: '#products' },
-  { label: '我的订单', href: '#orders' },
+  { label: '语音导购', href: '#/voice' },
+  { label: '逛商品', href: '#/browse' },
+  { label: '我的订单', href: '#/orders' },
 ]
 const workspaceLinks = [
   {
@@ -86,6 +86,50 @@ const workspaceLinks = [
 const customerId = '00000000-0000-4000-8000-000000000101'
 const sessionId = localStorage.getItem('voice-shopping-session') ?? crypto.randomUUID()
 localStorage.setItem('voice-shopping-session', sessionId)
+
+const currentRoute = ref('/voice')
+const isVoicePage = computed(() => currentRoute.value === '/voice')
+const isBrowsePage = computed(() => currentRoute.value === '/browse')
+const isOrdersPage = computed(() => currentRoute.value === '/orders')
+const activeNavHref = computed(() => `#${currentRoute.value}`)
+const pageEyebrow = computed(() => {
+  if (isBrowsePage.value) return 'VOICE COMMERCE · CATALOG'
+  if (isOrdersPage.value) return 'VOICE COMMERCE · ORDERS'
+  return 'VOICE COMMERCE · USER'
+})
+const pageHeadline = computed(() => {
+  if (isBrowsePage.value) return '慢慢逛，也能快速找到对的。'
+  if (isOrdersPage.value) return '每一笔订单，都清清楚楚。'
+  return '开口说需求，轻松买到对的。'
+})
+const pageDescription = computed(() => {
+  if (isBrowsePage.value) return '按品类浏览当前在售商品，打开详情后可以直接生成待确认订单。'
+  if (isOrdersPage.value) return '在这里确认待处理订单，并回看每一次购买记录。'
+  return '说出预算、场景和偏好，导购会帮你澄清需求、推荐商品并确认下单。'
+})
+
+function scrollPageToTop(behavior: ScrollBehavior) {
+  if (navigator.userAgent.includes('jsdom')) return
+  window.scrollTo({ top: 0, behavior })
+}
+
+function syncRoute() {
+  const route = window.location.hash.replace(/^#/, '') || '/voice'
+  if (!['/voice', '/browse', '/orders'].includes(route)) {
+    window.location.hash = '#/voice'
+    return
+  }
+  currentRoute.value = route
+  scrollPageToTop('auto')
+}
+
+function goTo(route: '/voice' | '/browse' | '/orders') {
+  if (currentRoute.value === route) {
+    scrollPageToTop('smooth')
+    return
+  }
+  window.location.hash = `#${route}`
+}
 
 const merchants = ref<Merchant[]>([])
 const products = ref<Product[]>([])
@@ -167,7 +211,7 @@ const categories = computed(() => [...new Set(products.value.map((item) => item.
 const visibleProducts = computed(() =>
   selectedCategory.value
     ? products.value.filter((item) => item.categoryL2 === selectedCategory.value)
-    : products.value.slice(0, 12),
+    : products.value,
 )
 const successfulOrders = computed(() => orders.value.filter((order) => order.status === 'success').length)
 const pendingOrders = computed(() => orders.value.filter((order) => order.status === 'pending').length)
@@ -986,7 +1030,7 @@ async function buyProduct(productId: string) {
     })
     await loadData()
     closeProductDetails()
-    document.querySelector('#orders')?.scrollIntoView({ behavior: 'smooth' })
+    goTo('/orders')
     orderIdempotencyKeys.delete(productId)
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '创建订单失败'
@@ -1022,13 +1066,16 @@ function notifySessionClosed() {
 }
 
 onMounted(() => {
+  syncRoute()
   void Promise.all([loadData(), connectText(), connectAudio(), refreshAudioInputs()]).catch(() => undefined)
   window.addEventListener('pagehide', notifySessionClosed)
+  window.addEventListener('hashchange', syncRoute)
   navigator.mediaDevices?.addEventListener?.('devicechange', handleAudioDeviceChange)
 })
 onBeforeUnmount(() => {
   notifySessionClosed()
   window.removeEventListener('pagehide', notifySessionClosed)
+  window.removeEventListener('hashchange', syncRoute)
   stopAssistantSpeech()
   textSocket?.close()
   audioSocket?.close()
@@ -1039,21 +1086,24 @@ onBeforeUnmount(() => {
 
 <template>
   <AppShell
-    eyebrow="VOICE COMMERCE · USER"
+    :eyebrow="pageEyebrow"
     title="声选"
-    description="说出预算、场景和偏好，导购会帮你澄清需求、推荐商品并确认下单。"
+    :description="pageDescription"
     :nav-items="navItems"
+    :active-nav-href="activeNavHref"
     :hero-compact="true"
     :workspace-links="workspaceLinks"
     action-label="小林的账户"
   >
-    <template #headline>开口说需求，轻松买到对的。</template>
+    <template #headline>{{ pageHeadline }}</template>
     <template #hero-panel>
       <div class="hero-panel">
-        <span class="hero-panel__label">实时供给概览</span>
+        <span class="hero-panel__label">{{ isVoicePage ? '实时供给概览' : isBrowsePage ? '当前可浏览供给' : '订单状态概览' }}</span>
         <div>
-          <p class="hero-panel__value">{{ merchants.length }} 家店 · {{ products.length }} 件商品</p>
-          <p class="hero-panel__note">已完成 {{ successfulOrders }} 笔订单，点击和成交会持续更新你的偏好画像。</p>
+          <p class="hero-panel__value">
+            {{ isOrdersPage ? `${orders.length} 笔订单 · ${pendingOrders} 笔待确认` : `${merchants.length} 家店 · ${products.length} 件商品` }}
+          </p>
+          <p class="hero-panel__note">{{ isOrdersPage ? `已完成 ${successfulOrders} 笔订单，确认前会再次校验价格和库存。` : '已完成的点击和成交会持续更新你的偏好画像。' }}</p>
         </div>
       </div>
     </template>
@@ -1061,7 +1111,7 @@ onBeforeUnmount(() => {
     <div class="workspace">
       <p v-if="error" class="error-banner">{{ error }}</p>
 
-      <section id="voice" class="section-panel voice-console">
+      <section v-if="isVoicePage" class="section-panel voice-console">
         <div class="voice-controls">
           <div class="voice-heading-row">
             <div>
@@ -1122,7 +1172,7 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <section v-if="recommendations.length" class="section-panel">
+      <section v-if="isVoicePage && recommendations.length" class="section-panel">
         <div class="section-heading"><div><span class="section-kicker">PERSONAL PICKS</span><h2>为你精排的商品</h2><p>先看匹配度，再打开详情或生成待确认订单。</p></div><span class="section-count">{{ recommendations.length }} 个推荐</span></div>
         <div class="product-grid">
           <article
@@ -1144,7 +1194,7 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <section id="products" class="section-panel">
+      <section v-if="isBrowsePage" class="section-panel">
         <div class="section-heading">
           <div><span class="section-kicker">BROWSE THE CATALOG</span><h2>在售商品</h2><p>只展示启用店铺中有库存的商品，先逛逛再让导购帮你挑。</p></div>
           <span class="section-count">{{ visibleProducts.length }} / {{ products.length }} 件</span>
@@ -1176,7 +1226,7 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <section id="orders" class="section-panel">
+      <section v-if="isOrdersPage" class="section-panel">
         <div class="section-heading"><div><span class="section-kicker">YOUR ORDERS</span><h2>我的订单</h2><p>待确认订单将在十五分钟后失效，确认前会再次校验价格和库存。</p></div><span v-if="pendingOrders" class="badge badge--pending">{{ pendingOrders }} 笔待确认</span></div>
         <p v-if="!orders.length" class="empty-state">还没有订单，先去逛逛商品或开始语音导购吧。</p>
         <div v-else class="table-wrap">

@@ -8,6 +8,7 @@ defineProps<{
   navItems: NavItem[]
   actionLabel: string
   heroCompact?: boolean
+  activeNavHref?: string
   workspaceLinks?: Array<{
     label: string
     description: string
@@ -24,7 +25,13 @@ defineProps<{
         <span>{{ title }}</span>
       </a>
       <nav class="nav" aria-label="主导航">
-        <a v-for="item in navItems" :key="item.href" :href="item.href">{{ item.label }}</a>
+        <a
+          v-for="item in navItems"
+          :key="item.href"
+          :href="item.href"
+          :class="{ 'nav--active': item.href === activeNavHref }"
+          :aria-current="item.href === activeNavHref ? 'page' : undefined"
+        >{{ item.label }}</a>
       </nav>
       <details v-if="workspaceLinks?.length" class="workspace-switcher">
         <summary class="workspace-switcher__trigger">切换工作台</summary>

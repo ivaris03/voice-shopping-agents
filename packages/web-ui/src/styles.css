@@ -46,6 +46,8 @@ a { color: inherit; text-decoration: none; }
 .nav { display: flex; gap: 26px; margin-left: auto; color: #526057; font-size: 14px; }
 
 .nav a:hover { color: #1f5b3c; }
+.nav a.nav--active { color: #1f5b3c; font-weight: 760; }
+.nav a.nav--active::after { display: block; width: 5px; height: 5px; margin: 5px auto -10px; border-radius: 50%; background: #c66e38; content: ''; }
 
 .workspace-switcher { position: relative; flex: 0 0 auto; }
 
@@ -206,11 +208,31 @@ h1 { max-width: 720px; margin: 0; font-family: Georgia, "Songti SC", serif; font
 .required-mark { margin-left: 5px; color: #a6442c; font-size: 11px; }
 .form-stack { display: grid; gap: 14px; }
 .check-field { display: flex; align-items: center; gap: 8px; min-height: 42px; color: #59645c; font-size: 13px; }
+.filter-toolbar { display: grid; grid-template-columns: minmax(220px, 1.4fr) repeat(4, minmax(130px, 0.8fr)); gap: 12px; margin: 0 0 20px; padding: 16px; border-top: 1px solid rgba(24, 34, 28, 0.1); border-bottom: 1px solid rgba(24, 34, 28, 0.1); background: rgba(248, 245, 237, 0.56); }
+.filter-toolbar--platform { grid-template-columns: minmax(220px, 1.45fr) repeat(3, minmax(140px, 0.85fr)); margin-top: 18px; }
+.filter-toolbar__search { min-width: 0; }
+.form-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 8px; }
+.operation-page { width: min(860px, 100%); margin: 0 auto; }
+.operation-page__intro { max-width: 600px; margin-bottom: 28px; }
+.operation-page__intro h2 { margin: 0; font-family: Georgia, "Songti SC", serif; font-size: 32px; }
+.operation-page__intro p { margin: 10px 0 0; color: #69746c; line-height: 1.65; }
+.operation-form { padding-top: 20px; border-top: 1px solid rgba(24, 34, 28, 0.1); }
+.scope-filter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.selection-pane { min-width: 0; padding: 16px 0; border-top: 1px solid rgba(24, 34, 28, 0.12); border-bottom: 1px solid rgba(24, 34, 28, 0.12); }
+.selection-pane__heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 11px; color: #344137; font-size: 14px; }
+.checkbox-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; max-height: 188px; overflow: auto; padding-right: 3px; }
+.selection-option { display: flex; align-items: flex-start; gap: 9px; min-width: 0; padding: 9px; border: 1px solid rgba(24, 34, 28, 0.1); color: #39453c; background: rgba(255, 253, 250, 0.55); cursor: pointer; }
+.selection-option:hover { border-color: rgba(31, 91, 60, 0.4); }
+.selection-option input { width: 15px; height: 15px; flex: 0 0 auto; margin: 2px 0 0; accent-color: #1f5b3c; }
+.selection-option span { display: grid; min-width: 0; gap: 3px; }
+.selection-option strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.selection-option small { color: #758078; font-size: 11px; }
 .taxonomy-list { display: grid; gap: 14px; margin-top: 22px; }
 .taxonomy-group { padding: 18px; border: 1px solid rgba(24, 34, 28, 0.11); border-radius: 17px; background: #fffdfa; }
 .taxonomy-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .taxonomy-heading h3 { margin: 8px 0 0; }
 .taxonomy-child { margin-top: 14px; padding: 14px; border-radius: 13px; background: #f4f1e9; }
+.taxonomy-children { display: grid; gap: 12px; margin-top: 14px; }
 .slot-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .slot-chip { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; border-radius: 999px; color: #24583a; background: #dfeee3; font-size: 12px; white-space: nowrap; }
 .slot-chip--optional { color: #785422; background: #f3e7cb; }
@@ -245,6 +267,12 @@ button:disabled { opacity: 0.48; cursor: not-allowed; }
 .selectable-card:focus-visible { outline: 3px solid #e6a95c; outline-offset: 3px; }
 .store-card--selected { border-color: #1f5b3c; box-shadow: 0 0 0 3px rgba(31, 91, 60, 0.13); }
 .select-hint { color: #1f5b3c; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.merchant-group-list { display: grid; gap: 26px; }
+.merchant-group { padding-top: 22px; border-top: 1px solid rgba(24, 34, 28, 0.12); }
+.merchant-group:first-child { padding-top: 0; border-top: 0; }
+.merchant-group__heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+.merchant-group__heading h3 { margin: 9px 0 0; font-family: Georgia, "Songti SC", serif; font-size: 22px; }
+.compact-field { width: 148px; flex: 0 0 auto; }
 .product-card { transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
 .product-card:hover { transform: translateY(-2px); border-color: rgba(31, 91, 60, 0.34); box-shadow: 0 12px 28px rgba(31, 58, 43, 0.1); }
 .product-card__details { width: 100%; display: grid; gap: 12px; padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer; font: inherit; text-align: left; }
@@ -386,6 +414,8 @@ body.has-product-detail-modal { overflow: hidden; }
   .voice-console { grid-template-columns: 1fr; }
   .store-grid, .product-grid { grid-template-columns: repeat(2, 1fr); }
   .form-grid { grid-template-columns: repeat(2, 1fr); }
+  .filter-toolbar, .filter-toolbar--platform { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .scope-filter-grid { grid-template-columns: 1fr; }
   .stat-grid { grid-template-columns: repeat(2, 1fr); }
   .conversation { min-height: 230px; }
 }
@@ -401,6 +431,13 @@ body.has-product-detail-modal { overflow: hidden; }
   .hero { padding-top: 44px; }
   .hero.hero--compact { gap: 20px; padding: 24px 0 20px; }
   .store-grid, .product-grid, .form-grid, .stat-grid { grid-template-columns: 1fr; }
+  .filter-toolbar, .filter-toolbar--platform { grid-template-columns: 1fr; padding: 14px 0; background: transparent; }
+  .checkbox-list { grid-template-columns: 1fr; }
+  .selection-pane__heading { align-items: flex-start; flex-direction: column; }
+  .form-actions { justify-content: stretch; }
+  .form-actions button { flex: 1; }
+  .operation-page__intro h2 { font-size: 27px; }
+  .compact-field { width: 100%; }
   .form-field--wide { grid-column: auto; }
   .section-panel { padding: 18px; }
   .section-heading { align-items: flex-start; flex-direction: column; gap: 12px; }
