@@ -589,7 +589,8 @@ ws://localhost:8000/ws/audio/{session_id}?userId={user_id}
 ASR 相关事件：
 
 - `audio.start` 成功后发送 `asr.started`，payload 包含 `model` 和 `sampleRate=16000`。
-- 识别到完整句子时发送 `asr.sentence`，payload 为 `{ "transcript": "..." }`。
+- 每次收到模型中间假设时发送 `asr.partial`，payload 为 `{ "transcript": "..." }`，其中 `transcript` 为截至当前的完整转录。
+- 识别到完整句子时发送 `asr.sentence`，payload 为 `{ "transcript": "...", "fullTranscript": "..." }`；前者是该句，后者是截至当前的完整转录。
 - 提交录音后发送 `asr.completed`，随后使用服务端 transcript 进入文本 Agent。
 - 未配置 ASR、识别失败或转写后的工作流失败时发送 `audio.error`。payload 包含
   `stage`（`asr_start`、`asr`、`asr_finish` 或 `workflow`）；采集阶段还会带上

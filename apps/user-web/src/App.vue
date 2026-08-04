@@ -277,6 +277,21 @@ function startVoiceTurn(turnId: string) {
   isTurnInFlight.value = true
 }
 
+function setLiveAsrTranscript(turnId: string, transcript: string, streaming: boolean) {
+  if (!transcript || !turnId) return
+  const messageForTurn = messages.value.find(
+    (item) => item.role === 'user' && item.turnId === turnId,
+  )
+  if (messageForTurn) {
+    // Ignore a late hypothesis after the final result has been rendered.
+    if (streaming && messageForTurn.streaming === false) return
+    messageForTurn.text = transcript
+    messageForTurn.streaming = streaming
+  } else {
+    messages.value.push({ role: 'user', text: transcript, turnId, streaming })
+  }
+}
+
 function finishTurn(turnId: string, retryable = false) {
   if (activeTurnId !== turnId) return
   const source = activeTurnSource
@@ -664,31 +679,35 @@ function connectAudio(): Promise<void> {
       }
       if (event.type === 'asr.completed') {
         const transcript = String(event.payload?.transcript ?? '')
-        if (transcript) {
-          const liveMessage = messages.value.find(
-            (item) => item.role === 'user' && item.turnId === event.turnId && item.streaming,
-          )
-          if (liveMessage) {
-            liveMessage.text = transcript
-            liveMessage.streaming = false
-          } else {
-            messages.value.push({ role: 'user', text: transcript, turnId: event.turnId })
-          }
+        if (transcript && event.turnId) {
+          setLiveAsrTranscript(event.turnId, transcript, false)
           flowStatus.value = '智能导购正在理解与筛选…'
           error.value = ''
         }
         if (event.turnId === latestVoiceTurnId) isBargingIn = false
       }
+      if (event.type === 'asr.partial') {
+        const transcript = String(event.payload?.transcript ?? '')
+        if (!transcript || !event.turnId) return
+        setLiveAsrTranscript(event.turnId, transcript, true)
+        flowStatus.value = '正在聆听，实时转写中…'
+      }
       if (event.type === 'asr.sentence') {
         const sentence = String(event.payload?.transcript ?? '')
-        if (!sentence) return
+        if (!sentence || !event.turnId) return
+        const fullTranscript = String(event.payload?.fullTranscript ?? '')
+        if (fullTranscript) {
+          setLiveAsrTranscript(event.turnId, fullTranscript, true)
+          flowStatus.value = '正在聆听，已实时转写…'
+          return
+        }
         const liveMessage = messages.value.find(
           (item) => item.role === 'user' && item.turnId === event.turnId && item.streaming,
         )
         if (liveMessage) {
           liveMessage.text += sentence
         } else {
-          messages.value.push({ role: 'user', text: sentence, turnId: event.turnId, streaming: true })
+          setLiveAsrTranscript(event.turnId, sentence, true)
         }
         flowStatus.value = '正在聆听，已实时转写…'
       }

@@ -113,6 +113,53 @@ async def test_asr_splits_punctuation_and_flushes_only_the_unfinished_tail(monke
     assert await streaming_asr.next_completed_sentence() is None
 
 
+def test_asr_prefers_the_explicit_sentence_end_flag() -> None:
+    assert asr._is_sentence_final({"sentence_end": True, "end_time": None})
+    assert not asr._is_sentence_final({"sentence_end": False, "end_time": 123})
+    assert asr._is_sentence_final({"end_time": 123})
+
+
+@pytest.mark.asyncio
+async def test_asr_streams_the_full_partial_transcript_before_finalizing(monkeypatch) -> None:
+    monkeypatch.setattr(asr, "Recognition", _FakeRecognition)
+    streaming_asr = asr.StreamingAsr()
+
+    streaming_asr.accept_transcript(
+        "我想买一副通勤耳机",
+        sentence_final=False,
+        sentence_id=1,
+    )
+    assert await streaming_asr.next_transcript_update() == (
+        "partial",
+        "我想买一副通勤耳机",
+        "我想买一副通勤耳机",
+    )
+
+    streaming_asr.accept_transcript(
+        "我想买一副通勤耳机，预算一千元以内。",
+        sentence_final=True,
+        sentence_id=1,
+    )
+    assert await streaming_asr.next_transcript_update() == (
+        "sentence",
+        "我想买一副通勤耳机，预算一千元以内。",
+        "我想买一副通勤耳机，预算一千元以内。",
+    )
+    assert await streaming_asr.stop() == "我想买一副通勤耳机，预算一千元以内。"
+    assert await streaming_asr.next_transcript_update() is None
+
+
+@pytest.mark.asyncio
+async def test_asr_keeps_identical_final_sentences_with_different_sentence_ids(monkeypatch) -> None:
+    monkeypatch.setattr(asr, "Recognition", _FakeRecognition)
+    streaming_asr = asr.StreamingAsr()
+
+    streaming_asr.accept_transcript("好的。", sentence_final=True, sentence_id=1)
+    streaming_asr.accept_transcript("好的。", sentence_final=True, sentence_id=2)
+
+    assert await streaming_asr.stop() == "好的。好的。"
+
+
 @pytest.mark.asyncio
 async def test_asr_trace_records_safe_usage_summary(monkeypatch) -> None:
     started: list[tuple[str, dict]] = []

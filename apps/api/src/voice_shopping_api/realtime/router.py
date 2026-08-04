@@ -176,32 +176,46 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
     await websocket.send_json({"type": "audio.ready", "sessionId": session_id})
     received_bytes = 0
     asr: StreamingAsr | None = None
-    sentence_task: asyncio.Task[None] | None = None
+    transcript_task: asyncio.Task[None] | None = None
     send_lock = asyncio.Lock()
 
     async def send_json(event: dict[str, Any]) -> None:
         async with send_lock:
             await websocket.send_json(event)
 
-    async def publish_completed_sentences(current_asr: StreamingAsr, turn_id: str) -> None:
-        while (sentence := await current_asr.next_completed_sentence()) is not None:
+    async def publish_transcript_updates(current_asr: StreamingAsr, turn_id: str) -> None:
+        while (update := await current_asr.next_transcript_update()) is not None:
+            kind, transcript, full_transcript = update
+            if kind == "partial":
+                await send_json(
+                    {
+                        "type": "asr.partial",
+                        "sessionId": session_id,
+                        "turnId": turn_id,
+                        "payload": {"transcript": transcript},
+                    }
+                )
+                continue
             await send_json(
                 {
                     "type": "asr.sentence",
                     "sessionId": session_id,
                     "turnId": turn_id,
-                    "payload": {"transcript": sentence},
+                    "payload": {
+                        "transcript": transcript,
+                        "fullTranscript": full_transcript,
+                    },
                 }
             )
 
-    async def wait_for_sentence_task() -> None:
-        nonlocal sentence_task
-        if sentence_task is None:
+    async def wait_for_transcript_task() -> None:
+        nonlocal transcript_task
+        if transcript_task is None:
             return
         try:
-            await sentence_task
+            await transcript_task
         finally:
-            sentence_task = None
+            transcript_task = None
 
     try:
         while True:
@@ -233,7 +247,7 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
                     if asr is not None:
                         with suppress(Exception):
                             await asr.stop()
-                        await wait_for_sentence_task()
+                        await wait_for_transcript_task()
                     asr = StreamingAsr(session_id=session_id, turn_id=turn_id)
                     await asr.start()
                 except Exception as exc:
@@ -248,7 +262,7 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
                         )
                     )
                     continue
-                sentence_task = asyncio.create_task(publish_completed_sentences(asr, turn_id))
+                transcript_task = asyncio.create_task(publish_transcript_updates(asr, turn_id))
                 await send_json(
                     {
                         "type": "asr.started",
@@ -265,7 +279,7 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
                 client_metrics = control.get("clientMetrics") or {}
                 try:
                     server_transcript = await asr.stop() if asr is not None else ""
-                    await wait_for_sentence_task()
+                    await wait_for_transcript_task()
                 except Exception as exc:
                     logger.exception("ASR failed to finish for session %s", session_id)
                     asr = None
@@ -325,7 +339,7 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
                 if asr is not None:
                     with suppress(Exception):
                         await asr.stop()
-                await wait_for_sentence_task()
+                await wait_for_transcript_task()
                 asr = None
                 received_bytes = 0
     except (RuntimeError, WebSocketDisconnect):
@@ -336,9 +350,9 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
         if asr is not None:
             with suppress(Exception):
                 await asr.stop()
-        if sentence_task is not None:
+        if transcript_task is not None:
             with suppress(Exception):
-                await wait_for_sentence_task()
+                await wait_for_transcript_task()
         hub.unregister_audio_connection(session_id, websocket)
         await hub.finalize_disconnected_session(session_id, user_id)
 

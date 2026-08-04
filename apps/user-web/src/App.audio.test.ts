@@ -401,18 +401,40 @@ describe('assistant reply audio coordination', () => {
     wrapper.unmount()
   })
 
-  it('shows sentence-final ASR results while recording and merges them into the final transcript', async () => {
+  it('updates one ASR message from the live hypothesis to the final transcript', async () => {
     const wrapper = mount(App)
     await flushPromises()
 
     const audioSocket = FakeWebSocket.instances.find((socket) => socket.url.includes('/ws/audio/'))
     audioSocket?.emitJson({
-      type: 'asr.sentence',
+      type: 'asr.partial',
       turnId: 'voice-turn',
-      payload: { transcript: '我想买一双通勤鞋。' },
+      payload: { transcript: '我想买一双通勤鞋' },
     })
     await flushPromises()
-    expect(wrapper.text()).toContain('我想买一双通勤鞋。')
+    expect(wrapper.findAll('.message--user')).toHaveLength(1)
+    expect(wrapper.text()).toContain('我想买一双通勤鞋')
+
+    audioSocket?.emitJson({
+      type: 'asr.partial',
+      turnId: 'voice-turn',
+      payload: { transcript: '我想买一双通勤鞋，预算五百元' },
+    })
+    await flushPromises()
+    expect(wrapper.findAll('.message--user')).toHaveLength(1)
+    expect(wrapper.text()).toContain('我想买一双通勤鞋，预算五百元')
+
+    audioSocket?.emitJson({
+      type: 'asr.sentence',
+      turnId: 'voice-turn',
+      payload: {
+        transcript: '我想买一双通勤鞋，预算五百元。',
+        fullTranscript: '我想买一双通勤鞋，预算五百元。',
+      },
+    })
+    await flushPromises()
+    expect(wrapper.findAll('.message--user')).toHaveLength(1)
+    expect(wrapper.text()).toContain('我想买一双通勤鞋，预算五百元。')
 
     audioSocket?.emitJson({
       type: 'asr.completed',
@@ -423,6 +445,43 @@ describe('assistant reply audio coordination', () => {
 
     expect(wrapper.findAll('.message--user')).toHaveLength(1)
     expect(wrapper.text()).toContain('我想买一双通勤鞋。预算五百元。')
+    wrapper.unmount()
+  })
+
+  it('uses the provider full transcript to finalize a partial sentence', async () => {
+    const wrapper = mount(App)
+    await flushPromises()
+
+    const audioSocket = FakeWebSocket.instances.find((socket) => socket.url.includes('/ws/audio/'))
+    audioSocket?.emitJson({
+      type: 'asr.partial',
+      turnId: 'voice-turn-partial',
+      payload: { transcript: '我想买一副通勤耳机' },
+    })
+    await flushPromises()
+
+    audioSocket?.emitJson({
+      type: 'asr.sentence',
+      turnId: 'voice-turn-partial',
+      payload: {
+        transcript: '，预算一千元以内。',
+        fullTranscript: '我想买一副通勤耳机，预算一千元以内。',
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.findAll('.message--user')).toHaveLength(1)
+    expect(wrapper.text()).toContain('我想买一副通勤耳机，预算一千元以内。')
+
+    audioSocket?.emitJson({
+      type: 'asr.completed',
+      turnId: 'voice-turn-partial',
+      payload: { transcript: '我想买一副通勤耳机，预算一千元以内。' },
+    })
+    await flushPromises()
+
+    expect(wrapper.findAll('.message--user')).toHaveLength(1)
+    expect(wrapper.text()).toContain('我想买一副通勤耳机，预算一千元以内。')
     wrapper.unmount()
   })
 
