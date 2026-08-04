@@ -675,34 +675,218 @@ real_catalog (product_no, name, brand, price, attributes) AS (
         (199, 'Bobbi Brown Crushed Lip Color Bare', 'Bobbi Brown', 360.00, '{"shade":"milk-tea","finish":"satin"}'::jsonb),
         (200, 'Bobbi Brown Crushed Lip Color Cranberry', 'Bobbi Brown', 360.00, '{"shade":"ruby-red","finish":"satin"}'::jsonb)
 ),
+catalog_copy AS (
+    SELECT
+        ps.*,
+        rc.name AS catalog_name,
+        rc.brand AS catalog_brand,
+        rc.price AS catalog_price,
+        rc.attributes AS catalog_attributes,
+        lpad(rc.product_no::text, 3, '0') AS copy_no,
+        CASE ps.category_l2
+            WHEN 'HEADPHONES' THEN (ARRAY['晨间通勤', '午后专注', '远程连线', '轻松出行', '夜间放松'])[((rc.product_no - 1) % 5) + 1]
+            WHEN 'COFFEE_MACHINE' THEN (ARRAY['清晨醒脑', '午后小聚', '居家慢享', '办公提神', '周末招待'])[((rc.product_no - 41) % 5) + 1]
+            WHEN 'ELECTRIC_KETTLE' THEN (ARRAY['早茶冲泡', '办公补水', '夜读热饮', '多人分享', '餐后收尾'])[((rc.product_no - 61) % 5) + 1]
+            WHEN 'RUNNING_SHOES' THEN (ARRAY['城市慢跑', '节奏训练', '周末拉练', '轻量恢复', '户外探索'])[((rc.product_no - 81) % 5) + 1]
+            WHEN 'WATCHES' THEN (ARRAY['日常通勤', '周末会面', '轻户外出行', '正式场合', '旅行记录'])[((rc.product_no - 121) % 5) + 1]
+            ELSE (ARRAY['通勤上妆', '周末约会', '镜前试色', '轻松出行', '晚间聚会'])[((rc.product_no - 161) % 5) + 1]
+        END AS copy_scene
+    FROM product_seed AS ps
+    JOIN real_catalog AS rc ON rc.product_no = ps.embedding_axis
+),
+copy_content AS (
+    SELECT
+        ps.*,
+        CASE ps.category_l2
+            WHEN 'HEADPHONES' THEN CASE ps.catalog_attributes ->> 'form'
+                WHEN 'in-ear' THEN '入耳式耳机'
+                ELSE '头戴式耳机'
+            END
+            WHEN 'COFFEE_MACHINE' THEN CASE ps.catalog_attributes ->> 'type'
+                WHEN 'capsule' THEN '胶囊咖啡机'
+                ELSE '半自动咖啡机'
+            END
+            WHEN 'ELECTRIC_KETTLE' THEN CASE
+                WHEN ps.catalog_attributes ? 'capacityL'
+                    THEN (ps.catalog_attributes ->> 'capacityL') || ' L 电热水壶'
+                ELSE '电热水壶'
+            END
+            WHEN 'RUNNING_SHOES' THEN CASE ps.catalog_attributes ->> 'terrain'
+                WHEN 'trail' THEN '越野跑鞋'
+                ELSE '公路跑鞋'
+            END
+            WHEN 'WATCHES' THEN CASE ps.catalog_attributes ->> 'movement'
+                WHEN 'automatic' THEN '自动机械腕表'
+                WHEN 'eco-drive' THEN '光动能腕表'
+                ELSE '石英腕表'
+            END
+            ELSE format(
+                '%s%s口红',
+                CASE ps.catalog_attributes ->> 'shade'
+                    WHEN 'milk-tea' THEN '奶茶色'
+                    WHEN 'tomato-red' THEN '番茄红'
+                    WHEN 'coral' THEN '珊瑚色'
+                    WHEN 'rose' THEN '玫瑰色'
+                    ELSE '正红色'
+                END,
+                CASE ps.catalog_attributes ->> 'finish'
+                    WHEN 'matte' THEN '雾面'
+                    WHEN 'satin' THEN '缎光'
+                    ELSE '光泽'
+                END
+            )
+        END AS copy_item,
+        CASE ps.category_l2
+            WHEN 'HEADPHONES' THEN CASE
+                WHEN (ps.catalog_attributes ->> 'noiseCancellation') = 'true'
+                    THEN '蓝牙连接配合降噪模式，听得更沉浸'
+                ELSE '蓝牙连接保持轻松，周围声音也不会缺席'
+            END
+            WHEN 'COFFEE_MACHINE' THEN CASE ps.catalog_attributes ->> 'type'
+                WHEN 'capsule' THEN '一键萃取的节奏，早晨也能从容开场'
+                ELSE CASE WHEN (ps.catalog_attributes ->> 'steamWand') = 'true'
+                    THEN '蒸汽棒让奶泡和拉花多一点可玩性'
+                    ELSE '手动萃取的过程，让一杯咖啡更有仪式感'
+                END
+            END
+            WHEN 'ELECTRIC_KETTLE' THEN CASE
+                WHEN (ps.catalog_attributes ->> 'temperatureControl') = 'true'
+                     AND (ps.catalog_attributes ->> 'keepWarm') = 'true'
+                    THEN '温控与保温，让每一杯热饮都不必着急'
+                WHEN (ps.catalog_attributes ->> 'temperatureControl') = 'true'
+                    THEN '温控设定更适合慢慢冲泡'
+                WHEN (ps.catalog_attributes ->> 'keepWarm') = 'true'
+                    THEN '保温状态让下一杯也不用等待'
+                ELSE '烧水步骤简洁，热饮随手就能安排'
+            END
+            WHEN 'RUNNING_SHOES' THEN CASE ps.catalog_attributes ->> 'cushion'
+                WHEN 'high' THEN '高缓震脚感，让慢跑节奏更从容'
+                ELSE '轻快回弹，为节奏跑增添一点活力'
+            END
+            WHEN 'WATCHES' THEN CASE ps.catalog_attributes ->> 'movement'
+                WHEN 'automatic' THEN '自动机械机芯，让抬腕多一份节奏感'
+                WHEN 'eco-drive' THEN '光动能设定，日常佩戴更省心'
+                ELSE '石英机芯，时间表达干净利落'
+            END
+            ELSE CASE ps.catalog_attributes ->> 'finish'
+                WHEN 'matte' THEN '雾面妆效显得干净利落'
+                WHEN 'satin' THEN '缎光妆效让色彩更有层次'
+                ELSE '光泽妆效让双唇更有活力'
+            END
+        END AS copy_feature,
+        CASE ps.category_l2
+            WHEN 'HEADPHONES' THEN CASE ps.catalog_attributes ->> 'form'
+                WHEN 'in-ear' THEN '入耳式轻盈佩戴'
+                ELSE '头戴式包裹感'
+            END
+            WHEN 'COFFEE_MACHINE' THEN CASE ps.catalog_attributes ->> 'type'
+                WHEN 'capsule' THEN '胶囊操作，早晨更省心'
+                ELSE '半自动制作，多一点手作感'
+            END
+            WHEN 'ELECTRIC_KETTLE' THEN CASE
+                WHEN ps.catalog_attributes ? 'capacityL'
+                    THEN (ps.catalog_attributes ->> 'capacityL') || ' L 容量，热饮不用反复续水'
+                ELSE '日常容量，热饮随手就能准备'
+            END
+            WHEN 'RUNNING_SHOES' THEN CASE ps.catalog_attributes ->> 'terrain'
+                WHEN 'trail' THEN '越野路线，步伐更有底气'
+                ELSE '公路跑步，步频更容易进入状态'
+            END
+            WHEN 'WATCHES' THEN CASE ps.catalog_attributes ->> 'movement'
+                WHEN 'automatic' THEN '自动机械，腕间多一点仪式感'
+                WHEN 'eco-drive' THEN '光动能设定，日常佩戴少些顾虑'
+                ELSE '石英机芯，读时简单直接'
+            END
+            ELSE CASE ps.catalog_attributes ->> 'shade'
+                WHEN 'milk-tea' THEN '奶茶色调，自然提气色'
+                WHEN 'tomato-red' THEN '番茄红调，轻松显元气'
+                WHEN 'coral' THEN '珊瑚色调，轻松衬肤色'
+                WHEN 'rose' THEN '玫瑰色调，温柔不挑场合'
+                ELSE '正红色调，出门更有气场'
+            END
+        END AS primary_point,
+        CASE ps.category_l2
+            WHEN 'HEADPHONES' THEN CASE
+                WHEN (ps.catalog_attributes ->> 'noiseCancellation') = 'true'
+                    THEN '降噪模式，通勤少些干扰'
+                ELSE '自然听感，留意周围变化'
+            END
+            WHEN 'COFFEE_MACHINE' THEN CASE
+                WHEN (ps.catalog_attributes ->> 'steamWand') = 'true'
+                    THEN '蒸汽棒加持，奶泡灵感随手来'
+                ELSE '简洁操作，一杯咖啡不必复杂'
+            END
+            WHEN 'ELECTRIC_KETTLE' THEN CASE
+                WHEN (ps.catalog_attributes ->> 'temperatureControl') = 'true'
+                    THEN '温控设定，冲泡节奏更自在'
+                WHEN (ps.catalog_attributes ->> 'keepWarm') = 'true'
+                    THEN '保温功能，下一杯也不用等待'
+                ELSE '一键烧水，随手准备一杯热饮'
+            END
+            WHEN 'RUNNING_SHOES' THEN CASE ps.catalog_attributes ->> 'cushion'
+                WHEN 'high' THEN '高缓震回弹，慢跑更从容'
+                ELSE '中等缓震，节奏更轻快'
+            END
+            WHEN 'WATCHES' THEN CASE ps.catalog_attributes ->> 'material'
+                WHEN 'titanium' THEN '钛金属材质，轻盈又有存在感'
+                WHEN 'resin' THEN '树脂表壳，轻松应对活力日程'
+                ELSE '精钢表壳，通勤也好搭配'
+            END
+            ELSE CASE ps.catalog_attributes ->> 'finish'
+                WHEN 'matte' THEN '雾面妆效，干净利落'
+                WHEN 'satin' THEN '缎光妆效，柔和有层次'
+                ELSE '光泽妆效，双唇更有活力'
+            END
+        END AS secondary_point
+    FROM catalog_copy AS ps
+),
 actual_product_seed AS (
     SELECT
         ps.id, ps.merchant_id, ps.category_l1, ps.category_l2,
         CASE ps.category_l2
-            WHEN 'HEADPHONES' THEN 'AUD-' || lpad(rc.product_no::text, 3, '0')
-            WHEN 'COFFEE_MACHINE' THEN 'COF-' || lpad((rc.product_no - 40)::text, 3, '0')
-            WHEN 'ELECTRIC_KETTLE' THEN 'KET-' || lpad((rc.product_no - 60)::text, 3, '0')
-            WHEN 'RUNNING_SHOES' THEN 'RUN-' || lpad((rc.product_no - 80)::text, 3, '0')
-            WHEN 'WATCHES' THEN 'WAT-' || lpad((rc.product_no - 120)::text, 3, '0')
-            ELSE 'LIP-' || lpad((rc.product_no - 160)::text, 3, '0')
+            WHEN 'HEADPHONES' THEN 'AUD-' || ps.copy_no
+            WHEN 'COFFEE_MACHINE' THEN 'COF-' || lpad((ps.embedding_axis - 40)::text, 3, '0')
+            WHEN 'ELECTRIC_KETTLE' THEN 'KET-' || lpad((ps.embedding_axis - 60)::text, 3, '0')
+            WHEN 'RUNNING_SHOES' THEN 'RUN-' || lpad((ps.embedding_axis - 80)::text, 3, '0')
+            WHEN 'WATCHES' THEN 'WAT-' || lpad((ps.embedding_axis - 120)::text, 3, '0')
+            ELSE 'LIP-' || lpad((ps.embedding_axis - 160)::text, 3, '0')
         END AS sku,
-        rc.name,
-        rc.brand,
-        '真实公开型号；结构化规格已按平台筛选枚举归一化。价格与库存为本地演示值，不代表实时零售价或实际库存。' AS description,
-        rc.price::numeric AS price,
+        ps.catalog_name AS name,
+        ps.catalog_brand AS brand,
+        format(
+            (ARRAY[
+                '%1$s是为%2$s准备的%3$s，%4$s，适合融入不紧不慢的日常。',
+                '围绕%2$s的使用节奏，%1$s以%3$s的姿态出现，%4$s，轻松应对每天的小需求。',
+                '%1$s把%3$s的体验放进%2$s，%4$s，让选择更有画面感。',
+                '当你需要一款适合%2$s的%3$s，%1$s会用%4$s，让日常安排多一份从容。',
+                '从%2$s出发，%1$s作为%3$s，%4$s，留下一点恰到好处的惊喜。'
+            ])[((ps.embedding_axis - 1) % 5) + 1],
+            ps.catalog_name,
+            ps.copy_scene,
+            ps.copy_item,
+            ps.copy_feature
+        ) AS description,
+        ps.catalog_price::numeric AS price,
         CASE
-            WHEN rc.product_no = 42 THEN 90
-            ELSE 18 + ((rc.product_no * 13) % 67)
+            WHEN ps.embedding_axis = 42 THEN 90
+            ELSE 18 + ((ps.embedding_axis * 13) % 67)
         END AS stock,
-        rc.attributes,
-        CASE ps.category_l2
-            WHEN 'HEADPHONES' THEN ARRAY['真实品牌型号', '按佩戴与连接方式筛选', '可按降噪需求过滤']
-            WHEN 'COFFEE_MACHINE' THEN ARRAY['真实品牌型号', '按咖啡机类型筛选', '可按蒸汽棒与压力过滤']
-            WHEN 'ELECTRIC_KETTLE' THEN ARRAY['真实品牌型号', '容量规格可筛选', '温控和保温状态可筛选']
-            WHEN 'RUNNING_SHOES' THEN ARRAY['真实品牌型号', '按路面与缓震筛选', '支持足型偏好过滤']
-            WHEN 'WATCHES' THEN ARRAY['真实品牌型号', '按机芯和材质筛选', '支持防水等级过滤']
-            ELSE ARRAY['真实品牌色号', '按色调与妆效筛选', '不对肤质作未经验证的承诺']
-        END AS selling_points,
+        ps.catalog_attributes AS attributes,
+        ARRAY[
+            ps.primary_point,
+            ps.secondary_point,
+            format(
+                (ARRAY[
+                    '%1$s，为%2$s留出一点从容',
+                    '%1$s，让%2$s多一份轻松',
+                    '%1$s，陪你走过%2$s',
+                    '%1$s，把%2$s安排得更有序',
+                    '%1$s，为%2$s添一点小心思'
+                ])[((ps.embedding_axis - 1) % 5) + 1],
+                ps.catalog_name,
+                ps.copy_scene
+            )
+        ] AS selling_points,
         ARRAY[
             CASE ps.category_l2
                 WHEN 'HEADPHONES' THEN 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=1200&q=80'
@@ -715,8 +899,7 @@ actual_product_seed AS (
         ] AS image_urls,
         ps.status,
         ps.embedding_axis
-    FROM product_seed AS ps
-    JOIN real_catalog AS rc ON rc.product_no = ps.embedding_axis
+    FROM copy_content AS ps
 )
 INSERT INTO products (
     id, merchant_id, sku, name, category_l1, category_l2, brand, description, price, stock,

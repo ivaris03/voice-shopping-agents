@@ -21,6 +21,10 @@ async def test_e2e_database_runs_migrations_and_demo_seed(e2e_connection) -> Non
         "00000000_initial_schema",
         "20260803_restore_default_shopping_contract",
         "20260804_migrate_legacy_catalog_and_profiles",
+        "20260804_polish_demo_product_copy",
+        "20260804_refine_demo_product_copy",
+        "20260804_refresh_demo_product_copy",
+        "20260804_z_polish_demo_product_copy",
     ]
     product_count = await e2e_connection.scalar(text("SELECT count(*) FROM products"))
     assert product_count == 200
@@ -50,11 +54,25 @@ async def test_demo_seed_products_match_category_slots(e2e_session) -> None:
         str(category["category_l2"]): list(category["slots"]) for category in categories
     }
     result = await e2e_session.execute(
-        text("SELECT category_l2, attributes FROM products ORDER BY id")
+        text(
+            "SELECT category_l2, attributes, description, selling_points "
+            "FROM products ORDER BY id"
+        )
     )
     products = [dict(row) for row in result.mappings()]
 
     assert len(products) == 200
+    assert len({str(product["description"]) for product in products}) == len(products)
+    selling_point_sets = {tuple(product["selling_points"]) for product in products}
+    assert len(selling_point_sets) == len(products)
+    assert all(
+        all(
+            marker not in point
+            for marker in ("编号", "款号", "筛选主题", "配置标签", "分类记录", "场景记录")
+        )
+        for product in products
+        for point in product["selling_points"]
+    )
     for product in products:
         validate_attributes(
             str(product["category_l2"]),
