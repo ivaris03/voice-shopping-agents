@@ -7,7 +7,7 @@ from contextlib import suppress
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
 from voice_shopping_api.core.config import get_settings
 from voice_shopping_api.core.identity import DEFAULT_CUSTOMER_ID
@@ -30,8 +30,9 @@ def _user_id(websocket: WebSocket) -> UUID:
 
 @router.websocket("/ws/text/{session_id}")
 async def text_socket(websocket: WebSocket, session_id: str) -> None:
+    user_id = _user_id(websocket)
     await websocket.accept()
-    hub.text_connections[session_id].add(websocket)
+    hub.register_text_connection(session_id, websocket, user_id)
     await websocket.send_json({"type": "session.connected", "sessionId": session_id})
     try:
         while True:
@@ -40,15 +41,44 @@ async def text_socket(websocket: WebSocket, session_id: str) -> None:
             if message_type == "session.resume":
                 turn_id = message.get("turnId")
                 after_seq = int(message.get("afterSeq", 0))
-                for event in await hub.replay(session_id, turn_id, after_seq):
+                try:
+                    replay = await hub.replay_for_user(
+                        session_id, user_id, turn_id, after_seq
+                    )
+                except HTTPException as exc:
+                    await websocket.send_json(
+                        {
+                            "type": "flow.error",
+                            "sessionId": session_id,
+                            "turnId": str(turn_id or "resume"),
+                            "seq": 0,
+                            "payload": {"message": str(exc.detail)},
+                        }
+                    )
+                    continue
+                for event in replay:
                     await websocket.send_json(event)
                 continue
             if message_type == "session.close":
-                result = await hub.close_session(
-                    session_id,
-                    _user_id(websocket),
-                    message.get("profile") if isinstance(message.get("profile"), dict) else None,
-                )
+                try:
+                    result = await hub.close_session(
+                        session_id,
+                        user_id,
+                        message.get("profile")
+                        if isinstance(message.get("profile"), dict)
+                        else None,
+                    )
+                except HTTPException as exc:
+                    await websocket.send_json(
+                        {
+                            "type": "flow.error",
+                            "sessionId": session_id,
+                            "turnId": "close",
+                            "seq": 0,
+                            "payload": {"message": str(exc.detail)},
+                        }
+                    )
+                    continue
                 await websocket.send_json(
                     {
                         "type": "session.closed",
@@ -70,17 +100,30 @@ async def text_socket(websocket: WebSocket, session_id: str) -> None:
                     }
                 )
                 continue
-            await hub.run_turn(
-                session_id,
-                turn_id,
-                utterance,
-                _user_id(websocket),
-                message.get("profile") if isinstance(message.get("profile"), dict) else None,
-            )
+            try:
+                await hub.run_turn(
+                    session_id,
+                    turn_id,
+                    utterance,
+                    user_id,
+                    message.get("profile")
+                    if isinstance(message.get("profile"), dict)
+                    else None,
+                )
+            except HTTPException as exc:
+                await websocket.send_json(
+                    {
+                        "type": "flow.error",
+                        "sessionId": session_id,
+                        "turnId": turn_id,
+                        "seq": 0,
+                        "payload": {"message": str(exc.detail)},
+                    }
+                )
     except WebSocketDisconnect:
-        hub.text_connections[session_id].discard(websocket)
+        hub.unregister_text_connection(session_id, websocket)
     except Exception as exc:
-        hub.text_connections[session_id].discard(websocket)
+        hub.unregister_text_connection(session_id, websocket)
         with suppress(RuntimeError):
             await websocket.send_json(
                 {
@@ -92,14 +135,15 @@ async def text_socket(websocket: WebSocket, session_id: str) -> None:
                 }
             )
     finally:
-        hub.text_connections[session_id].discard(websocket)
-        await hub.finalize_disconnected_session(session_id, _user_id(websocket))
+        hub.unregister_text_connection(session_id, websocket)
+        await hub.finalize_disconnected_session(session_id, user_id)
 
 
 @router.websocket("/ws/audio/{session_id}")
 async def audio_socket(websocket: WebSocket, session_id: str) -> None:
+    user_id = _user_id(websocket)
     await websocket.accept()
-    hub.audio_connections[session_id].add(websocket)
+    hub.register_audio_connection(session_id, websocket, user_id)
     await websocket.send_json({"type": "audio.ready", "sessionId": session_id})
     received_bytes = 0
     asr: StreamingAsr | None = None
@@ -219,7 +263,17 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
                             "payload": {"transcript": transcript},
                         }
                     )
-                    await hub.run_turn(session_id, turn_id, transcript, _user_id(websocket))
+                    try:
+                        await hub.run_turn(session_id, turn_id, transcript, user_id)
+                    except HTTPException as exc:
+                        await send_json(
+                            {
+                                "type": "audio.error",
+                                "sessionId": session_id,
+                                "turnId": turn_id,
+                                "payload": {"message": str(exc.detail)},
+                            }
+                        )
                 else:
                     logger.warning(
                         "ASR returned no transcript for session %s: bytes=%s client=%s",
@@ -257,8 +311,8 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
         if sentence_task is not None:
             with suppress(Exception):
                 await wait_for_sentence_task()
-        hub.audio_connections[session_id].discard(websocket)
-        await hub.finalize_disconnected_session(session_id, _user_id(websocket))
+        hub.unregister_audio_connection(session_id, websocket)
+        await hub.finalize_disconnected_session(session_id, user_id)
 
 
 __all__ = ["RealtimeHub", "audio_socket", "hub", "router", "text_socket"]
