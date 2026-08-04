@@ -33,9 +33,9 @@ def is_compliant(text_value: str) -> bool:
 
 def _fallback_reason(index: int, card: dict[str, Any]) -> ProductReason:
     point = (card.get("sellingPoints") or ["整体匹配你的需求"])[0]
-    reason = f"第{index}款{card['name']}：{point}，且价格符合当前筛选条件。"
+    reason = f"{_card_label(index, card)}：{point}，且价格符合当前筛选条件。"
     if not is_compliant(reason):
-        reason = f"第{index}款商品符合你当前的筛选条件。"
+        reason = f"{_card_label(index, card)}符合你当前的筛选条件。"
     return ProductReason(product_id=card["productId"], reason=reason)
 
 
@@ -45,6 +45,47 @@ def _card_name(card: dict[str, Any]) -> str:
 
 def _card_label(index: int, card: dict[str, Any]) -> str:
     return f"第{index}款（{_card_name(card)}）"
+
+
+_GENERIC_PRODUCT_PREFIXES = (
+    "这款商品",
+    "这款产品",
+    "这款",
+    "该款商品",
+    "该款产品",
+    "该款",
+    "这件商品",
+    "这件产品",
+    "该商品",
+    "该产品",
+)
+
+
+def _ensure_reason_identity(
+    index: int, card: dict[str, Any], reason: ProductReason
+) -> ProductReason:
+    """Make the displayed product identity explicit in every spoken reason."""
+    label = _card_label(index, card)
+    text = reason.reason.strip()
+    if text.startswith(label):
+        normalized = text
+    else:
+        name = _card_name(card)
+        body = text
+        if body.startswith(name):
+            body = body[len(name) :].lstrip(" ：:，,")
+            normalized = f"{label}：{body}" if body else label
+        else:
+            for prefix in _GENERIC_PRODUCT_PREFIXES:
+                if body.startswith(prefix):
+                    body = body[len(prefix) :].lstrip(" ：:，,")
+                    normalized = f"{label}：{body}" if body else label
+                    break
+            else:
+                normalized = f"{label}：{body}" if body else label
+    if not is_compliant(normalized):
+        raise ValueError("带商品身份的推荐理由未通过合规检查")
+    return ProductReason(product_id=card["productId"], reason=normalized)
 
 
 def _card_highlight(card: dict[str, Any]) -> str:
@@ -144,6 +185,7 @@ async def _generate_one_reason(
             reason = await generate_product_reason(utterance, card, emotion_style)
             if not is_compliant(reason.reason):
                 raise ValueError("模型返回的推荐理由未通过合规检查")
+            reason = _ensure_reason_identity(index, card, reason)
         except Exception as exc:
             logger.warning(
                 "Product reason model failed for %s; using deterministic fallback: %s",

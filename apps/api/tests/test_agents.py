@@ -1328,6 +1328,7 @@ async def test_product_reason_model_uses_one_product_card_payload(
     assert result == ProductReason(product_id="product-1", reason="适合你的通勤场景。")
     assert "productCard" in str(captured["payload"])
     assert "一张商品卡" in str(captured["system_prompt"])
+    assert "不能只用" in str(captured["system_prompt"])
 
 
 @pytest.mark.asyncio
@@ -1392,9 +1393,22 @@ async def test_emotional_response_appends_a_fact_based_selection_hook() -> None:
     )
 
     speech = result["speech_text"]
-    assert speech.index("第1款基础台灯") < speech.index("如果您更在意性价比")
+    assert speech.index("第1款（基础台灯）") < speech.index("如果您更在意性价比")
     assert "如果您更在意性价比，推荐您选择第1款（基础台灯）" in speech
     assert "如果您更看重支持调节色温，推荐您选择第2款（调光台灯）" in speech
+
+
+def test_product_reason_removes_ambiguous_pronouns_and_adds_display_identity() -> None:
+    card = {"productId": "headphone-1", "name": "测试头戴式耳机"}
+
+    result = response_module._ensure_reason_identity(
+        2,
+        card,
+        ProductReason(product_id="headphone-1", reason="这款头戴式耳机适合通勤。"),
+    )
+
+    assert result.reason == "第2款（测试头戴式耳机）：头戴式耳机适合通勤。"
+    assert "这款" not in result.reason
 
 
 def test_selection_hook_requires_the_correct_displayed_product_name() -> None:
