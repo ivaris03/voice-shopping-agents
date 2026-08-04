@@ -143,9 +143,25 @@ async def _retrieve_catalog(
     if context is None:
         return state.get("catalog_products", [])
     category = state.get("product_category")
+    slots = state.get("slots", {})
+    allowed_by_category = state.get("allowed_slots_by_category")
+    allowed_slots = (
+        allowed_by_category.get(category)
+        if isinstance(allowed_by_category, dict) and category
+        else None
+    )
+    if allowed_slots is None:
+        allowed_slots = state.get("allowed_slots")
+    if isinstance(allowed_slots, list):
+        allowed_keys = {*allowed_slots, "budgetMax"}
+        slots = {
+            slot: value
+            for slot, value in slots.items()
+            if slot in allowed_keys
+        }
     filters: CatalogFilters = {
         "category": category,
-        "slots": state.get("slots", {}),
+        "slots": slots,
         "required_slots": state.get("required_slots_by_category", REQUIRED_SLOTS).get(
             category or "", []
         ),

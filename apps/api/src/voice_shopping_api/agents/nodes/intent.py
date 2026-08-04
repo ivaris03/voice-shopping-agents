@@ -75,8 +75,13 @@ def _order_action(utterance: str, *, has_pending_order: bool) -> str:
 
 def _starts_new_product_request(utterance: str, category: str | None, intent_type: str) -> bool:
     """Detect an explicit new purchase, excluding slot-answer phrasing."""
-    if not category or intent_type not in ("PRODUCT_RECOMMENDATION", "PRODUCT_ORDER"):
+    if not category:
         return False
+    if intent_type not in ("PRODUCT_RECOMMENDATION", "PRODUCT_ORDER"):
+        # A model can call a noisy purchase transcript a query. Promote only
+        # unambiguous purchase/recommendation language; short slot answers such
+        # as "想要一个蓝牙的" are not new purchase requests.
+        return any(marker in utterance for marker in ("买", "推荐", "帮我选", "帮我挑"))
     starts_new_request = any(
         marker in utterance for marker in ("买", "推荐", "帮我选", "帮我挑", "需要一", "要一")
     )
@@ -125,7 +130,7 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
             return _finalize_intent(
                 state,
                 model_intent.model_dump(exclude_none=True),
-                _starts_new_product_request(utterance, explicit_category, model_intent.type),
+                _starts_new_product_request(utterance, category, model_intent.type),
             )
         except Exception as exc:
             logger.warning("Intent model failed; using deterministic fallback: %s", exc)
@@ -170,7 +175,7 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
     return _finalize_intent(
         state,
         selected.model_dump(exclude_none=True),
-        _starts_new_product_request(utterance, explicit_category, selected.type),
+        _starts_new_product_request(utterance, selected.product_category, selected.type),
     )
 
 
@@ -195,6 +200,23 @@ def _finalize_intent(
     if category:
         intent["product_category"] = category
         updates["product_category"] = category
+
+    # A clear new purchase request is more reliable than a model's query/chat
+    # label for noisy ASR. Selected checkout requests were handled above, so
+    # routing this case through clarification cannot steal a concrete order.
+    if starts_new_product_request and intent.get("type") != "PRODUCT_RECOMMENDATION":
+        intent = IntentResult(
+            type="PRODUCT_RECOMMENDATION",
+            confidence=float(intent.get("confidence", 0.0)),
+            product_category=category,
+        ).model_dump(exclude_none=True)
+
+    # Query and comparison paths bypass clarification. Clear stale constraints
+    # here as well so a category switch can never filter the new catalog using
+    # attributes from the previous category.
+    if updates["category_changed"]:
+        updates["slots"] = {}
+        updates["pending_question"] = None
 
     if (
         intent.get("type") == "PRODUCT_ORDER"

@@ -11,10 +11,12 @@ from voice_shopping_api.agents import service as service_module
 from voice_shopping_api.agents.graph import build_workflow, shopping_workflow
 from voice_shopping_api.agents.nodes import clarification as clarification_module
 from voice_shopping_api.agents.nodes import intent as intent_module
+from voice_shopping_api.agents.nodes import recommendation as recommendation_module
 from voice_shopping_api.agents.nodes import response as response_module
 from voice_shopping_api.agents.nodes.clarification import clarify_requirements
 from voice_shopping_api.agents.nodes.constants import COMPLIANCE_FALLBACK, REQUIRED_SLOTS
 from voice_shopping_api.agents.nodes.intent import recognize_intent
+from voice_shopping_api.agents.nodes.recommendation import recommend_products
 from voice_shopping_api.agents.nodes.response import (
     compliance_check,
     emotional_response,
@@ -111,6 +113,136 @@ async def test_intent_model_runs_again_even_when_a_question_is_pending(
     assert calls == ["我想重新买一双鞋"]
     assert result["intent"]["product_category"] == "RUNNING_SHOES"
     assert result["starts_new_product_request"] is True
+
+
+@pytest.mark.asyncio
+async def test_model_query_for_explicit_purchase_routes_through_clarification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Noisy ASR must not let a query label bypass new-product clarification."""
+
+    async def fake_recognize_with_model(*_: object) -> IntentResult:
+        return IntentResult(
+            type="PRODUCT_QUERY",
+            confidence=0.95,
+            product_category="HEADPHONES",
+        )
+
+    async def fake_clarify_with_model(*_: object) -> dict[str, object]:
+        return {}
+
+    async def fake_rerank_products(*_: object) -> dict[str, float]:
+        return {"headphone-1": 0.8}
+
+    async def fake_product_reason(*_: object) -> ProductReason:
+        return ProductReason(product_id="headphone-1", reason="符合头戴式蓝牙需求。")
+
+    product = {
+        "id": "headphone-1",
+        "merchant_id": "merchant-1",
+        "merchant_name": "测试数码店",
+        "name": "测试头戴式蓝牙耳机",
+        "brand": "Test",
+        "description": "头戴式蓝牙耳机",
+        "price": 999,
+        "stock": 10,
+        "attributes": {"form": "over-ear", "connectivity": "bluetooth"},
+        "selling_points": ["头戴式蓝牙连接"],
+        "image_urls": [],
+    }
+    retrievals: list[dict[str, object]] = []
+
+    async def load_catalog(
+        _: str, __: bool, filters: dict[str, object]
+    ) -> list[dict[str, object]]:
+        retrievals.append(filters)
+        return [product]
+
+    monkeypatch.setattr(intent_module, "recognize_with_model", fake_recognize_with_model)
+    monkeypatch.setattr(clarification_module, "clarify_with_model", fake_clarify_with_model)
+    monkeypatch.setattr(recommendation_module, "rerank_products", fake_rerank_products)
+    monkeypatch.setattr(response_module, "generate_product_reason", fake_product_reason)
+    result = await shopping_workflow.ainvoke(
+        {
+            "utterance": "我要买一个。嗯。口袋的头戴的耳机、蓝牙耳机吧头戴的耳机，蓝牙耳机吧。",
+            "model_enabled": True,
+            "product_category": "RUNNING_SHOES",
+            "slots": {"gender": "male", "size": 42, "terrain": "road"},
+            "required_slots_by_category": {"HEADPHONES": ["form", "connectivity"]},
+            "allowed_slots_by_category": {
+                "HEADPHONES": ["form", "connectivity", "noiseCancellation", "batteryHours"]
+            },
+            "taxonomy_slot_definitions_by_category": {
+                "HEADPHONES": {
+                    "form": {"type": "enum", "values": ["in-ear", "over-ear"]},
+                    "connectivity": {"type": "enum", "values": ["bluetooth", "wired"]},
+                }
+            },
+            "user_profile_snapshot": {"dynamic": {}},
+        },
+        context=ShoppingRuntimeDependencies(catalog_loader=load_catalog),
+    )
+
+    assert result["intent"]["type"] == "PRODUCT_RECOMMENDATION"
+    assert result["slots"] == {"form": "over-ear", "connectivity": "bluetooth"}
+    assert retrievals[0]["slots"] == {"form": "over-ear", "connectivity": "bluetooth"}
+    assert result["product_cards"][0]["productId"] == product["id"]
+
+
+@pytest.mark.asyncio
+async def test_model_query_category_switch_clears_old_slots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_recognize_with_model(*_: object) -> IntentResult:
+        return IntentResult(
+            type="PRODUCT_QUERY",
+            confidence=0.95,
+            product_category="HEADPHONES",
+        )
+
+    monkeypatch.setattr(intent_module, "recognize_with_model", fake_recognize_with_model)
+    result = await recognize_intent(
+        {
+            "utterance": "耳机怎么样？",
+            "model_enabled": True,
+            "product_category": "RUNNING_SHOES",
+            "slots": {"gender": "male", "size": 42, "terrain": "road"},
+        }
+    )
+
+    assert result["intent"]["type"] == "PRODUCT_QUERY"
+    assert result["category_changed"] is True
+    assert result["slots"] == {}
+    assert result["pending_question"] is None
+
+
+@pytest.mark.asyncio
+async def test_retrieval_ignores_slots_outside_current_category() -> None:
+    retrievals: list[dict[str, object]] = []
+
+    async def load_catalog(
+        _: str, __: bool, filters: dict[str, object]
+    ) -> list[dict[str, object]]:
+        retrievals.append(filters)
+        return []
+
+    await recommend_products(
+        {
+            "utterance": "耳机多少钱？",
+            "intent": {"type": "PRODUCT_QUERY", "confidence": 0.95},
+            "model_enabled": False,
+            "product_category": "HEADPHONES",
+            "slots": {"gender": "male", "size": 42, "terrain": "road", "form": "over-ear"},
+            "allowed_slots_by_category": {
+                "HEADPHONES": ["form", "connectivity", "noiseCancellation", "batteryHours"]
+            },
+            "required_slots_by_category": {"HEADPHONES": ["form", "connectivity"]},
+            "user_profile_snapshot": {},
+        },
+        Runtime(context=ShoppingRuntimeDependencies(catalog_loader=load_catalog)),
+    )
+
+    assert retrievals[0]["slots"] == {"form": "over-ear"}
 
 
 @pytest.mark.asyncio
