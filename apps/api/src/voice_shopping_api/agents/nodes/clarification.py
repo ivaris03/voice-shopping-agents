@@ -234,7 +234,10 @@ async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
     taxonomy_definitions = state.get("taxonomy_slot_definitions_by_category", {}).get(
         category or "", state.get("taxonomy_slot_definitions", {})
     )
-    starts_new_request = bool(
+    # A pending question represents an in-flight clarification. In particular,
+    # a checkpointer can still hold the previous turn's transient category flag;
+    # that flag must not discard the answer currently being supplied.
+    starts_new_request = not state.get("pending_question") and bool(
         state.get("category_changed") or state.get("starts_new_product_request")
     )
     existing_slots = (
@@ -244,6 +247,14 @@ async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
     )
     pending_slot = (
         None if starts_new_request else (state.get("pending_question") or {}).get("slot")
+    )
+    # Keep track of values the deterministic parser can establish from this
+    # utterance. The model can fill ASR gaps, but must not replace an explicit
+    # answer such as "机械的吧" with a conflicting enum value.
+    deterministic_slots = _validated_agent_slots(
+        _extract_slots(state.get("utterance", ""), {}, pending_slot),
+        allowed_slots,
+        taxonomy_definitions,
     )
     slots = _validated_agent_slots(
         _extract_slots(state.get("utterance", ""), existing_slots, pending_slot),
@@ -258,10 +269,12 @@ async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
             and (answer := _boolean_answer(state.get("utterance", ""))) is not None
         ):
             slots[pending_slot] = answer
+            deterministic_slots[pending_slot] = answer
         elif value_type == "number" and (
             number := re.search(r"(?<!\d)(\d+(?:\.\d+)?)", state.get("utterance", ""))
         ):
             slots[pending_slot] = float(number.group(1))
+            deterministic_slots[pending_slot] = slots[pending_slot]
         elif (
             value_type == "enum"
             and (
@@ -272,8 +285,10 @@ async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
             is not None
         ):
             slots[pending_slot] = answer
+            deterministic_slots[pending_slot] = answer
         elif value_type == "text" and state.get("utterance", "").strip():
             slots[pending_slot] = state["utterance"].strip()
+            deterministic_slots[pending_slot] = slots[pending_slot]
     if state.get("model_enabled") and category:
         try:
             relevant_definitions = {
@@ -291,7 +306,14 @@ async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
                 relevant_definitions,
                 state.get("conversation_history", []),
             )
-            slots.update(_validated_agent_slots(agent_slots, allowed_slots, taxonomy_definitions))
+            model_slots = _validated_agent_slots(agent_slots, allowed_slots, taxonomy_definitions)
+            slots.update(
+                {
+                    slot: value
+                    for slot, value in model_slots.items()
+                    if slot not in deterministic_slots
+                }
+            )
         except Exception as exc:
             logger.warning("Clarification model failed; using deterministic fallback: %s", exc)
     if not category:

@@ -19,16 +19,19 @@ from voice_shopping_api.agents.state import (
 )
 
 
+def _route_start(state: ShoppingState) -> str:
+    """Resume an outstanding clarification without reclassifying a slot answer."""
+    return "clarify" if state.get("pending_question") else "intent"
+
+
 def _route_intent(state: ShoppingState) -> str:
     intent = (state.get("intent") or {}).get("type")
+    if intent == "PRODUCT_ORDER":
+        return "order"
     if intent == "PRODUCT_RECOMMENDATION":
         return "clarify"
     if intent in ("PRODUCT_COMPARE", "PRODUCT_QUERY"):
         return "recommend"
-    if intent == "PRODUCT_ORDER":
-        return "order"
-    if state.get("pending_question") and intent == "UNSUPPORTED_REQUEST":
-        return "clarify"
     return "respond"
 
 
@@ -56,7 +59,11 @@ def build_workflow(*, checkpointer: BaseCheckpointSaver | None = None):
     graph.add_node("compliance_check", compliance_check)
     graph.add_node("violation_response", violation_response)
     graph.add_node("publish_response", publish_response)
-    graph.add_edge(START, "intent_agent")
+    graph.add_conditional_edges(
+        START,
+        _route_start,
+        {"intent": "intent_agent", "clarify": "clarification_agent"},
+    )
     graph.add_conditional_edges(
         "intent_agent",
         _route_intent,

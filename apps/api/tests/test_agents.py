@@ -82,37 +82,118 @@ async def test_intent_normalizes_category_and_tracks_category_change() -> None:
 
 
 @pytest.mark.asyncio
-async def test_intent_model_runs_again_even_when_a_question_is_pending(
+async def test_pending_question_skips_intent_recognition_and_completes_slot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[str] = []
+    """A slot answer resumes clarification instead of starting a second intent turn."""
 
-    async def fake_recognize_with_model(
-        utterance: str,
-        conversation_history: list[str],
-        taxonomy_categories: list[dict[str, object]],
-    ) -> IntentResult:
-        calls.append(utterance)
-        return IntentResult(
-            type="PRODUCT_RECOMMENDATION",
-            confidence=0.98,
-            product_category="RUNNING_SHOES",
-        )
+    intent_calls: list[str] = []
+
+    async def fake_recognize_with_model(*_: object) -> IntentResult:
+        intent_calls.append("called")
+        return IntentResult(type="CHAT", confidence=0.91)
+
+    async def fake_clarify_with_model(*_: object) -> dict[str, object]:
+        return {}
+
+    async def fake_rerank_products(*_: object) -> dict[str, float]:
+        return {"watch-1": 0.8}
+
+    async def fake_product_reason(*_: object) -> ProductReason:
+        return ProductReason(product_id="watch-1", reason="自动机械机芯符合你的偏好。")
+
+    product = {
+        "id": "watch-1",
+        "merchant_id": "merchant-1",
+        "merchant_name": "测试腕表店",
+        "name": "测试机械腕表",
+        "brand": "Test",
+        "description": "自动机械机芯",
+        "price": 2280,
+        "stock": 10,
+        "attributes": {"movement": "automatic"},
+        "selling_points": ["自动机械机芯"],
+        "image_urls": [],
+    }
+
+    async def load_catalog(
+        _: str, __: bool, filters: dict[str, object]
+    ) -> list[dict[str, object]]:
+        assert filters["slots"] == {"movement": "automatic"}
+        return [product]
 
     monkeypatch.setattr(intent_module, "recognize_with_model", fake_recognize_with_model)
-    result = await recognize_intent(
+    monkeypatch.setattr(clarification_module, "clarify_with_model", fake_clarify_with_model)
+    monkeypatch.setattr(recommendation_module, "rerank_products", fake_rerank_products)
+    monkeypatch.setattr(response_module, "generate_product_reason", fake_product_reason)
+    result = await shopping_workflow.ainvoke(
         {
-            "utterance": "我想重新买一双鞋",
+            "utterance": "嗯其嗯，机械的吧。",
             "model_enabled": True,
-            "product_category": "RUNNING_SHOES",
-            "pending_question": {"slot": "size"},
-            "previous_product_cards": [{"productId": "old-product"}],
+            "product_category": "WATCHES",
+            "slots": {},
+            "pending_question": {
+                "slot": "movement",
+                "slots": ["movement"],
+                "question": "你偏好机械、石英还是光动能机芯？",
+            },
+            "required_slots_by_category": {"WATCHES": ["movement"]},
+            "allowed_slots_by_category": {"WATCHES": ["movement"]},
+            "taxonomy_slot_definitions_by_category": {
+                "WATCHES": {
+                    "movement": {
+                        "type": "enum",
+                        "values": ["automatic", "quartz", "eco-drive"],
+                    }
+                }
+            },
+            "user_profile_snapshot": {},
+        },
+        context=ShoppingRuntimeDependencies(catalog_loader=load_catalog),
+    )
+
+    assert intent_calls == []
+    assert result.get("intent") is None
+    assert result["clarification_status"] == "READY"
+    assert result["slots"] == {"movement": "automatic"}
+    assert result["pending_question"] is None
+    assert result["product_cards"][0]["productId"] == product["id"]
+
+
+@pytest.mark.asyncio
+async def test_explicit_slot_answer_is_not_overwritten_by_conflicting_model_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_clarify_with_model(*_: object) -> dict[str, object]:
+        return {"movement": "quartz"}
+
+    monkeypatch.setattr(clarification_module, "clarify_with_model", fake_clarify_with_model)
+    result = await clarify_requirements(
+        {
+            "utterance": "嗯其嗯，机械的吧。",
+            "model_enabled": True,
+            "product_category": "WATCHES",
+            "slots": {},
+            "pending_question": {
+                "slot": "movement",
+                "slots": ["movement"],
+                "question": "你偏好机械、石英还是光动能机芯？",
+            },
+            "required_slots_by_category": {"WATCHES": ["movement"]},
+            "allowed_slots_by_category": {"WATCHES": ["movement"]},
+            "taxonomy_slot_definitions_by_category": {
+                "WATCHES": {
+                    "movement": {
+                        "type": "enum",
+                        "values": ["automatic", "quartz", "eco-drive"],
+                    }
+                }
+            },
         }
     )
 
-    assert calls == ["我想重新买一双鞋"]
-    assert result["intent"]["product_category"] == "RUNNING_SHOES"
-    assert result["starts_new_product_request"] is True
+    assert result["slots"] == {"movement": "automatic"}
+    assert result["clarification_status"] == "READY"
 
 
 @pytest.mark.asyncio

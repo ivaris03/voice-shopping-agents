@@ -81,12 +81,12 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    S["START"] --> I["intent_agent"]
+    S["START"] -->|存在 pending_question| C["clarification_agent"]
+    S -->|无 pending_question| I["intent_agent"]
     I -->|PRODUCT_RECOMMENDATION| C["clarification_agent"]
     I -->|PRODUCT_COMPARE / PRODUCT_QUERY| R["recommendation_agent"]
     I -->|PRODUCT_ORDER| O["order_node"]
     I -->|CHAT / UNSUPPORTED_REQUEST| E["emotional_agent"]
-    I -->|不支持但存在 pending_question| C
     C -->|clarification_status=READY| R
     C -->|ASK| E
     R --> E

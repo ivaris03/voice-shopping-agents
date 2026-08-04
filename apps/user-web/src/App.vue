@@ -27,6 +27,7 @@ interface RecommendationCard {
   imageUrl?: string
   sellingPoints: string[]
   reason?: string
+  reasonIsFallback?: boolean
   matchScore: number
 }
 
@@ -151,6 +152,8 @@ let pendingPcmFrames: ArrayBuffer[] = []
 let pendingAsrStart: PendingAsrStart | null = null
 const pendingSpeechByTurn = new Map<string, string>()
 const mutedSpeechTurnIds = new Set<string>()
+const recommendationReasonsByTurn = new Map<string, Map<string, string>>()
+let recommendationTurnId = ''
 let isBargingIn = false
 let latestVoiceTurnId = ''
 
@@ -390,6 +393,22 @@ function toggleAssistantSpeechPause() {
   isAssistantSpeechPaused.value = true
 }
 
+function fallbackRecommendationReason(card: RecommendationCard) {
+  const sellingPoint = card.sellingPoints.find((point) => point.trim())
+  return sellingPoint
+    ? `已匹配你的需求：${sellingPoint}。`
+    : '已按你的需求和当前筛选条件为你挑选。'
+}
+
+function reasonDeltasForTurn(turnId: string) {
+  let reasons = recommendationReasonsByTurn.get(turnId)
+  if (!reasons) {
+    reasons = new Map<string, string>()
+    recommendationReasonsByTurn.set(turnId, reasons)
+  }
+  return reasons
+}
+
 function handleEvent(event: ApiEvent<Record<string, unknown>>) {
   if (event.type === 'flow.status') {
     const status = String(event.payload.status ?? '')
@@ -403,11 +422,43 @@ function handleEvent(event: ApiEvent<Record<string, unknown>>) {
   }
   if (event.type === 'recommendation.cards') {
     const cards = event.payload.productCards as RecommendationCard[]
-    recommendations.value = cards.map((card) => ({ ...card, reason: '' }))
+    const keepCurrentReasons = recommendationTurnId === event.turnId
+    const currentCards = new Map(recommendations.value.map((card) => [card.productId, card]))
+    const streamedReasons = reasonDeltasForTurn(event.turnId)
+    recommendations.value = cards.map((card) => {
+      const streamedReason = streamedReasons.get(card.productId)
+      const currentCard = keepCurrentReasons ? currentCards.get(card.productId) : undefined
+      const suppliedReason = String(card.reason ?? '').trim()
+      if (streamedReason) return { ...card, reason: streamedReason, reasonIsFallback: false }
+      if (currentCard?.reason) {
+        return {
+          ...card,
+          reason: currentCard.reason,
+          reasonIsFallback: currentCard.reasonIsFallback,
+        }
+      }
+      if (suppliedReason) return { ...card, reason: suppliedReason, reasonIsFallback: false }
+      return { ...card, reason: fallbackRecommendationReason(card), reasonIsFallback: true }
+    })
+    recommendationTurnId = event.turnId
+    for (const turnId of recommendationReasonsByTurn.keys()) {
+      if (turnId !== event.turnId) recommendationReasonsByTurn.delete(turnId)
+    }
   }
   if (event.type === 'text.delta' && event.payload.scope === 'reason') {
-    const card = recommendations.value.find((item) => item.productId === event.payload.productId)
-    if (card) card.reason = `${card.reason ?? ''}${String(event.payload.delta ?? '')}`
+    const productId = String(event.payload.productId ?? '')
+    const delta = String(event.payload.delta ?? '')
+    if (!productId || !delta) return
+    const streamedReasons = reasonDeltasForTurn(event.turnId)
+    const reason = `${streamedReasons.get(productId) ?? ''}${delta}`
+    streamedReasons.set(productId, reason)
+    const card = recommendations.value.find(
+      (item) => recommendationTurnId === event.turnId && item.productId === productId,
+    )
+    if (card) {
+      card.reason = reason
+      card.reasonIsFallback = false
+    }
   }
   if (event.type === 'text.delta' && event.payload.scope === 'speech') {
     const delta = String(event.payload.delta ?? '')

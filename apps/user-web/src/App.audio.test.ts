@@ -196,6 +196,40 @@ describe('assistant reply audio coordination', () => {
     wrapper.unmount()
   })
 
+  it('shows a factual fallback reason until the streamed recommendation reason arrives', async () => {
+    const wrapper = mount(App)
+    await flushPromises()
+    const textSocket = FakeWebSocket.instances.find((socket) => socket.url.includes('/ws/text/'))
+    const card = {
+      productId: 'watch-1',
+      merchantId: 'merchant-1',
+      name: '测试机械腕表',
+      price: 2280,
+      stock: 10,
+      sellingPoints: ['自动机械机芯'],
+      matchScore: 0.8,
+    }
+
+    textSocket?.emitJson({
+      type: 'recommendation.cards',
+      turnId: 'turn-watch',
+      payload: { productCards: [card] },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('已匹配你的需求：自动机械机芯。')
+    expect(wrapper.text()).not.toContain('正在生成专属推荐理由…')
+
+    textSocket?.emitJson({
+      type: 'text.delta',
+      turnId: 'turn-watch',
+      payload: { scope: 'reason', productId: card.productId, delta: '机械机芯符合你的偏好。' },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('机械机芯符合你的偏好。')
+    expect(wrapper.text()).not.toContain('已匹配你的需求：自动机械机芯。')
+    wrapper.unmount()
+  })
+
   it('uses browser speech only after the audio channel explicitly selects fallback', async () => {
     const wrapper = mount(App)
     await flushPromises()

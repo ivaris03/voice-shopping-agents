@@ -52,7 +52,8 @@
 
 ```text
 START
-  -> intent_agent
+  -> clarification_agent          (存在 pending_question)
+  -> intent_agent                 (无 pending_question)
      -> clarification_agent       (PRODUCT_RECOMMENDATION)
         -> recommendation_agent   (clarification_status=READY)
         -> emotional_agent         (clarification_status=ASK)
@@ -67,7 +68,7 @@ START
    -> END
 ```
 
-`UNSUPPORTED_REQUEST` 在有 `pending_question` 时会回到澄清节点，允许用户直接回答上一轮问题；否则进入固定不支持回复。`recommendation_agent` 和 `order_node` 都是图节点，订单事务由 context 中的 `order_handler` 执行。
+存在 `pending_question` 时，图会从 `START` 直接进入澄清节点，把本轮话语当作上一问题的回答处理，不会再次调用意图识别。没有待回答问题的对话才进入意图节点。`recommendation_agent` 和 `order_node` 都是图节点，订单事务由 context 中的 `order_handler` 执行。
 
 ### 3.2 状态契约
 
@@ -103,7 +104,7 @@ START
 
 ### 4.1 意图节点
 
-`recognize_intent()` 每轮都会重新识别，不因为存在待回答问题而跳过意图模型。模型提示词由 `service._taxonomy_context()` 生成，包含当前数据库中的所有二级品类和槽位定义。
+当没有 `pending_question` 时，`recognize_intent()` 会识别新一轮请求。存在待回答问题时，工作流直接复用已有品类和槽位上下文进入需求澄清节点，避免把“机械的吧”这类槽位回答误判为 `CHAT`。意图模型提示词由 `service._taxonomy_context()` 生成，包含当前数据库中的所有二级品类和槽位定义。
 
 识别结果经过 `_finalize_intent()` 再进入路由：
 
