@@ -591,7 +591,10 @@ ASR 相关事件：
 - `audio.start` 成功后发送 `asr.started`，payload 包含 `model` 和 `sampleRate=16000`。
 - 识别到完整句子时发送 `asr.sentence`，payload 为 `{ "transcript": "..." }`。
 - 提交录音后发送 `asr.completed`，随后使用服务端 transcript 进入文本 Agent。
-- 未配置 ASR 或识别失败时发送 `audio.error`，包含错误信息和可能的 `receivedBytes`、`clientMetrics`。
+- 未配置 ASR、识别失败或转写后的工作流失败时发送 `audio.error`。payload 包含
+  `stage`（`asr_start`、`asr`、`asr_finish` 或 `workflow`）；采集阶段还会带上
+  `receivedBytes`、`clientMetrics`。客户端只有在 `stage=asr` 且明确收到采集指标时，
+  才应将错误解释为麦克风问题。
 
 TTS 下行顺序：
 

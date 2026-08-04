@@ -5,6 +5,7 @@ import pytest
 from fastapi import HTTPException
 
 from voice_shopping_api.realtime import hub as realtime_module
+from voice_shopping_api.realtime.router import _audio_error_event
 
 USER_ID = UUID("00000000-0000-4000-8000-000000000101")
 OTHER_USER_ID = UUID("00000000-0000-4000-8000-000000000102")
@@ -111,6 +112,29 @@ def test_foreign_connections_do_not_keep_the_owners_session_open() -> None:
 
     assert hub._has_connections_for_user("session-key", USER_ID) is False
     assert hub._has_connections_for_user("session-key", OTHER_USER_ID) is True
+
+
+def test_audio_error_event_preserves_workflow_stage_and_capture_metrics() -> None:
+    event = _audio_error_event(
+        "session-key",
+        "turn-1",
+        "会话已关闭，无法继续操作",
+        stage="workflow",
+        received_bytes=4096,
+        client_metrics={"peak": 0.12, "durationMs": 1200},
+    )
+
+    assert event == {
+        "type": "audio.error",
+        "sessionId": "session-key",
+        "turnId": "turn-1",
+        "payload": {
+            "message": "会话已关闭，无法继续操作",
+            "stage": "workflow",
+            "receivedBytes": 4096,
+            "clientMetrics": {"peak": 0.12, "durationMs": 1200},
+        },
+    }
 
 
 @pytest.mark.asyncio

@@ -426,6 +426,50 @@ describe('assistant reply audio coordination', () => {
     wrapper.unmount()
   })
 
+  it('keeps downstream workflow errors separate from microphone diagnostics', async () => {
+    const wrapper = mount(App)
+    await flushPromises()
+
+    const audioSocket = FakeWebSocket.instances.find((socket) => socket.url.includes('/ws/audio/'))
+    audioSocket?.emitJson({
+      type: 'asr.completed',
+      turnId: 'voice-turn-workflow-error',
+      payload: { transcript: '我想买一个电水壶。' },
+    })
+    audioSocket?.emitJson({
+      type: 'audio.error',
+      turnId: 'voice-turn-workflow-error',
+      payload: {
+        stage: 'workflow',
+        message: '会话已关闭，无法继续操作',
+        receivedBytes: 4096,
+        clientMetrics: { peak: 0.12, durationMs: 1200 },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('会话已关闭，无法继续操作')
+    expect(wrapper.text()).toContain('导购处理失败，请重试')
+    expect(wrapper.text()).not.toContain('后端没有收到麦克风音频')
+    wrapper.unmount()
+  })
+
+  it('uses the microphone diagnostic only for an explicit empty ASR capture', async () => {
+    const wrapper = mount(App)
+    await flushPromises()
+
+    const audioSocket = FakeWebSocket.instances.find((socket) => socket.url.includes('/ws/audio/'))
+    audioSocket?.emitJson({
+      type: 'audio.error',
+      turnId: 'voice-turn-empty-capture',
+      payload: { stage: 'asr', message: 'ASR 未识别到有效语音', receivedBytes: 0, clientMetrics: {} },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('后端没有收到麦克风音频，请检查 Chrome 麦克风权限')
+    wrapper.unmount()
+  })
+
   it('creates a catalog order without linking a browser-local session', async () => {
     window.location.hash = '#/browse'
     const product = catalogProduct()

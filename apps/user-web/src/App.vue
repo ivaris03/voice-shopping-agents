@@ -85,8 +85,9 @@ const workspaceLinks = [
   },
 ]
 const customerId = '00000000-0000-4000-8000-000000000101'
-const sessionId = localStorage.getItem('voice-shopping-session') ?? crypto.randomUUID()
-localStorage.setItem('voice-shopping-session', sessionId)
+// A page close explicitly finalizes the session, so a new page instance must
+// never reuse that terminal session ID.
+const sessionId = crypto.randomUUID()
 
 const currentRoute = ref('/voice')
 const isVoicePage = computed(() => currentRoute.value === '/voice')
@@ -700,14 +701,27 @@ function connectAudio(): Promise<void> {
         }
       }
       if (event.type === 'audio.error') {
-        const metrics = (event.payload?.clientMetrics ?? {}) as Record<string, unknown>
-        const receivedBytes = Number(event.payload?.receivedBytes ?? 0)
+        const payload = event.payload ?? {}
+        const metrics = (payload.clientMetrics ?? {}) as Record<string, unknown>
+        const stage = String(payload.stage ?? '')
+        const hasReceivedBytes = Object.prototype.hasOwnProperty.call(payload, 'receivedBytes')
+        const receivedBytes = hasReceivedBytes ? Number(payload.receivedBytes) : null
+        const hasPeak = Object.prototype.hasOwnProperty.call(metrics, 'peak')
+        const hasDuration = Object.prototype.hasOwnProperty.call(metrics, 'durationMs')
         const peak = Number(metrics.peak ?? 0)
         const durationMs = Number(metrics.durationMs ?? 0)
-        let messageText = String(event.payload?.message ?? '语音识别失败')
-        if (!receivedBytes) messageText = '后端没有收到麦克风音频，请检查 Chrome 麦克风权限'
-        else if (peak < 0.003) messageText = 'Chrome 麦克风输入接近静音，请检查当前输入设备或系统音量'
-        else if (durationMs && durationMs < 800) messageText = '录音时间太短，请说完后再点击停止录音'
+        let messageText = String(payload.message ?? '语音识别失败')
+        // Only ASR capture failures should turn transport metrics into
+        // microphone advice. Workflow/session errors may arrive on this same
+        // socket after a valid transcript has already been emitted.
+        const isCaptureError = !stage || stage === 'asr'
+        if (isCaptureError && receivedBytes !== null && receivedBytes <= 0) {
+          messageText = '后端没有收到麦克风音频，请检查 Chrome 麦克风权限'
+        } else if (isCaptureError && receivedBytes !== null && hasPeak && peak < 0.003) {
+          messageText = 'Chrome 麦克风输入接近静音，请检查当前输入设备或系统音量'
+        } else if (isCaptureError && hasDuration && durationMs > 0 && durationMs < 800) {
+          messageText = '录音时间太短，请说完后再点击停止录音'
+        }
         const pending = pendingAsrStart
         if (pending && event.turnId === pending.turnId) {
           window.clearTimeout(pending.timer)
@@ -715,7 +729,7 @@ function connectAudio(): Promise<void> {
           pendingAsrStart = null
         }
         error.value = messageText
-        flowStatus.value = '语音识别失败，请重试'
+        flowStatus.value = stage === 'workflow' ? '导购处理失败，请重试' : '语音识别失败，请重试'
         if (event.turnId) finishTurn(event.turnId)
       }
       if (event.type === 'audio.start') {
@@ -1047,6 +1061,7 @@ async function updateOrder(order: Order, action: 'confirm' | 'cancel') {
 function notifySessionClosed() {
   if (sessionCloseSent) return
   sessionCloseSent = true
+  localStorage.removeItem('voice-shopping-session')
   void fetch(`${apiBaseUrl}/sessions/${sessionId}/close`, {
     method: 'POST',
     headers: {

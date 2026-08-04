@@ -28,6 +28,35 @@ def _user_id(websocket: WebSocket) -> UUID:
         return DEFAULT_CUSTOMER_ID
 
 
+def _audio_error_event(
+    session_id: str,
+    turn_id: str,
+    message: str,
+    *,
+    stage: str,
+    received_bytes: int | None = None,
+    client_metrics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build an audio error without losing where the failure occurred.
+
+    ASR failures and downstream workflow failures share the audio transport,
+    but only the former should be interpreted as microphone diagnostics by the
+    client.  Keep capture metrics when they are available so the client can
+    distinguish the two cases.
+    """
+    payload: dict[str, Any] = {"message": message, "stage": stage}
+    if received_bytes is not None:
+        payload["receivedBytes"] = received_bytes
+    if client_metrics is not None:
+        payload["clientMetrics"] = client_metrics
+    return {
+        "type": "audio.error",
+        "sessionId": session_id,
+        "turnId": turn_id,
+        "payload": payload,
+    }
+
+
 @router.websocket("/ws/text/{session_id}")
 async def text_socket(websocket: WebSocket, session_id: str) -> None:
     user_id = _user_id(websocket)
@@ -192,12 +221,12 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
                 turn_id = str(control.get("turnId") or "voice-turn")
                 if not get_settings().dashscope_api_key:
                     await send_json(
-                        {
-                            "type": "audio.error",
-                            "sessionId": session_id,
-                            "turnId": turn_id,
-                            "payload": {"message": "服务端未配置 ASR 模型"},
-                        }
+                        _audio_error_event(
+                            session_id,
+                            turn_id,
+                            "服务端未配置 ASR 模型",
+                            stage="asr_start",
+                        )
                     )
                     continue
                 try:
@@ -211,12 +240,12 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
                     logger.exception("ASR failed to start for session %s", session_id)
                     asr = None
                     await send_json(
-                        {
-                            "type": "audio.error",
-                            "sessionId": session_id,
-                            "turnId": turn_id,
-                            "payload": {"message": f"ASR 模型启动失败：{exc}"},
-                        }
+                        _audio_error_event(
+                            session_id,
+                            turn_id,
+                            f"ASR 模型启动失败：{exc}",
+                            stage="asr_start",
+                        )
                     )
                     continue
                 sentence_task = asyncio.create_task(publish_completed_sentences(asr, turn_id))
@@ -241,15 +270,14 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
                     logger.exception("ASR failed to finish for session %s", session_id)
                     asr = None
                     await send_json(
-                        {
-                            "type": "audio.error",
-                            "sessionId": session_id,
-                            "turnId": turn_id,
-                            "payload": {
-                                "message": f"ASR 转写失败：{exc}",
-                                "receivedBytes": received_bytes,
-                            },
-                        }
+                        _audio_error_event(
+                            session_id,
+                            turn_id,
+                            f"ASR 转写失败：{exc}",
+                            stage="asr_finish",
+                            received_bytes=received_bytes,
+                            client_metrics=client_metrics,
+                        )
                     )
                     continue
                 asr = None
@@ -267,12 +295,14 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
                         await hub.run_turn(session_id, turn_id, transcript, user_id)
                     except HTTPException as exc:
                         await send_json(
-                            {
-                                "type": "audio.error",
-                                "sessionId": session_id,
-                                "turnId": turn_id,
-                                "payload": {"message": str(exc.detail)},
-                            }
+                            _audio_error_event(
+                                session_id,
+                                turn_id,
+                                str(exc.detail),
+                                stage="workflow",
+                                received_bytes=received_bytes,
+                                client_metrics=client_metrics,
+                            )
                         )
                 else:
                     logger.warning(
@@ -282,16 +312,14 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
                         client_metrics,
                     )
                     await send_json(
-                        {
-                            "type": "audio.error",
-                            "sessionId": session_id,
-                            "turnId": turn_id,
-                            "payload": {
-                                "message": "ASR 未识别到有效语音，请靠近麦克风后重试",
-                                "receivedBytes": received_bytes,
-                                "clientMetrics": client_metrics,
-                            },
-                        }
+                        _audio_error_event(
+                            session_id,
+                            turn_id,
+                            "ASR 未识别到有效语音，请靠近麦克风后重试",
+                            stage="asr",
+                            received_bytes=received_bytes,
+                            client_metrics=client_metrics,
+                        )
                     )
             elif control.get("type") == "audio.cancel":
                 if asr is not None:
