@@ -191,7 +191,7 @@ product.price > 1.5 * avgOrderAmount   -0.15
 product.id in recentPurchased          -0.30
 ```
 
-最终 `matchScore = rerankerScore + ruleScore`，`scoreBreakdown` 保存 `reranker` 和命中的规则项。规则分相同依赖 Python 稳定排序保持第一阶段顺序。没有画像时不增加或扣减规则分。
+最终 `matchScore = min(1.0, rerankerScore + ruleScore)`，因此对外展示的匹配度最高为 100%；`scoreBreakdown` 保存 `reranker` 和命中的规则项。规则分相同依赖 Python 稳定排序保持第一阶段顺序。没有画像时不增加或扣减规则分。
 
 输出卡片字段包括 `productId`、`merchantId`、`merchantName`、`name`、`brand`、`price`、`stock`、`imageUrl`、`sellingPoints`、`attributes`、`matchScore` 和 `scoreBreakdown`。推荐节点不生成理由。
 

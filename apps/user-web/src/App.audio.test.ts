@@ -254,6 +254,33 @@ describe('assistant reply audio coordination', () => {
     wrapper.unmount()
   })
 
+  it('caps an out-of-range recommendation score at 100 percent', async () => {
+    const wrapper = mount(App)
+    await flushPromises()
+    const textSocket = FakeWebSocket.instances.find((socket) => socket.url.includes('/ws/text/'))
+
+    textSocket?.emitJson({
+      type: 'recommendation.cards',
+      turnId: 'turn-score-cap',
+      payload: {
+        productCards: [{
+          productId: 'watch-score-cap',
+          merchantId: 'merchant-1',
+          name: '高匹配机械腕表',
+          price: 2280,
+          stock: 10,
+          sellingPoints: ['自动机械机芯'],
+          matchScore: 1.2,
+        }],
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('匹配 100%')
+    expect(wrapper.text()).not.toContain('匹配 120%')
+    wrapper.unmount()
+  })
+
   it('uses browser speech only after the audio channel explicitly selects fallback', async () => {
     const wrapper = mount(App)
     await flushPromises()

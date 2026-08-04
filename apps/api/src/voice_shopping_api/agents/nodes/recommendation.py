@@ -67,6 +67,11 @@ def _rule_adjustments(
     return sum(parts.values()), parts
 
 
+def _match_score(rule_score: float, reranker: float) -> float:
+    """Return the public match score, capped at 100 percent."""
+    return round(min(1.0, rule_score + reranker), 4)
+
+
 async def recommend_products(
     state: ShoppingState, runtime: Runtime[ShoppingRuntimeDependencies]
 ) -> dict[str, Any]:
@@ -124,7 +129,7 @@ async def recommend_products(
             "imageUrl": (product.get("image_urls") or [None])[0],
             "sellingPoints": product.get("selling_points", []),
             "attributes": product.get("attributes", {}),
-            "matchScore": round(rule_score + reranker, 4),
+            "matchScore": _match_score(rule_score, reranker),
             "scoreBreakdown": {"reranker": round(reranker, 4), **rule_parts},
         }
         for rule_score, rule_parts, reranker, product in ranked

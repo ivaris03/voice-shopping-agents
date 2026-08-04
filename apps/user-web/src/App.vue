@@ -509,6 +509,10 @@ function fallbackRecommendationReason(card: RecommendationCard) {
     : '已按你的需求和当前筛选条件为你挑选。'
 }
 
+function formatMatchScore(value: number) {
+  return Math.min(100, Math.round(value * 100))
+}
+
 function reasonDeltasForTurn(turnId: string) {
   let reasons = recommendationReasonsByTurn.get(turnId)
   if (!reasons) {
@@ -1212,7 +1216,7 @@ onBeforeUnmount(() => {
                 <img v-if="card.imageUrl" :src="card.imageUrl" alt="" loading="lazy" @error="handleImageError" />
                 <span class="product-visual__fallback">{{ card.name.slice(0, 1) }}</span>
               </span>
-              <span class="product-meta"><span class="badge">匹配 {{ Math.round(card.matchScore * 100) }}%</span><span class="muted">{{ card.merchantName || '声选店铺' }}</span></span>
+              <span class="product-meta"><span class="badge">匹配 {{ formatMatchScore(card.matchScore) }}%</span><span class="muted">{{ card.merchantName || '声选店铺' }}</span></span>
               <span class="product-card-title">{{ card.name }}</span>
               <span class="reason">{{ card.reason || '正在生成专属推荐理由…' }}</span>
             </button>
