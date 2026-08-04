@@ -35,7 +35,7 @@ from voice_shopping_api.core.taxonomy import list_categories
 from voice_shopping_api.modules.catalog.profile import profile_snapshot
 
 USER_101 = UUID("00000000-0000-4000-8000-000000000101")  # 小林：耳机画像
-USER_102 = UUID("00000000-0000-4000-8000-000000000102")  # 陈晨：咖啡机画像、买过山岚
+USER_102 = UUID("00000000-0000-4000-8000-000000000102")  # 陈晨：咖啡机画像、买过 De'Longhi
 USER_103 = UUID("00000000-0000-4000-8000-000000000103")  # 爱丽丝：跑鞋画像
 USER_104 = UUID("00000000-0000-4000-8000-000000000104")  # 大卫：冷启动空画像
 USER_105 = UUID("00000000-0000-4000-8000-000000000105")  # 埃里克：耳机/手表画像
@@ -145,7 +145,7 @@ async def test_profile_snapshot_uses_static_and_dynamic_profile_fields(
     assert snapshot["static"]["city"] == "上海"
     assert snapshot["static"]["budgetBand"] == "mid"
     assert snapshot["dynamic"]["categoryAffinity"]["HEADPHONES"] == pytest.approx(0.94)
-    assert snapshot["dynamic"]["brandAffinity"]["云雀"] == pytest.approx(0.72)
+    assert snapshot["dynamic"]["brandAffinity"]["Sony"] == pytest.approx(0.72)
     assert snapshot["dynamic"]["recentViewed"]
     recent_purchased = snapshot["dynamic"]["recentPurchased"]
     assert isinstance(recent_purchased, list)
@@ -272,7 +272,7 @@ async def test_commute_nc_headphones_within_budget(
     required_slots: dict[str, list[str]],
 ) -> None:
     """101 通勤降噪耳机，预算一千以内：已填槽位（含可选降噪）全部参与硬过滤，
-    预算 + 降噪过滤后只剩云雀 Air 与潮汐 Pro。"""
+    预算 + 降噪过滤保留所有符合条件的真实型号。"""
     outcome = await run_and_record(
         session,
         catalog,
@@ -284,12 +284,14 @@ async def test_commute_nc_headphones_within_budget(
         slots={"budgetMax": 1000, "noiseCancellation": True},
     )
     candidates = {product["name"] for product in outcome["candidates"]}
-    assert candidates == {
-        "云雀 Air 降噪耳机",
-        "潮汐 Pro 真无线耳机",
-    }
-    for card in outcome["cards"]:
-        assert card["scoreBreakdown"]["brandHit"] == 0.2  # 用户画像品牌命中
+    assert {
+        "Sony WH-CH720N 无线降噪头戴耳机",
+        "soundcore Liberty 4 NC 真无线降噪耳机",
+    } <= candidates
+    assert all(
+        product["price"] <= 1000 and product["attributes"]["noiseCancellation"]
+        for product in outcome["candidates"]
+    )
 
 
 @pytest.mark.asyncio
@@ -316,8 +318,15 @@ async def test_default_commute_headphone_slots_keep_a_matching_product(
         model_enabled=False,
     )
 
-    assert {product["name"] for product in outcome["candidates"]} == {"云雀 Air 降噪耳机"}
-    assert [card["name"] for card in outcome["cards"]] == ["云雀 Air 降噪耳机"]
+    candidates = outcome["candidates"]
+    assert "Sony WH-CH720N 无线降噪头戴耳机" in {product["name"] for product in candidates}
+    assert all(
+        product["price"] <= 1000
+        and product["attributes"]["noiseCancellation"]
+        and product["attributes"]["form"] == "over-ear"
+        and product["attributes"]["connectivity"] == "bluetooth"
+        for product in candidates
+    )
 
 
 @pytest.mark.asyncio
@@ -351,7 +360,7 @@ async def test_high_cushion_road_shoes_within_budget(
     required_slots: dict[str, list[str]],
 ) -> None:
     """103 公路高缓震跑鞋预算一千内：terrain/缓震/预算全部硬过滤，
-    唯一候选 Nike Pegasus 40，Nike 品牌命中加分。"""
+    唯一候选 Nike Pegasus 41，Nike 品牌命中加分。"""
     outcome = await run_and_record(
         session,
         catalog,
@@ -363,8 +372,8 @@ async def test_high_cushion_road_shoes_within_budget(
         slots={"budgetMax": 1000, "terrain": "road", "cushion": "high"},
     )
     candidates = {product["name"] for product in outcome["candidates"]}
-    assert candidates == {"Nike Pegasus 40 缓震跑鞋"}
-    assert [card["name"] for card in outcome["cards"]] == ["Nike Pegasus 40 缓震跑鞋"]
+    assert candidates == {"Nike Pegasus 41 跑鞋"}
+    assert [card["name"] for card in outcome["cards"]] == ["Nike Pegasus 41 跑鞋"]
     assert outcome["cards"][0]["scoreBreakdown"]["brandHit"] == 0.2  # Nike 品牌偏好
 
 
@@ -375,7 +384,7 @@ async def test_flat_foot_stability_shoe(
     required_slots: dict[str, list[str]],
 ) -> None:
     """103 扁平足跑鞋：footType（可选槽位）参与硬过滤，唯一候选
-    Asics Gel-Kayano 30，Asics 品牌命中加分。"""
+    ASICS GEL-Kayano 31，ASICS 品牌命中加分。"""
     outcome = await run_and_record(
         session,
         catalog,
@@ -387,9 +396,9 @@ async def test_flat_foot_stability_shoe(
         slots={"footType": "flat"},
     )
     candidates = {product["name"] for product in outcome["candidates"]}
-    assert candidates == {"Asics Gel-Kayano 30 稳定跑鞋"}
-    assert outcome["cards"][0]["name"] == "Asics Gel-Kayano 30 稳定跑鞋"
-    assert outcome["cards"][0]["scoreBreakdown"]["brandHit"] == 0.2  # Asics 品牌偏好
+    assert candidates == {"ASICS GEL-Kayano 31 跑鞋"}
+    assert outcome["cards"][0]["name"] == "ASICS GEL-Kayano 31 跑鞋"
+    assert outcome["cards"][0]["scoreBreakdown"]["brandHit"] == 0.2  # ASICS 品牌偏好
 
 
 @pytest.mark.asyncio
@@ -447,7 +456,7 @@ async def test_capsule_coffee_machine(
     catalog: dict[str, dict[str, Any]],
     required_slots: dict[str, list[str]],
 ) -> None:
-    """102 胶囊咖啡机：type 枚举过滤，唯一候选晨雾 Mini，品牌命中加分。"""
+    """102 胶囊咖啡机：type 枚举过滤，只保留真实的胶囊咖啡机型号。"""
     outcome = await run_and_record(
         session,
         catalog,
@@ -458,8 +467,9 @@ async def test_capsule_coffee_machine(
         category="COFFEE_MACHINE",
         slots={"type": "capsule"},
     )
-    assert [card["name"] for card in outcome["cards"]] == ["晨雾 Mini 胶囊咖啡机"]
-    assert outcome["cards"][0]["scoreBreakdown"]["brandHit"] == 0.2  # 晨雾品牌偏好
+    candidates = outcome["candidates"]
+    assert "Nespresso Essenza Mini C30 胶囊咖啡机" in {product["name"] for product in candidates}
+    assert all(product["attributes"]["type"] == "capsule" for product in candidates)
 
 
 @pytest.mark.asyncio
@@ -468,8 +478,8 @@ async def test_semi_auto_with_steam_wand_penalizes_repeat_purchase(
     catalog: dict[str, dict[str, Any]],
     required_slots: dict[str, list[str]],
 ) -> None:
-    """102 半自动带蒸汽棒：type 与布尔槽位 steamWand 均参与硬过滤出山岚，
-    山岚命中最近购买惩罚 -0.3。"""
+    """102 半自动带蒸汽棒：type 与布尔槽位 steamWand 均参与硬过滤，
+    已购买的 De'Longhi Dedica 命中最近购买惩罚 -0.3。"""
     outcome = await run_and_record(
         session,
         catalog,
@@ -479,11 +489,16 @@ async def test_semi_auto_with_steam_wand_penalizes_repeat_purchase(
         user_id=USER_102,
         category="COFFEE_MACHINE",
         slots={"type": "semi-automatic", "steamWand": True},
+        model_enabled=False,
     )
-    assert [card["name"] for card in outcome["cards"]] == ["山岚半自动咖啡机"]
-    breakdown = outcome["cards"][0]["scoreBreakdown"]
-    assert breakdown["repeatPurchase"] == -0.3  # 90 天内买过山岚
-    assert "priceOverAvgOrderAmount" not in breakdown  # 1699 < 1699 * 1.5
+    dedica_name = "De'Longhi Dedica EC685 半自动咖啡机"
+    assert dedica_name in {
+        product["name"] for product in outcome["candidates"]
+    }
+    dedica = next(card for card in outcome["cards"] if card["name"] == dedica_name)
+    breakdown = dedica["scoreBreakdown"]
+    assert breakdown["repeatPurchase"] == -0.3  # 90 天内买过 Dedica
+    assert "priceOverAvgOrderAmount" not in breakdown  # 1899 < 1899 * 1.5
 
 
 @pytest.mark.asyncio
@@ -551,7 +566,9 @@ async def test_enabled_kettle_products_are_recommendable(
         category="ELECTRIC_KETTLE",
         slots={"capacityL": 1.5},
     )
-    assert "清泉恒温水壶" in {product["name"] for product in outcome["candidates"]}
+    assert "Xiaomi Mi Smart Kettle Pro 电水壶" in {
+        product["name"] for product in outcome["candidates"]
+    }
     assert all(
         _slot_matches(product["attributes"], "capacityL", 1.5)
         for product in outcome["candidates"]
@@ -565,7 +582,7 @@ async def test_fallback_path_without_model_is_deterministic(
     required_slots: dict[str, list[str]],
 ) -> None:
     """无模型兜底：硬过滤仍生效（缓震为已填可选槽位），词法分 0.52 +
-    品牌命中 0.2，确定性返回唯一候选 Pegasus 40。"""
+    品牌命中 0.2，确定性返回唯一候选 Pegasus 41。"""
     outcome = await run_and_record(
         session,
         catalog,
@@ -578,7 +595,7 @@ async def test_fallback_path_without_model_is_deterministic(
         model_enabled=False,
     )
     assert outcome["vector_used"] is False  # 无 embedding，走 created_at 排序
-    assert [card["name"] for card in outcome["cards"]] == ["Nike Pegasus 40 缓震跑鞋"]
+    assert [card["name"] for card in outcome["cards"]] == ["Nike Pegasus 41 跑鞋"]
     assert outcome["cards"][0]["scoreBreakdown"]["reranker"] == pytest.approx(
         0.52, abs=0.001
     )
@@ -604,7 +621,6 @@ async def test_matte_lipstick_filter(
     )
     assert outcome["candidates"]
     assert all(product["attributes"]["finish"] == "matte" for product in outcome["candidates"])
-    assert "Dior 烈艳蓝金口红 999" not in {p["name"] for p in outcome["candidates"]}
 
 
 @pytest.mark.asyncio

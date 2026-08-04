@@ -79,10 +79,10 @@ function catalogProduct() {
     merchantId: '10000000-0000-4000-8000-000000000001',
     merchantName: '声动数码',
     sku: 'HEADPHONE-A1',
-    name: '云雀 Air 降噪耳机',
+    name: 'Sony WH-CH720N 无线降噪头戴耳机',
     categoryL1: 'ELECTRONICS',
     categoryL2: 'HEADPHONES',
-    brand: '云雀',
+    brand: 'Sony',
     description: '轻量头戴式主动降噪耳机。',
     price: 699,
     stock: 80,
@@ -562,9 +562,8 @@ describe('assistant reply audio coordination', () => {
     )
     await flushPromises()
     await nextTick()
-    const completedBuyButton = wrapper.findAll('button').find((button) => button.text().trim() === '购买')
-    if (!completedBuyButton) throw new Error('Catalog buy button was not rendered after checkout')
-    expect((completedBuyButton.element as HTMLButtonElement).disabled).toBe(false)
+    expect(window.location.hash).toBe('#/orders')
+    expect(wrapper.text()).toContain('我的订单')
     wrapper.unmount()
   })
 

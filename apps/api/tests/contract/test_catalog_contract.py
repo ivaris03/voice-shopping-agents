@@ -16,10 +16,10 @@ def test_list_products_contract(client, contract_session: ScriptedSession) -> No
                     "merchant_id": UUID("10000000-0000-4000-8000-000000000001"),
                     "merchant_name": "声动数码",
                     "sku": "HEADPHONE-001",
-                    "name": "云雀 Air 降噪耳机",
+                    "name": "Sony WH-CH720N 无线降噪头戴耳机",
                     "category_l1": "ELECTRONICS",
                     "category_l2": "HEADPHONES",
-                    "brand": "云雀",
+                    "brand": "Sony",
                     "description": "适合通勤。",
                     "price": "699.00",
                     "stock": 12,
@@ -36,7 +36,7 @@ def test_list_products_contract(client, contract_session: ScriptedSession) -> No
 
     response = client.get(
         "/api/v1/catalog/products",
-        params={"category": "HEADPHONES", "query": "云雀"},
+        params={"category": "HEADPHONES", "query": "Sony"},
     )
 
     assert response.status_code == 200
@@ -46,7 +46,7 @@ def test_list_products_contract(client, contract_session: ScriptedSession) -> No
     assert body["items"][0]["categoryL2"] == "HEADPHONES"
     assert body["items"][0]["sellingPoints"] == ["主动降噪"]
     assert contract_session.calls[0][1]["category"] == "HEADPHONES"
-    assert contract_session.calls[0][1]["query"] == "云雀"
+    assert contract_session.calls[0][1]["query"] == "Sony"
 
 
 @pytest.mark.contract

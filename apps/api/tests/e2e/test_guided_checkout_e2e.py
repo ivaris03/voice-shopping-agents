@@ -48,7 +48,7 @@ async def test_default_guided_checkout_reaches_confirmed_order(
         CUSTOMER_ID,
     )
     assert second["clarification_status"] == "READY"
-    assert [card["name"] for card in second["product_cards"]] == ["云雀 Air 降噪耳机"]
+    assert second["product_cards"][0]["name"] == "Sony WH-CH720N 无线降噪头戴耳机"
     product_id = second["product_cards"][0]["productId"]
     persisted_state = await e2e_committing_session.scalar(
         text(

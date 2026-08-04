@@ -53,7 +53,7 @@ def _order(*, user_id: UUID = USER_ID, status: str = "pending") -> dict[str, Any
         "unit_price": Decimal("699.00"),
         "total_amount": Decimal("1398.00"),
         "merchant_snapshot": {"name": "声动数码"},
-        "product_snapshot": {"name": "云雀 Air 降噪耳机"},
+        "product_snapshot": {"name": "Sony WH-CH720N 无线降噪头戴耳机"},
         "failure_reason": None,
         "expires_at": now + timedelta(minutes=15),
         "confirmed_at": None,

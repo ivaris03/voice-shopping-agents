@@ -24,8 +24,11 @@ def _order() -> dict[str, object]:
         "quantity": 2,
         "unit_price": Decimal("699.00"),
         "total_amount": Decimal("1398.00"),
-        "merchant_snapshot": {"merchantId": str(MERCHANT_ID), "name": "声动数码"},
-        "product_snapshot": {"productId": str(PRODUCT_ID), "name": "云雀 Air 降噪耳机"},
+        "merchant_snapshot": {"merchantId": str(MERCHANT_ID), "name": "声选 · 通勤音频"},
+        "product_snapshot": {
+            "productId": str(PRODUCT_ID),
+            "name": "Sony WH-CH720N 无线降噪头戴耳机",
+        },
         "failure_reason": None,
         "expires_at": now + timedelta(minutes=15),
         "confirmed_at": None,

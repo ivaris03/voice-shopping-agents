@@ -15,10 +15,10 @@ from voice_shopping_api.core.taxonomy import ATTRIBUTE_KEYS_BY_CATEGORY
 
 def test_full_card_covers_all_fields() -> None:
     text_ = build_product_embedding_text(
-        name="云雀 Air 降噪耳机",
+        name="Sony WH-CH720N 无线降噪头戴耳机",
         category_l1="ELECTRONICS",
         category_l2="HEADPHONES",
-        brand="云雀",
+        brand="Sony",
         description="轻量头戴式主动降噪耳机，适合通勤。",
         attributes={
             "form": "over-ear",
@@ -30,7 +30,8 @@ def test_full_card_covers_all_fields() -> None:
         price=Decimal("699.00"),
     )
 
-    assert text_.startswith("商品：云雀 Air 降噪耳机；品类：数码电子-耳机；品牌：云雀")
+    expected_prefix = "商品：Sony WH-CH720N 无线降噪头戴耳机；品类：数码电子-耳机；品牌：Sony"
+    assert text_.startswith(expected_prefix)
     assert "卖点：主动降噪适合通勤、约 45 小时续航" in text_
     assert "描述：轻量头戴式主动降噪耳机，适合通勤。" in text_
     assert "属性：续航时长：45小时、颜色：雾灰、形态：头戴式、主动降噪：是" in text_
@@ -123,10 +124,10 @@ def test_normalize_embedding_returns_unit_vector() -> None:
 def test_embedding_text_for_product_accepts_db_row_shape() -> None:
     card = embedding_text_for_product(
         {
-            "name": "云雀 Air 降噪耳机",
+            "name": "Sony WH-CH720N 无线降噪头戴耳机",
             "category_l1": "ELECTRONICS",
             "category_l2": "HEADPHONES",
-            "brand": "云雀",
+            "brand": "Sony",
             "description": "轻量头戴式主动降噪耳机，适合通勤。",
             "attributes": {"form": "over-ear"},
             "selling_points": ["主动降噪适合通勤"],
@@ -134,7 +135,7 @@ def test_embedding_text_for_product_accepts_db_row_shape() -> None:
         }
     )
 
-    assert card.startswith("商品：云雀 Air 降噪耳机；品类：数码电子-耳机；品牌：云雀")
+    assert card.startswith("商品：Sony WH-CH720N 无线降噪头戴耳机；品类：数码电子-耳机；品牌：Sony")
     assert "形态：头戴式" in card
 
 

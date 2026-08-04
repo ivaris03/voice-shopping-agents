@@ -78,18 +78,18 @@ HTTP API 的基础前缀是 `/api/v1`；健康检查位于前缀之外的 `/heal
 {
   "id": "20000000-0000-4000-8000-000000000001",
   "merchantId": "10000000-0000-4000-8000-000000000001",
-  "merchantName": "声动数码",
-  "sku": "HEADPHONE-001",
-  "name": "云雀 Air 降噪耳机",
+  "merchantName": "声选 · 通勤音频",
+  "sku": "AUD-001",
+  "name": "Sony WH-CH720N 无线降噪头戴耳机",
   "categoryL1": "ELECTRONICS",
   "categoryL2": "HEADPHONES",
-  "brand": "云雀",
-  "description": "适合通勤。",
-  "price": "699.00",
-  "stock": 12,
+  "brand": "Sony",
+  "description": "真实公开型号；结构化规格已按平台筛选枚举归一化。",
+  "price": "799.00",
+  "stock": 31,
   "attributes": {"form": "over-ear", "noiseCancellation": true},
   "sellingPoints": ["主动降噪"],
-  "imageUrls": ["https://example.com/headphones.png"],
+  "imageUrls": ["https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=1200&q=80"],
   "status": "on_sale",
   "createdAt": "2026-08-03T12:00:00Z",
   "updatedAt": "2026-08-03T12:00:00Z"
@@ -106,10 +106,10 @@ HTTP API 的基础前缀是 `/api/v1`；健康检查位于前缀之外的 `/heal
 
 ```json
 {
-  "name": "声动数码",
+  "name": "声选 · 通勤音频",
   "slug": "sound-digital",
-  "description": "专注便携音频设备。",
-  "logoUrl": "https://example.com/logo.png",
+  "description": "本地演示集合店，展示通勤音频的真实品牌型号。",
+  "logoUrl": null,
   "contactPhone": "13800000002"
 }
 ```
@@ -190,7 +190,7 @@ HTTP API 的基础前缀是 `/api/v1`；健康检查位于前缀之外的 `/heal
 示例：
 
 ```http
-GET /api/v1/catalog/products?category=HEADPHONES&query=云雀
+GET /api/v1/catalog/products?category=HEADPHONES&query=Sony
 ```
 
 服务端最多返回 100 个商品，排序为创建时间和商品名称。响应格式：
@@ -201,15 +201,15 @@ GET /api/v1/catalog/products?category=HEADPHONES&query=云雀
     {
       "id": "20000000-0000-4000-8000-000000000001",
       "merchantId": "10000000-0000-4000-8000-000000000001",
-      "merchantName": "声动数码",
-      "sku": "HEADPHONE-001",
-      "name": "云雀 Air 降噪耳机",
+      "merchantName": "声选 · 通勤音频",
+      "sku": "AUD-001",
+      "name": "Sony WH-CH720N 无线降噪头戴耳机",
       "categoryL1": "ELECTRONICS",
       "categoryL2": "HEADPHONES",
-      "brand": "云雀",
-      "description": "适合通勤。",
-      "price": "699.00",
-      "stock": 12,
+      "brand": "Sony",
+      "description": "真实公开型号；结构化规格已按平台筛选枚举归一化。",
+      "price": "799.00",
+      "stock": 31,
       "attributes": {},
       "sellingPoints": [],
       "imageUrls": [],
@@ -306,7 +306,7 @@ GET /api/v1/catalog/products?category=HEADPHONES&query=云雀
 
 ```json
 {
-  "name": "声动数码旗舰店",
+  "name": "声选 · 通勤音频",
   "description": "更新后的店铺介绍"
 }
 ```
@@ -325,14 +325,14 @@ GET /api/v1/catalog/products?category=HEADPHONES&query=云雀
 ```json
 {
   "merchantId": "10000000-0000-4000-8000-000000000001",
-  "sku": "HEADPHONE-001",
-  "name": "云雀 Air 降噪耳机",
+  "sku": "AUD-001",
+  "name": "Sony WH-CH720N 无线降噪头戴耳机",
   "categoryL1": "ELECTRONICS",
   "categoryL2": "HEADPHONES",
-  "brand": "云雀",
-  "description": "适合通勤。",
-  "price": "699.00",
-  "stock": 12,
+  "brand": "Sony",
+  "description": "真实公开型号；结构化规格已按平台筛选枚举归一化。",
+  "price": "799.00",
+  "stock": 31,
   "attributes": {
     "form": "over-ear",
     "connectivity": "bluetooth",
@@ -340,7 +340,7 @@ GET /api/v1/catalog/products?category=HEADPHONES&query=云雀
     "batteryHours": 30
   },
   "sellingPoints": ["主动降噪"],
-  "imageUrls": ["https://example.com/headphones.png"],
+  "imageUrls": ["https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=1200&q=80"],
   "status": "on_sale"
 }
 ```
