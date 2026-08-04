@@ -49,7 +49,7 @@ const selectedProduct = ref<Product | null>(null)
 
 const categoryL1Form = reactive({ code: '' })
 const categoryForm = reactive({ categoryL1Id: '', categoryL2: '' })
-const slotForm = reactive({ categoryId: '', key: '', isRequired: true, enumValues: '' })
+const slotForm = reactive({ categoryL1Id: '', categoryId: '', key: '', isRequired: true, enumValues: '' })
 const disabledReason = ref('')
 const taxonomyQuery = ref('')
 const taxonomyLevelOneFilter = ref('')
@@ -138,6 +138,7 @@ const categoriesWithAgentCandidates = computed(() =>
   [...categorySupportById.value.values()].filter((support) => support.agentCandidateCount > 0).length,
 )
 const totalRequiredSlots = computed(() => categories.value.reduce((total, category) => total + category.requiredSlots.length, 0))
+const slotCategories = computed(() => categories.value.filter((category) => category.categoryL1Id === slotForm.categoryL1Id))
 const hasTaxonomyFilter = computed(() => Boolean(taxonomyQuery.value.trim() || taxonomyLevelOneFilter.value))
 const taxonomyGroups = computed(() => {
   const query = taxonomyQuery.value.trim().toLowerCase()
@@ -269,7 +270,6 @@ async function loadData() {
     selectedMerchantKeys.value = selectedMerchantKeys.value.filter((key) => merchantGroups.value.some((group) => group.ownerUserId === key))
     selectedStoreIds.value = selectedStoreIds.value.filter((id) => merchants.value.some((store) => store.id === id))
     if (!categoryForm.categoryL1Id && categoryLevelOnes.value[0]) categoryForm.categoryL1Id = categoryLevelOnes.value[0].id
-    if (!slotForm.categoryId && categories.value[0]) slotForm.categoryId = categories.value[0].id
     if (slotEditorId.value && !editingSlot.value) goTo('/taxonomy')
     if (statusStoreId.value && !statusStore.value) goTo('/merchants')
   } catch (reason) {
@@ -281,8 +281,10 @@ async function loadData() {
 
 function resetSlotForm(slot?: CategorySlot) {
   const category = slot ? categories.value.find((item) => item.slots.some((item) => item.id === slot.id)) : undefined
+  const initialCategory = category ?? categories.value[0]
   Object.assign(slotForm, {
-    categoryId: category?.id ?? categories.value[0]?.id ?? '',
+    categoryL1Id: initialCategory?.categoryL1Id ?? '',
+    categoryId: initialCategory?.id ?? '',
     key: slot?.key ?? '',
     isRequired: slot?.isRequired ?? true,
     enumValues: slot?.enumValues.map(String).join('，') ?? '',
@@ -295,6 +297,10 @@ watch(currentRoute, () => {
 })
 watch(categories, () => {
   if (isSlotEditor.value) resetSlotForm(editingSlot.value)
+})
+watch(() => slotForm.categoryL1Id, (categoryL1Id) => {
+  if (editingSlot.value) return
+  slotForm.categoryId = categories.value.find((category) => category.categoryL1Id === categoryL1Id)?.id ?? ''
 })
 watch(selectedMerchantKeys, (keys) => {
   if (!keys.length) return
@@ -563,7 +569,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', routeFromHash))
 
       <section v-else-if="isLevelTwoEditor" class="section-panel operation-page"><div class="operation-page__intro"><span class="section-kicker">LEVEL TWO CATEGORY</span><h2>新增二级品类</h2><p>二级品类将直接用于商品归类、筛选和 Agent 的推荐条件。</p></div><form class="form-grid operation-form" @submit.prevent="createCategory"><label class="form-field">关联一级分类<select v-model="categoryForm.categoryL1Id" class="select" required><option value="" disabled>请选择一级分类</option><option v-for="item in categoryLevelOnes" :key="item.id" :value="item.id">{{ item.code }}</option></select></label><label class="form-field">二级分类编码<input v-model="categoryForm.categoryL2" class="input" placeholder="HEADPHONES" required /></label><div class="form-actions form-field--full"><button class="ghost-button" type="button" @click="goTo('/taxonomy')">取消</button><button class="primary-button" type="submit" :disabled="categorySaving || !categoryLevelOnes.length">{{ categorySaving ? '创建中…' : '创建二级品类' }}</button></div></form></section>
 
-      <section v-else-if="isSlotEditor" class="section-panel operation-page"><div class="operation-page__intro"><span class="section-kicker">PRODUCT SLOT</span><h2>{{ editingSlot ? '编辑槽位' : '新增槽位' }}</h2><p>槽位的可选值会成为商品资料的标准化参数，并帮助 Agent 澄清用户需求。</p></div><form class="form-grid operation-form" @submit.prevent="saveSlot"><label class="form-field">所属二级分类<select v-model="slotForm.categoryId" class="select" :disabled="Boolean(editingSlot)" required><option value="" disabled>请选择二级分类</option><option v-for="category in categories" :key="category.id" :value="category.id">{{ category.categoryL1 }} / {{ category.categoryL2 }}</option></select></label><label class="form-field">槽位 Key<input v-model="slotForm.key" class="input" :disabled="Boolean(editingSlot)" placeholder="connectivity" required /></label><label class="form-field">是否必填<select v-model="slotForm.isRequired" class="select"><option :value="true">必填</option><option :value="false">选填</option></select></label><label class="form-field form-field--wide">枚举值（逗号分隔）<input v-model="slotForm.enumValues" class="input" placeholder="bluetooth, wired" required /></label><div class="form-actions form-field--full"><button class="ghost-button" type="button" @click="goTo('/taxonomy')">取消</button><button class="primary-button" type="submit" :disabled="categorySaving || !categories.length">{{ categorySaving ? '保存中…' : editingSlot ? '保存修改' : '创建槽位' }}</button></div></form></section>
+      <section v-else-if="isSlotEditor" class="section-panel operation-page"><div class="operation-page__intro"><span class="section-kicker">PRODUCT SLOT</span><h2>{{ editingSlot ? '编辑槽位' : '新增槽位' }}</h2><p>槽位的可选值会成为商品资料的标准化参数，并帮助 Agent 澄清用户需求。</p></div><form class="form-grid operation-form" @submit.prevent="saveSlot"><label class="form-field">所属一级分类<select v-model="slotForm.categoryL1Id" class="select" :disabled="Boolean(editingSlot)" required><option value="" disabled>请选择一级分类</option><option v-for="item in categoryLevelOnes" :key="item.id" :value="item.id">{{ item.code }}</option></select></label><label class="form-field">所属二级分类<select v-model="slotForm.categoryId" class="select" :disabled="Boolean(editingSlot) || !slotForm.categoryL1Id" required><option value="" disabled>请选择二级分类</option><option v-for="category in slotCategories" :key="category.id" :value="category.id">{{ category.categoryL2 }}</option></select></label><label class="form-field">槽位 Key<input v-model="slotForm.key" class="input" :disabled="Boolean(editingSlot)" placeholder="connectivity" required /></label><label class="form-field">是否必填<select v-model="slotForm.isRequired" class="select"><option :value="true">必填</option><option :value="false">选填</option></select></label><label class="form-field form-field--wide">枚举值（逗号分隔）<input v-model="slotForm.enumValues" class="input" placeholder="bluetooth, wired" required /></label><div class="form-actions form-field--full"><button class="ghost-button" type="button" @click="goTo('/taxonomy')">取消</button><button class="primary-button" type="submit" :disabled="categorySaving || !slotCategories.length">{{ categorySaving ? '保存中…' : editingSlot ? '保存修改' : '创建槽位' }}</button></div></form></section>
 
       <section v-else-if="isStatusEditor && statusStore" class="section-panel operation-page"><div class="operation-page__intro"><span class="section-kicker">STORE STATUS</span><h2>{{ statusStore.isEnabled ? '禁用店铺' : '恢复店铺' }}</h2><p>{{ statusStore.name }} {{ statusStore.isEnabled ? '被禁用后，其商品会从用户端和 Agent 候选中移除。' : '恢复后会按商品自身状态重新参与供给。' }}</p></div><form class="form-stack operation-form" @submit.prevent="saveStoreStatus"><label v-if="statusStore.isEnabled" class="form-field">禁用原因<textarea v-model="disabledReason" class="textarea" required /></label><p v-else class="empty-state">确认恢复后，该店铺在售且有库存的商品将重新可被用户浏览。</p><div class="form-actions"><button class="ghost-button" type="button" @click="goTo('/merchants')">取消</button><button :class="statusStore.isEnabled ? 'danger-button' : 'primary-button'" type="submit" :disabled="statusSaving">{{ statusSaving ? '保存中…' : statusStore.isEnabled ? '确认禁用' : '确认恢复' }}</button></div></form></section>
     </div>
