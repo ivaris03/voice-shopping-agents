@@ -19,10 +19,17 @@ interface MerchantGroup {
   stores: Merchant[]
 }
 
+interface CategorySupport {
+  productCount: number
+  agentCandidateCount: number
+  requiredSlotCount: number
+  optionalSlotCount: number
+}
+
 type ProductStockFilter = 'all' | 'available' | 'low' | 'out'
 
 const navItems = [
-  { label: '品类管理', href: '#/taxonomy' },
+  { label: '支持目录', href: '#/taxonomy' },
   { label: '商品浏览', href: '#/products' },
   { label: '商家治理', href: '#/merchants' },
   { label: '全量订单', href: '#/orders' },
@@ -44,6 +51,8 @@ const categoryL1Form = reactive({ code: '' })
 const categoryForm = reactive({ categoryL1Id: '', categoryL2: '' })
 const slotForm = reactive({ categoryId: '', key: '', isRequired: true, enumValues: '' })
 const disabledReason = ref('')
+const taxonomyQuery = ref('')
+const taxonomyLevelOneFilter = ref('')
 
 const selectedMerchantKeys = ref<string[]>([])
 const selectedStoreIds = ref<string[]>([])
@@ -105,10 +114,52 @@ const visibleOrders = computed(() => orderStatus.value ? orders.value.filter((it
 const enabledStores = computed(() => merchants.value.filter((item) => item.isEnabled).length)
 const successfulOrders = computed(() => orders.value.filter((item) => item.status === 'success'))
 const grossMerchandiseValue = computed(() => successfulOrders.value.reduce((sum, item) => sum + Number(item.totalAmount), 0))
-const taxonomyGroups = computed(() => categoryLevelOnes.value.map((levelOne) => ({
-  levelOne,
-  categories: categories.value.filter((category) => category.categoryL1Id === levelOne.id),
-})))
+const categorySupportById = computed<Map<string, CategorySupport>>(() => {
+  const support = new Map<string, CategorySupport>()
+  const storesById = new Map(merchants.value.map((store) => [store.id, store]))
+  for (const category of categories.value) {
+    const categoryProducts = products.value.filter((product) => product.categoryL2 === category.categoryL2)
+    support.set(category.id, {
+      productCount: categoryProducts.length,
+      agentCandidateCount: categoryProducts.filter((product) => {
+        const store = storesById.get(product.merchantId)
+        return product.status === 'on_sale' && product.stock > 0 && Boolean(store?.isEnabled)
+      }).length,
+      requiredSlotCount: category.requiredSlots.length,
+      optionalSlotCount: category.optionalSlots.length,
+    })
+  }
+  return support
+})
+const totalAgentCandidateProducts = computed(() =>
+  [...categorySupportById.value.values()].reduce((total, support) => total + support.agentCandidateCount, 0),
+)
+const categoriesWithAgentCandidates = computed(() =>
+  [...categorySupportById.value.values()].filter((support) => support.agentCandidateCount > 0).length,
+)
+const totalRequiredSlots = computed(() => categories.value.reduce((total, category) => total + category.requiredSlots.length, 0))
+const hasTaxonomyFilter = computed(() => Boolean(taxonomyQuery.value.trim() || taxonomyLevelOneFilter.value))
+const taxonomyGroups = computed(() => {
+  const query = taxonomyQuery.value.trim().toLowerCase()
+  return categoryLevelOnes.value
+    .filter((levelOne) => !taxonomyLevelOneFilter.value || levelOne.id === taxonomyLevelOneFilter.value)
+    .map((levelOne) => {
+      const levelMatchesQuery = !query || levelOne.code.toLowerCase().includes(query)
+      const matchingCategories = categories.value.filter((category) => {
+        if (category.categoryL1Id !== levelOne.id) return false
+        if (levelMatchesQuery) return true
+        const searchableText = [
+          category.categoryL1,
+          category.categoryL2,
+          categoryDisplayName(category.categoryL2),
+          ...category.slots.flatMap((slot) => [slot.key, ...slot.enumValues.map(String)]),
+        ].join(' ').toLowerCase()
+        return searchableText.includes(query)
+      })
+      return { levelOne, categories: matchingCategories }
+    })
+    .filter((group) => !hasTaxonomyFilter.value || group.categories.length > 0)
+})
 const activeNavHref = computed(() => {
   if (isProductPage.value) return '#/products'
   if (isMerchantPage.value || isStatusEditor.value) return '#/merchants'
@@ -123,14 +174,14 @@ const pageHeadline = computed(() => {
   if (isProductPage.value) return '从全局看见，每一件商品。'
   if (isMerchantPage.value) return '用清晰边界，管理每一家店。'
   if (isOrdersPage.value) return '用全局数据，守住交易质量。'
-  return '让商品结构，始终井然有序。'
+  return '当前支持什么品类？'
 })
 const pageDescription = computed(() => {
   if (isOperationPage.value) return '这是独立的操作页面，完成后会回到对应的管理视图。'
   if (isProductPage.value) return '默认全局浏览；可按商家、店铺单选或多选，再叠加商品条件过滤。'
   if (isMerchantPage.value) return '店铺启停会实时影响用户端的商品浏览和 Agent 推荐候选。'
   if (isOrdersPage.value) return '查看全平台订单状态与交易结果，快速识别异常记录。'
-  return '集中展示一级分类、二级分类与槽位，新增操作在独立页面完成。'
+  return '从品类、可推荐商品和必填槽位三个维度，快速定位导购范围。'
 })
 
 function routeFromHash() {
@@ -165,6 +216,29 @@ function formatDateTime(value: string) {
 
 function categoryLabel(value: string) {
   return value.replaceAll('_', ' ')
+}
+
+const categoryDisplayNames: Record<string, string> = {
+  HEADPHONES: '耳机',
+  COFFEE_MACHINE: '咖啡机',
+  ELECTRIC_KETTLE: '电热水壶',
+  RUNNING_SHOES: '跑鞋',
+  WATCHES: '腕表',
+  LIPSTICK: '口红',
+}
+
+function categoryDisplayName(value: string) {
+  const label = categoryDisplayNames[value]
+  return label ? `${label} · ${value}` : value
+}
+
+function getCategorySupport(category: Category): CategorySupport {
+  return categorySupportById.value.get(category.id) ?? {
+    productCount: 0,
+    agentCandidateCount: 0,
+    requiredSlotCount: category.requiredSlots.length,
+    optionalSlotCount: category.optionalSlots.length,
+  }
 }
 
 function parseEnumValues(value: string): Array<string | number | boolean> {
@@ -322,6 +396,15 @@ function openSlotEditor(slot?: CategorySlot) {
   goTo(slot ? `/taxonomy/slot/edit/${slot.id}` : '/taxonomy/slot/new')
 }
 
+function browseCategoryProducts(category: Category) {
+  clearProductScope()
+  productQuery.value = ''
+  productStatus.value = ''
+  productStock.value = 'all'
+  productCategory.value = category.categoryL2
+  goTo('/products')
+}
+
 function selectAllMerchants() {
   selectedMerchantKeys.value = merchantGroups.value.map((merchant) => merchant.ownerUserId)
   selectedStoreIds.value = []
@@ -409,17 +492,43 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', routeFromHash))
     <div class="workspace">
       <p v-if="error" class="error-banner">{{ error }}</p>
 
+      <section v-if="isTaxonomyPage" class="taxonomy-diagnostic-strip" aria-label="导购支持概览">
+        <div class="taxonomy-diagnostic-strip__lead">
+          <span class="section-kicker">AGENT READINESS</span>
+          <strong>导购支持范围</strong>
+        </div>
+        <dl class="taxonomy-diagnostic-metrics">
+          <div><dt>已定义品类</dt><dd>{{ categories.length }}</dd></div>
+          <div><dt>有候选品类</dt><dd>{{ categoriesWithAgentCandidates }}</dd></div>
+          <div><dt>可推荐商品</dt><dd>{{ totalAgentCandidateProducts }}</dd></div>
+          <div><dt>必填槽位</dt><dd>{{ totalRequiredSlots }}</dd></div>
+        </dl>
+      </section>
+
       <section v-if="isTaxonomyPage" class="section-panel">
-        <div class="section-heading"><div><span class="section-kicker">TAXONOMY MAP</span><h2>分类、品类与槽位</h2><p>完整结构集中在此页；新增一级、二级分类和槽位均进入独立操作页。</p></div><span class="section-count">{{ categoryLevelOnes.length }} 个一级分类 · {{ categories.length }} 个二级分类</span></div>
+        <div class="section-heading"><div><span class="section-kicker">SUPPORT DIRECTORY</span><h2>支持品类与槽位</h2><p>品类、在库供给和必填需求槽位集中展示，用于判断当前导购是否具备推荐条件。</p></div><span class="section-count">{{ categoryLevelOnes.length }} 个一级分类 · {{ categories.length }} 个二级分类</span></div>
+        <div class="taxonomy-filter" aria-label="支持目录筛选">
+          <label class="form-field taxonomy-filter__search">搜索品类或槽位<input v-model="taxonomyQuery" class="input" placeholder="例如：耳机、HEADPHONES、connectivity" /></label>
+          <label class="form-field">一级分类<select v-model="taxonomyLevelOneFilter" class="select"><option value="">全部一级分类</option><option v-for="levelOne in categoryLevelOnes" :key="levelOne.id" :value="levelOne.id">{{ levelOne.code }}</option></select></label>
+        </div>
         <p v-if="loading" class="empty-state">正在加载品类结构…</p>
-        <p v-else-if="!taxonomyGroups.length" class="empty-state">还没有分类，请先新增一级分类。</p>
+        <p v-else-if="!taxonomyGroups.length" class="empty-state">{{ hasTaxonomyFilter ? '未找到匹配的品类或槽位。' : '还没有分类，请先新增一级分类。' }}</p>
         <div v-else class="taxonomy-list">
           <article v-for="group in taxonomyGroups" :key="group.levelOne.id" class="taxonomy-group">
             <div class="taxonomy-heading"><div><span class="badge">一级分类</span><h3>{{ group.levelOne.code }}</h3></div><button v-if="!group.categories.length" class="danger-button small-button" type="button" @click="deleteCategoryLevelOne(group.levelOne)">删除一级分类</button></div>
             <p v-if="!group.categories.length" class="muted">暂无二级分类。</p>
             <div v-else class="taxonomy-children">
               <article v-for="category in group.categories" :key="category.id" class="taxonomy-child">
-                <div class="taxonomy-heading"><div><span class="badge">二级分类</span><h3>{{ category.categoryL2 }}</h3></div><button class="danger-button small-button" type="button" @click="deleteCategory(category)">删除二级分类</button></div>
+                <div class="taxonomy-child__heading">
+                  <div><span class="badge">二级品类</span><h3>{{ categoryDisplayName(category.categoryL2) }}</h3></div>
+                  <dl class="taxonomy-readiness" aria-label="品类供给状态">
+                    <div><dt>商品</dt><dd>{{ getCategorySupport(category).productCount }}</dd></div>
+                    <div><dt>可推荐</dt><dd :class="{ 'taxonomy-readiness__value--empty': getCategorySupport(category).agentCandidateCount === 0 }">{{ getCategorySupport(category).agentCandidateCount }}</dd></div>
+                    <div><dt>必填槽位</dt><dd>{{ getCategorySupport(category).requiredSlotCount }}</dd></div>
+                    <div><dt>选填槽位</dt><dd>{{ getCategorySupport(category).optionalSlotCount }}</dd></div>
+                  </dl>
+                  <div class="section-actions"><button class="ghost-button small-button" type="button" @click="browseCategoryProducts(category)">查看商品</button><button class="danger-button small-button" type="button" @click="deleteCategory(category)">删除二级分类</button></div>
+                </div>
                 <div class="slot-list"><span v-for="slot in category.slots" :key="slot.id" class="slot-chip" :class="{ 'slot-chip--optional': !slot.isRequired }">{{ slot.key }} · {{ slot.isRequired ? '必填' : '选填' }} · {{ slot.enumValues.join(' / ') }}<button class="ghost-button small-button" type="button" @click="openSlotEditor(slot)">编辑</button><button class="danger-button small-button" type="button" @click="deleteSlot(slot)">删除</button></span><span v-if="!category.slots.length" class="muted">暂无槽位。</span></div>
               </article>
             </div>
