@@ -77,26 +77,52 @@ flowchart LR
 
 ### 4.1 图装配和路由
 
-`agents/graph.py` 只负责声明节点、边和条件路由，业务规则放在各节点模块。当前图为：
+`agents/graph.py` 只负责声明节点、边和条件路由，业务规则放在各节点模块。下图 Mermaid 源码由已编译的 LangGraph 工作流直接生成，使用的命令为：
+
+```powershell
+uv run --project apps/api python -c "from voice_shopping_api.agents.graph import build_workflow; print(build_workflow().get_graph().draw_mermaid())"
+```
+
+当前图为：
 
 ```mermaid
-flowchart TD
-    S["START"] -->|存在 pending_question| C["clarification_agent"]
-    S -->|无 pending_question| I["intent_agent"]
-    I -->|PRODUCT_RECOMMENDATION| C["clarification_agent"]
-    I -->|PRODUCT_COMPARE / PRODUCT_QUERY| R["recommendation_agent"]
-    I -->|PRODUCT_ORDER| O["order_node"]
-    I -->|CHAT / UNSUPPORTED_REQUEST| E["emotional_agent"]
-    C -->|clarification_status=READY| R
-    C -->|ASK| E
-    R --> E
-    O --> K["compliance_check"]
-    E --> K
-    K -->|PASS| P["publish_response"]
-    K -->|VIOLATION| V["violation_response"]
-    V --> P
-    P --> X["END"]
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+    __start__([<p>__start__</p>]):::first
+    intent_agent(intent_agent)
+    clarification_agent(clarification_agent)
+    recommendation_agent(recommendation_agent)
+    order_node(order_node)
+    emotional_agent(emotional_agent)
+    compliance_check(compliance_check)
+    violation_response(violation_response)
+    publish_response(publish_response)
+    __end__([<p>__end__</p>]):::last
+    __start__ -. &nbsp;clarify&nbsp; .-> clarification_agent;
+    __start__ -. &nbsp;intent&nbsp; .-> intent_agent;
+    clarification_agent -. &nbsp;respond&nbsp; .-> emotional_agent;
+    clarification_agent -. &nbsp;recommend&nbsp; .-> recommendation_agent;
+    compliance_check -. &nbsp;publish&nbsp; .-> publish_response;
+    compliance_check -. &nbsp;violation&nbsp; .-> violation_response;
+    emotional_agent --> compliance_check;
+    intent_agent -. &nbsp;clarify&nbsp; .-> clarification_agent;
+    intent_agent -. &nbsp;respond&nbsp; .-> emotional_agent;
+    intent_agent -. &nbsp;order&nbsp; .-> order_node;
+    intent_agent -. &nbsp;recommend&nbsp; .-> recommendation_agent;
+    order_node --> compliance_check;
+    recommendation_agent --> emotional_agent;
+    violation_response --> publish_response;
+    publish_response --> __end__;
+    classDef default fill:#f2f0ff,line-height:1.2
+    classDef first fill-opacity:0
+    classDef last fill:#bfb6fc
 ```
+
+条件边的标签对应图中的路由键；各键与业务条件的对应关系在 `_route_start`、`_route_intent`、`_route_clarification` 和 `_route_compliance` 中定义。
 
 节点职责如下：
 
