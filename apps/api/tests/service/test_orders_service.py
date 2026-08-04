@@ -70,13 +70,28 @@ def _payload(key: str = "service-order-001") -> OrderCreate:
 @pytest.mark.asyncio
 async def test_create_pending_order_reuses_same_user_idempotency_key() -> None:
     existing = _order()
-    session = FakeSession([FakeResult([existing])])
+    session = FakeSession([FakeResult([]), FakeResult([existing])])
 
     result = await order_service.create_pending_order(session, USER_ID, _payload())
 
     assert result == existing
+    assert len(session.statements) == 2
+    assert "ON CONFLICT (idempotency_key) DO NOTHING" in session.statements[0]
+    assert session.parameters[1]["key"] == "service-order-001"
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_create_pending_order_inserts_before_checking_for_a_duplicate_key() -> None:
+    created = _order()
+    session = FakeSession([FakeResult([created])])
+
+    result = await order_service.create_pending_order(session, USER_ID, _payload())
+
+    assert result == created
     assert len(session.statements) == 1
-    assert session.parameters[0]["key"] == "service-order-001"
+    assert "ON CONFLICT (idempotency_key) DO NOTHING" in session.statements[0]
+    assert session.statements[0].lstrip().upper().startswith("INSERT")
 
 
 @pytest.mark.service

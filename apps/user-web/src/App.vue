@@ -92,11 +92,13 @@ const products = ref<Product[]>([])
 const orders = ref<Order[]>([])
 const recommendations = ref<RecommendationCard[]>([])
 const selectedProduct = ref<Product | null>(null)
+const orderRequestsInFlight = ref(new Set<string>())
 const selectedCategory = ref('')
 const audioInputs = ref<AudioInputOption[]>([])
 const selectedAudioInputId = ref(localStorage.getItem('voice-shopping-audio-input') ?? '')
 const activeAudioInputLabel = ref('')
 const utterance = ref('')
+const isTurnInFlight = ref(false)
 const loading = ref(true)
 const error = ref('')
 const flowStatus = ref('正在连接导购…')
@@ -156,6 +158,10 @@ const recommendationReasonsByTurn = new Map<string, Map<string, string>>()
 let recommendationTurnId = ''
 let isBargingIn = false
 let latestVoiceTurnId = ''
+const orderIdempotencyKeys = new Map<string, string>()
+let activeTurnId = ''
+let activeTurnSource: 'text' | 'voice' | null = null
+let retryableTextTurn: { id: string; text: string } | null = null
 
 const categories = computed(() => [...new Set(products.value.map((item) => item.categoryL2))])
 const visibleProducts = computed(() =>
@@ -196,6 +202,54 @@ function orderStatusLabel(value: Order['status']) {
   return orderStatusLabels[value]
 }
 
+function isOrderRequestInFlight(productId: string) {
+  return orderRequestsInFlight.value.has(productId)
+}
+
+function setOrderRequestInFlight(productId: string, inFlight: boolean) {
+  const next = new Set(orderRequestsInFlight.value)
+  if (inFlight) next.add(productId)
+  else next.delete(productId)
+  orderRequestsInFlight.value = next
+}
+
+function orderIdempotencyKey(productId: string) {
+  const existing = orderIdempotencyKeys.get(productId)
+  if (existing) return existing
+  const key = `web-catalog-${crypto.randomUUID()}`
+  orderIdempotencyKeys.set(productId, key)
+  return key
+}
+
+function startTextTurn(text: string) {
+  const pending = retryableTextTurn && retryableTextTurn.text === text
+    ? retryableTextTurn
+    : { id: crypto.randomUUID(), text }
+  retryableTextTurn = pending
+  activeTurnId = pending.id
+  activeTurnSource = 'text'
+  isTurnInFlight.value = true
+  return pending
+}
+
+function startVoiceTurn(turnId: string) {
+  activeTurnId = turnId
+  activeTurnSource = 'voice'
+  isTurnInFlight.value = true
+}
+
+function finishTurn(turnId: string, retryable = false) {
+  if (activeTurnId !== turnId) return
+  const source = activeTurnSource
+  activeTurnId = ''
+  activeTurnSource = null
+  isTurnInFlight.value = false
+  if (source === 'text' && !retryable) retryableTextTurn = null
+  if (source === 'text' && retryable && retryableTextTurn?.id === turnId && !utterance.value.trim()) {
+    utterance.value = retryableTextTurn.text
+  }
+}
+
 function formatPrice(value: number) {
   return Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
@@ -206,6 +260,7 @@ function formatDateTime(value: string) {
 }
 
 function sendQuickPrompt(text: string) {
+  if (isTurnInFlight.value) return
   utterance.value = text
   void sendUtterance()
 }
@@ -487,10 +542,12 @@ function handleEvent(event: ApiEvent<Record<string, unknown>>) {
     } else if (!suppressSpeech) {
       speak(text)
     }
+    finishTurn(event.turnId)
   }
   if (event.type === 'flow.error') {
     error.value = String(event.payload.message ?? 'Agent 处理失败')
     flowStatus.value = '处理失败，请重试'
+    finishTurn(event.turnId === 'unknown' ? activeTurnId : event.turnId, true)
   }
   if (event.type === 'order.updated') void loadData()
 }
@@ -513,6 +570,7 @@ function connectText(): Promise<void> {
     socket.onclose = () => {
       if (textSocket === socket) textSocket = null
       textConnectPromise = null
+      if (activeTurnSource === 'text') finishTurn(activeTurnId, true)
       flowStatus.value = '连接已断开，发送或录音时会自动重连'
     }
     socket.onmessage = (message) => {
@@ -621,6 +679,7 @@ function connectAudio(): Promise<void> {
         }
         error.value = messageText
         flowStatus.value = '语音识别失败，请重试'
+        if (event.turnId) finishTurn(event.turnId)
       }
       if (event.type === 'audio.start') {
         const pendingText = event.turnId ? pendingSpeechByTurn.get(event.turnId) : undefined
@@ -719,19 +778,26 @@ function commitVoiceTurn(turnId: string) {
   } else if (capturedAudioPeak < 0.003) {
     error.value = 'Chrome 麦克风输入接近静音，请检查当前输入设备或系统音量'
   }
-  audioSocket.send(
-    JSON.stringify({
-      type: 'audio.commit',
-      turnId,
-      clientMetrics: {
-        capturedBytes: capturedAudioBytes,
-        peak: Number(capturedAudioPeak.toFixed(6)),
-        durationMs,
-        inputLabel: activeAudioInputLabel.value,
-        selectionMode: selectedAudioInputId.value ? 'explicit' : 'default',
-      },
-    }),
-  )
+  startVoiceTurn(turnId)
+  try {
+    audioSocket.send(
+      JSON.stringify({
+        type: 'audio.commit',
+        turnId,
+        clientMetrics: {
+          capturedBytes: capturedAudioBytes,
+          peak: Number(capturedAudioPeak.toFixed(6)),
+          durationMs,
+          inputLabel: activeAudioInputLabel.value,
+          selectionMode: selectedAudioInputId.value ? 'explicit' : 'default',
+        },
+      }),
+    )
+  } catch (reason) {
+    finishTurn(turnId)
+    error.value = reason instanceof Error ? reason.message : '语音提交失败'
+    flowStatus.value = '语音识别失败，请重试'
+  }
   recordingTurnId = ''
   asrReady = false
   stopRequested = false
@@ -750,22 +816,28 @@ function encodePcm16(input: Float32Array, sourceRate: number): ArrayBuffer {
 }
 
 async function sendUtterance() {
+  if (isTurnInFlight.value) return
   const text = utterance.value.trim()
   if (!text) return
   error.value = ''
+  const pending = startTextTurn(text)
   try {
     await connectText()
-    const turnId = crypto.randomUUID()
-    messages.value.push({ role: 'user', text })
+    if (textSocket?.readyState !== WebSocket.OPEN) throw new Error('文本连接未就绪')
+    if (!messages.value.some((message) => message.role === 'user' && message.turnId === pending.id)) {
+      messages.value.push({ role: 'user', text, turnId: pending.id })
+    }
     recommendations.value = []
-    textSocket?.send(JSON.stringify({ type: 'turn.submit', turnId, utterance: text }))
+    textSocket.send(JSON.stringify({ type: 'turn.submit', turnId: pending.id, utterance: text }))
     utterance.value = ''
   } catch (reason) {
+    finishTurn(pending.id, true)
     error.value = reason instanceof Error ? reason.message : '发送失败'
   }
 }
 
 async function startVoice() {
+  if (isTurnInFlight.value) return
   error.value = ''
   isBargingIn = true
   latestVoiceTurnId = ''
@@ -899,6 +971,8 @@ function buySelectedProduct() {
 }
 
 async function buyProduct(productId: string) {
+  if (isOrderRequestInFlight(productId)) return
+  setOrderRequestInFlight(productId, true)
   error.value = ''
   try {
     await requestJson<Order>('/orders', {
@@ -907,14 +981,17 @@ async function buyProduct(productId: string) {
       body: JSON.stringify({
         productId,
         quantity: 1,
-        idempotencyKey: `web-catalog-${crypto.randomUUID()}`,
+        idempotencyKey: orderIdempotencyKey(productId),
       }),
     })
     await loadData()
     closeProductDetails()
     document.querySelector('#orders')?.scrollIntoView({ behavior: 'smooth' })
+    orderIdempotencyKeys.delete(productId)
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '创建订单失败'
+  } finally {
+    setOrderRequestInFlight(productId, false)
   }
 }
 
@@ -999,6 +1076,7 @@ onBeforeUnmount(() => {
               class="mic-button"
               :class="{ 'mic-button--active': isRecording }"
               type="button"
+              :disabled="isTurnInFlight"
               :aria-label="isRecording ? '停止录音' : '开始录音'"
               @click="isRecording ? stopVoice() : startVoice()"
             >
@@ -1019,12 +1097,12 @@ onBeforeUnmount(() => {
           </div>
           <div class="voice-status" aria-live="polite"><span class="status-dot"></span>{{ flowStatus }}</div>
           <div class="voice-input-row">
-            <input v-model="utterance" class="input" aria-label="导购消息" placeholder="例如：我想买一双通勤穿的鞋" @keyup.enter="sendUtterance" />
-            <button class="primary-button voice-send-button" type="button" @click="sendUtterance">发送需求</button>
+            <input v-model="utterance" class="input" aria-label="导购消息" placeholder="例如：我想买一双通勤穿的鞋" :disabled="isTurnInFlight" @keyup.enter="sendUtterance" />
+            <button class="primary-button voice-send-button" type="button" :disabled="isTurnInFlight" @click="sendUtterance">{{ isTurnInFlight ? '处理中...' : '发送需求' }}</button>
           </div>
           <div class="voice-examples" aria-label="快速开始">
             <span class="voice-examples__label">试着说</span>
-            <button v-for="prompt in quickPrompts" :key="prompt" class="voice-example" type="button" @click="sendQuickPrompt(prompt)">{{ prompt }}</button>
+            <button v-for="prompt in quickPrompts" :key="prompt" class="voice-example" type="button" :disabled="isTurnInFlight" @click="sendQuickPrompt(prompt)">{{ prompt }}</button>
           </div>
         </div>
         <div ref="conversationElement" class="conversation" aria-live="polite">
@@ -1061,7 +1139,7 @@ onBeforeUnmount(() => {
               <span class="product-card-title">{{ card.name }}</span>
               <span class="reason">{{ card.reason || '正在生成专属推荐理由…' }}</span>
             </button>
-            <div class="product-card-footer"><span class="product-card-availability">有货 · {{ card.stock }} 件</span><span class="price">¥{{ formatPrice(card.price) }}</span><button class="primary-button small-button" type="button" @click="buyProduct(card.productId)">生成待确认订单</button></div>
+            <div class="product-card-footer"><span class="product-card-availability">有货 · {{ card.stock }} 件</span><span class="price">¥{{ formatPrice(card.price) }}</span><button class="primary-button small-button" type="button" :disabled="isOrderRequestInFlight(card.productId)" @click="buyProduct(card.productId)">{{ isOrderRequestInFlight(card.productId) ? '创建中...' : '生成待确认订单' }}</button></div>
           </article>
         </div>
       </section>
@@ -1093,7 +1171,7 @@ onBeforeUnmount(() => {
               <span class="product-card-merchant">{{ product.brand || product.merchantName || '声选店铺' }}</span>
               <span class="product-card-description">{{ product.description }}</span>
             </button>
-            <div class="product-card-footer"><span class="price">¥{{ formatPrice(product.price) }}</span><button class="secondary-button small-button" type="button" @click="buyProduct(product.id)">购买</button></div>
+            <div class="product-card-footer"><span class="price">¥{{ formatPrice(product.price) }}</span><button class="secondary-button small-button" type="button" :disabled="isOrderRequestInFlight(product.id)" @click="buyProduct(product.id)">{{ isOrderRequestInFlight(product.id) ? '创建中...' : '购买' }}</button></div>
           </article>
         </div>
       </section>
@@ -1119,7 +1197,8 @@ onBeforeUnmount(() => {
     <ProductDetailModal
       v-if="selectedProduct"
       :product="selectedProduct"
-      action-label="生成待确认订单"
+      :action-label="isOrderRequestInFlight(selectedProduct.id) ? '创建中...' : '生成待确认订单'"
+      :action-disabled="isOrderRequestInFlight(selectedProduct.id)"
       @close="closeProductDetails"
       @action="buySelectedProduct"
     />
