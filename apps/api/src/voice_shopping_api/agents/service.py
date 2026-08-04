@@ -219,7 +219,17 @@ async def _catalog(
             embedding = None
     sql, params = _build_catalog_query(filters, embedding=embedding)
     result = await session.execute(text(sql), params)
-    return rows(result)
+    catalog = rows(result)
+    if embedding is None or len(catalog) >= 20:
+        return catalog
+
+    # HNSW applies approximate nearest-neighbor search before JSONB filters. With a
+    # narrow filter, its candidate set can omit matching products. Compare against
+    # the identical deterministic query whenever HNSW returns fewer than the page.
+    fallback_sql, fallback_params = _build_catalog_query(filters, embedding=None)
+    fallback_result = await session.execute(text(fallback_sql), fallback_params)
+    fallback_catalog = rows(fallback_result)
+    return fallback_catalog if len(fallback_catalog) > len(catalog) else catalog
 
 
 async def _taxonomy_context(session: AsyncSession) -> dict[str, Any]:

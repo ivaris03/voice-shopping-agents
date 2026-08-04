@@ -1,7 +1,11 @@
 """召回 SQL 动态拼接的纯函数测试（不依赖数据库）。"""
 
 import json
+from typing import Any
 
+import pytest
+
+from voice_shopping_api.agents import service
 from voice_shopping_api.agents.service import _build_catalog_query
 from voice_shopping_api.agents.state import CatalogFilters
 
@@ -125,3 +129,62 @@ def test_multiple_filled_slots_stack_conditions() -> None:
     assert "slots_size" not in sql  # size 未填
     assert params["slots_gender"] == "female"
     assert params["slots_terrain_json"] == json.dumps("road")
+
+
+class _FakeResult:
+    def __init__(self, values: list[dict[str, Any]]) -> None:
+        self._values = values
+
+    def mappings(self) -> "_FakeResult":
+        return self
+
+    def all(self) -> list[dict[str, Any]]:
+        return self._values
+
+
+class _FakeSession:
+    def __init__(self, results: list[_FakeResult]) -> None:
+        self._results = results
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def execute(self, statement: Any, params: dict[str, Any]) -> _FakeResult:
+        self.calls.append((str(statement), params))
+        return self._results.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_incomplete_vector_retrieval_retries_with_deterministic_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _FakeSession(
+        [
+            _FakeResult([{"id": "product-1", "name": "近似命中", "vector_score": 0.8}]),
+            _FakeResult(
+                [
+                    {"id": "product-1", "name": "近似命中", "vector_score": 0},
+                    {"id": "product-2", "name": "遗漏商品", "vector_score": 0},
+                ]
+            ),
+        ]
+    )
+
+    async def embed(_: str) -> list[float]:
+        return [0.1, 0.2]
+
+    monkeypatch.setattr(service, "embed_query", embed)
+
+    products = await service._catalog(
+        session,  # type: ignore[arg-type]
+        "有硬过滤的查询",
+        True,
+        {"category": "HEADPHONES", "slots": {"connectivity": "wired"}},
+    )
+
+    assert products == [
+        {"id": "product-1", "name": "近似命中", "vector_score": 0},
+        {"id": "product-2", "name": "遗漏商品", "vector_score": 0},
+    ]
+    assert len(session.calls) == 2
+    assert "p.embedding IS NOT NULL" in session.calls[0][0]
+    assert "p.embedding IS NOT NULL" not in session.calls[1][0]
+    assert session.calls[1][1]["embedding"] is None

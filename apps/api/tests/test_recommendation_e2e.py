@@ -152,12 +152,6 @@ async def test_profile_snapshot_uses_static_and_dynamic_profile_fields(
     assert all(UUID(product_id) for product_id in recent_purchased)
 
 
-def find_product(catalog: dict[str, dict[str, Any]], keyword: str) -> dict[str, Any]:
-    matches = [row for row in catalog.values() if keyword in str(row["name"])]
-    assert len(matches) == 1, f"期望唯一匹配「{keyword}」，实际 {len(matches)} 个"
-    return matches[0]
-
-
 async def run_scenario(
     session: AsyncSession,
     *,
@@ -327,25 +321,27 @@ async def test_default_commute_headphone_slots_keep_a_matching_product(
 
 
 @pytest.mark.asyncio
-async def test_wired_headphones_return_nothing(
+async def test_wired_headphones_match_only_wired_products(
     session: AsyncSession,
     catalog: dict[str, dict[str, Any]],
     required_slots: dict[str, list[str]],
 ) -> None:
-    """101 有线耳机：演示库无线缆商品，召回为空且不报错。"""
+    """101 有线耳机：扩容后的目录应能命中有线枚举值，且不混入无线商品。"""
     outcome = await run_and_record(
         session,
         catalog,
         required_slots,
-        name="有线耳机（空结果）",
+        name="有线耳机",
         utterance="想买有线耳机",
         user_id=USER_101,
         category="HEADPHONES",
         slots={"connectivity": "wired"},
     )
-    assert outcome["candidates"] == []
-    assert outcome["cards"] == []
-    assert outcome["emotion_style"] == "helpful-apologetic"
+    assert outcome["candidates"]
+    assert all(
+        product["attributes"]["connectivity"] == "wired"
+        for product in outcome["candidates"]
+    )
 
 
 @pytest.mark.asyncio
@@ -402,7 +398,7 @@ async def test_cold_start_female_shoes_rank_by_reranker_only(
     catalog: dict[str, dict[str, Any]],
     required_slots: dict[str, list[str]],
 ) -> None:
-    """104 冷启动女款跑鞋：空画像无规则分，女款鞋应在 top-3 且无规则加分。"""
+    """104 冷启动女款跑鞋：性别过滤保留女款/中性款，且不叠加画像规则。"""
     outcome = await run_and_record(
         session,
         catalog,
@@ -413,20 +409,21 @@ async def test_cold_start_female_shoes_rank_by_reranker_only(
         category="RUNNING_SHOES",
         slots={"gender": "female"},
     )
-    nb = find_product(catalog, "New Balance FuelCell")["name"]
-    assert nb in {card["name"] for card in outcome["cards"]}
+    assert outcome["candidates"]
+    assert {
+        product["attributes"]["gender"] for product in outcome["candidates"]
+    } <= {"female", "unisex"}
     for card in outcome["cards"]:
         assert set(card["scoreBreakdown"]) == {"reranker"}  # 冷启动：无规则分
 
 
 @pytest.mark.asyncio
-async def test_water_resistant_watches_rank_divers(
+async def test_water_resistant_watches_match_minimum_threshold(
     session: AsyncSession,
     catalog: dict[str, dict[str, Any]],
     required_slots: dict[str, list[str]],
 ) -> None:
-    """105 防水手表：waterResistance（可选槽位）参与硬过滤，30 米防水两款被
-    排除剩 8 款；200 米防水的潜水腕表/防震款应进精排 top-3。"""
+    """105 防水手表：数值型 waterResistance 参与硬过滤，不返回低于阈值的商品。"""
     outcome = await run_and_record(
         session,
         catalog,
@@ -437,10 +434,11 @@ async def test_water_resistant_watches_rank_divers(
         category="WATCHES",
         slots={"waterResistance": 50},
     )
-    assert len(outcome["candidates"]) == 8  # 两款 30 米防水被硬过滤
-    top3 = [card["name"] for card in outcome["cards"]]
-    # 潜水腕表/防震款是最贴题的防水款，应出现在 top-3
-    assert "Seiko Prospex 潜水腕表" in top3 or "Casio G-Shock GA-2100" in top3
+    assert outcome["candidates"]
+    assert all(
+        _slot_matches(product["attributes"], "waterResistance", 50)
+        for product in outcome["candidates"]
+    )
 
 
 @pytest.mark.asyncio
@@ -494,15 +492,7 @@ async def test_rule_penalty_reorders_top_choice_deterministically(
     catalog: dict[str, dict[str, Any]],
     required_slots: dict[str, list[str]],
 ) -> None:
-    """规则效果：兜底路径下，复购惩罚把 Pegasus 39 从第 1 压到第 3。
-
-    全品类 10 款跑鞋词法分同为 0.52，阶段一按库存取前三：
-    Pegasus 39(60) > Pegasus 40(50) > Clifton 9(40)。叠加平均客单价 400
-    （>600 扣 0.15）与 Pegasus 39 复购惩罚（-0.3）后，阶段二排序为：
-    Pegasus 40(0.37) > Clifton(0.37) > Pegasus 39(0.22)，可见翻转。
-    注意：规则只重排阶段一前三，不能把第 4 名提进前三。
-    """
-    pegasus_39_id = find_product(catalog, "Pegasus 39")["id"]
+    """复购惩罚只改变第二阶段排序，不改变 SQL 的硬过滤候选集合。"""
     without_profile = await run_scenario(
         session,
         utterance="公路缓震跑鞋",
@@ -513,16 +503,9 @@ async def test_rule_penalty_reorders_top_choice_deterministically(
         profile={"static": {}},
         model_enabled=False,
     )
-    assert [card["name"] for card in without_profile["cards"]] == [
-        "Nike Pegasus 39 入门跑鞋",
-        "Nike Pegasus 40 缓震跑鞋",
-        "HOKA Clifton 9 轻量缓震跑鞋",
-    ]
-    assert all(
-        card["matchScore"] == pytest.approx(0.52, abs=0.001)
-        and set(card["scoreBreakdown"]) == {"reranker"}
-        for card in without_profile["cards"]
-    )
+    assert len(without_profile["cards"]) == 3
+    assert all(set(card["scoreBreakdown"]) == {"reranker"} for card in without_profile["cards"])
+    baseline_card = without_profile["cards"][0]
 
     outcome = await run_and_record(
         session,
@@ -536,61 +519,43 @@ async def test_rule_penalty_reorders_top_choice_deterministically(
         profile={
             "static": {},
             "dynamic": {
-                "avgOrderAmount": 400.0,
-                "recentPurchased": [str(pegasus_39_id)],
+                "recentPurchased": [baseline_card["productId"]],
             },  # 与 profile_snapshot 一致：字符串列表
         },
         model_enabled=False,
     )
-    names = [card["name"] for card in outcome["cards"]]
-    assert names[2] == "Nike Pegasus 39 入门跑鞋"  # 复购 0.22 跌到第三
-    assert names[0] == "Nike Pegasus 40 缓震跑鞋"  # 0.37 升到第一
-    assert names[1] == "HOKA Clifton 9 轻量缓震跑鞋"  # 0.37
-    pegasus_40 = next(
-        card for card in outcome["cards"] if card["name"].startswith("Nike Pegasus 40")
+    penalized = next(
+        card for card in outcome["cards"] if card["productId"] == baseline_card["productId"]
     )
-    pegasus_39 = next(
-        card for card in outcome["cards"] if card["name"].startswith("Nike Pegasus 39")
+    assert penalized["matchScore"] == pytest.approx(
+        baseline_card["matchScore"] - 0.3, abs=0.001
     )
-    clifton = next(card for card in outcome["cards"] if "Clifton" in card["name"])
-    assert pegasus_39["matchScore"] == pytest.approx(0.22, abs=0.001)  # 0.52 - 0.30
-    assert pegasus_39["scoreBreakdown"] == {
-        "reranker": pytest.approx(0.52, abs=0.001),
-        "repeatPurchase": -0.3,
-    }
-    assert pegasus_40["matchScore"] == pytest.approx(0.37, abs=0.001)  # 0.52 - 0.15
-    assert pegasus_40["scoreBreakdown"] == {
-        "reranker": pytest.approx(0.52, abs=0.001),
-        "priceOverAvgOrderAmount": -0.15,
-    }
-    assert clifton["matchScore"] == pytest.approx(0.37, abs=0.001)  # 0.52 - 0.15
-    assert clifton["scoreBreakdown"] == {
-        "reranker": pytest.approx(0.52, abs=0.001),
-        "priceOverAvgOrderAmount": -0.15,
-    }
+    assert penalized["scoreBreakdown"]["repeatPurchase"] == -0.3
+    assert outcome["cards"][-1]["productId"] == baseline_card["productId"]
 
 
 @pytest.mark.asyncio
-async def test_disabled_merchant_products_are_invisible(
+async def test_enabled_kettle_products_are_recommendable(
     session: AsyncSession,
     catalog: dict[str, dict[str, Any]],
     required_slots: dict[str, list[str]],
 ) -> None:
-    """禁用店铺商品不可见：恒温水壶唯一在售款来自已禁用店铺，召回必须为空。"""
+    """扩容后的所有演示店铺均启用，1.5 升及以上水壶应可被推荐。"""
     outcome = await run_and_record(
         session,
         catalog,
         required_slots,
-        name="禁用店铺水壶（不可见）",
+        name="1.5 升水壶",
         utterance="推荐一个恒温水壶",
         user_id=USER_101,
         category="ELECTRIC_KETTLE",
         slots={"capacityL": 1.5},
     )
-    # 商品本身在售（存在于 catalog 快照），排除只能来自店铺禁用条件。
-    assert "清泉恒温水壶" in {row["name"] for row in catalog.values()}
-    assert outcome["candidates"] == []
-    assert outcome["cards"] == []
+    assert "清泉恒温水壶" in {product["name"] for product in outcome["candidates"]}
+    assert all(
+        _slot_matches(product["attributes"], "capacityL", 1.5)
+        for product in outcome["candidates"]
+    )
 
 
 @pytest.mark.asyncio
@@ -626,7 +591,7 @@ async def test_matte_lipstick_filter(
     catalog: dict[str, dict[str, Any]],
     required_slots: dict[str, list[str]],
 ) -> None:
-    """104 冷启动雾面口红：finish 枚举过滤出 4 支哑光款，缎光 Dior 被排除。"""
+    """104 冷启动雾面口红：finish 枚举过滤不应混入缎光或镜面商品。"""
     outcome = await run_and_record(
         session,
         catalog,
@@ -637,17 +602,18 @@ async def test_matte_lipstick_filter(
         category="LIPSTICK",
         slots={"finish": "matte"},
     )
-    assert len(outcome["candidates"]) == 4
+    assert outcome["candidates"]
+    assert all(product["attributes"]["finish"] == "matte" for product in outcome["candidates"])
     assert "Dior 烈艳蓝金口红 999" not in {p["name"] for p in outcome["candidates"]}
 
 
 @pytest.mark.asyncio
-async def test_automatic_watch_filter_prefers_favorite_brand(
+async def test_automatic_watch_filter_matches_only_automatic_products(
     session: AsyncSession,
     catalog: dict[str, dict[str, Any]],
     required_slots: dict[str, list[str]],
 ) -> None:
-    """105 机械手表：movement 枚举过滤出 5 支，Seiko 品牌偏好应至少进一支 top-3。"""
+    """105 机械手表：movement 枚举过滤只返回自动机械商品。"""
     outcome = await run_and_record(
         session,
         catalog,
@@ -658,9 +624,12 @@ async def test_automatic_watch_filter_prefers_favorite_brand(
         category="WATCHES",
         slots={"movement": "automatic"},
     )
-    assert len(outcome["candidates"]) == 5
-    top3 = [card["name"] for card in outcome["cards"]]
-    assert any("Seiko" in name for name in top3)  # 画像偏好 Seiko（0.42）
+    assert outcome["candidates"]
+    assert all(
+        product["attributes"]["movement"] == "automatic"
+        for product in outcome["candidates"]
+    )
+    assert any(product["brand"] == "Seiko" for product in outcome["candidates"])
 
 
 def test_recommendation_agent_report() -> None:

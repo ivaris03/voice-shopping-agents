@@ -4,6 +4,8 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
 
+from voice_shopping_api.core.taxonomy import list_categories, validate_attributes
+
 CUSTOMER_HEADERS = {
     "X-User-ID": "00000000-0000-4000-8000-000000000101",
 }
@@ -21,7 +23,44 @@ async def test_e2e_database_runs_migrations_and_demo_seed(e2e_connection) -> Non
         "20260804_migrate_legacy_catalog_and_profiles",
     ]
     product_count = await e2e_connection.scalar(text("SELECT count(*) FROM products"))
-    assert product_count and product_count > 0
+    assert product_count == 200
+    scale = await e2e_connection.execute(
+        text(
+            """
+            SELECT count(*)::int AS store_count,
+                   count(DISTINCT owner_user_id)::int AS merchant_owner_count
+            FROM merchants
+            WHERE deleted_at IS NULL
+            """
+        )
+    )
+    assert dict(scale.mappings().one()) == {
+        "store_count": 20,
+        "merchant_owner_count": 5,
+    }
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_demo_seed_products_match_category_slots(e2e_session) -> None:
+    """Every seeded product must pass the same taxonomy validator as the write API."""
+
+    categories = await list_categories(e2e_session)
+    slots_by_category = {
+        str(category["category_l2"]): list(category["slots"]) for category in categories
+    }
+    result = await e2e_session.execute(
+        text("SELECT category_l2, attributes FROM products ORDER BY id")
+    )
+    products = [dict(row) for row in result.mappings()]
+
+    assert len(products) == 200
+    for product in products:
+        validate_attributes(
+            str(product["category_l2"]),
+            dict(product["attributes"]),
+            slots_by_category[str(product["category_l2"])],
+        )
 
 
 @pytest.mark.e2e

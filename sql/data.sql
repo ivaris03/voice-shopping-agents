@@ -1,9 +1,11 @@
 -- 语音导购平台演示数据
 -- 可重复执行；仅用于本地开发/演示。演示账号的初始密码均为 Demo1234!。
+-- 目录规模：5 个商家账号、20 家店铺、200 件商品（每店 10 件）。
 
 BEGIN;
 
--- 固定范围清理：仅重置本文件维护的演示会话、业务状态投影和订单数据。
+-- 固定 UUID 前缀仅由本演示种子使用。先清理该范围，避免旧目录遗留属性
+-- 与当前 taxonomy 不一致，也让重复播种恢复到相同的演示状态。
 DELETE FROM session_states
 WHERE session_id IN (
     '30000000-0000-4000-8000-000000000001',
@@ -13,11 +15,8 @@ WHERE session_id IN (
 );
 
 DELETE FROM orders
-WHERE id IN (
-    '50000000-0000-4000-8000-000000000001',
-    '50000000-0000-4000-8000-000000000002',
-    '50000000-0000-4000-8000-000000000003'
-);
+WHERE merchant_id::text LIKE '10000000-0000-4000-8000-%'
+   OR product_id::text LIKE '20000000-0000-4000-8000-%';
 
 DELETE FROM session_messages
 WHERE session_id IN (
@@ -34,6 +33,13 @@ WHERE id IN (
     '30000000-0000-4000-8000-000000000003',
     '30000000-0000-4000-8000-000000000004'
 );
+
+DELETE FROM products
+WHERE merchant_id::text LIKE '10000000-0000-4000-8000-%'
+   OR id::text LIKE '20000000-0000-4000-8000-%';
+
+DELETE FROM merchants
+WHERE id::text LIKE '10000000-0000-4000-8000-%';
 
 INSERT INTO users (id, email, password_hash, display_name, phone, role, status)
 VALUES
@@ -85,7 +91,24 @@ ON CONFLICT (category_l2) DO UPDATE SET
     required_slots = EXCLUDED.required_slots,
     optional_slots = EXCLUDED.optional_slots;
 
--- 每个槽位在创建时必须同时给出非空枚举；必填/选填只影响澄清是否阻塞。
+-- 清除历史演示库中可能残留的槽位，保证分类契约只有下列定义。
+DELETE FROM category_slots AS slot
+USING category_l2 AS category
+WHERE slot.category_id = category.id
+  AND category.category_l2 IN (
+      'HEADPHONES', 'COFFEE_MACHINE', 'ELECTRIC_KETTLE',
+      'RUNNING_SHOES', 'WATCHES', 'LIPSTICK'
+  )
+  AND slot.key NOT IN (
+      'form', 'connectivity', 'noiseCancellation', 'batteryHours',
+      'type', 'steamWand', 'pressureBar', 'waterTankMl',
+      'capacityL', 'temperatureControl', 'keepWarm',
+      'gender', 'size', 'terrain', 'cushion', 'footType',
+      'movement', 'material', 'waterResistance',
+      'shade', 'finish', 'skinType'
+  );
+
+-- 每个槽位同时给出非空枚举；必填/选填仅影响澄清是否阻塞。
 INSERT INTO category_slots (category_id, key, is_required, enum_values)
 SELECT c.id, seed.key, seed.is_required, seed.enum_values
 FROM (
@@ -119,402 +142,341 @@ ON CONFLICT (category_id, key) DO UPDATE SET
     is_required = EXCLUDED.is_required,
     enum_values = EXCLUDED.enum_values;
 
+-- 5 个商家账号各管理 4 家店铺，均已启用，避免演示时出现后台存在而用户端不可见的商品。
 INSERT INTO merchants (
     id, owner_user_id, name, slug, description, logo_url, contact_phone,
     is_enabled, disabled_reason
 )
 VALUES
-    (
-        '10000000-0000-4000-8000-000000000001',
-        '00000000-0000-4000-8000-000000000002',
-        '声动数码', 'sound-digital', '专注耳机与便携音频设备。',
-        'https://example.com/images/merchants/sound-digital.png', '13800000002', true, NULL
-    ),
-    (
-        '10000000-0000-4000-8000-000000000002',
-        '00000000-0000-4000-8000-000000000003',
-        '日常家电', 'daily-appliances', '提供实用、易维护的小家电。',
-        'https://example.com/images/merchants/daily-appliances.png', '13800000003', true, NULL
-    ),
-    (
-        '10000000-0000-4000-8000-000000000003',
-        '00000000-0000-4000-8000-000000000003',
-        '日常家电特卖店', 'daily-appliances-outlet', '暂停营业的演示店铺。',
-        'https://example.com/images/merchants/daily-appliances-outlet.png', '13800000003', false, '店铺资料审核中'
-    ),
-    (
-        '10000000-0000-4000-8000-000000000004',
-        '00000000-0000-4000-8000-000000000004',
-        '飞跃运动旗舰店', 'flyover-sports', '提供覆盖日常训练、竞速和越野场景的专业跑鞋。',
-        'https://example.com/images/merchants/flyover-sports.png', '13800000004', true, NULL
-    ),
-    (
-        '10000000-0000-4000-8000-000000000005',
-        '00000000-0000-4000-8000-000000000005',
-        '恒时腕表精品店', 'timeless-watches', '主营机械表、石英表和运动腕表。',
-        'https://example.com/images/merchants/timeless-watches.png', '13800000005', true, NULL
-    ),
-    (
-        '10000000-0000-4000-8000-000000000006',
-        '00000000-0000-4000-8000-000000000006',
-        '花漾美妆', 'bloom-beauty', '提供适合不同肤色和妆效偏好的彩妆商品。',
-        'https://example.com/images/merchants/bloom-beauty.png', '13800000006', true, NULL
-    )
-ON CONFLICT (id) DO UPDATE SET
-    owner_user_id = EXCLUDED.owner_user_id,
-    name = EXCLUDED.name,
-    slug = EXCLUDED.slug,
-    description = EXCLUDED.description,
-    logo_url = EXCLUDED.logo_url,
-    contact_phone = EXCLUDED.contact_phone,
-    is_enabled = EXCLUDED.is_enabled,
-    disabled_reason = EXCLUDED.disabled_reason,
-    deleted_at = NULL;
+    ('10000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002', '声动数码旗舰店', 'sound-digital', '专注通勤、影音与运动耳机。', 'https://example.com/images/merchants/sound-digital.png', '13800000002', true, NULL),
+    ('10000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000002', '云听耳机店', 'cloud-listening', '提供不同佩戴形态的日常耳机。', 'https://example.com/images/merchants/cloud-listening.png', '13800000002', true, NULL),
+    ('10000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000002', '通勤音频馆', 'commute-audio', '为地铁、办公与通话场景挑选耳机。', 'https://example.com/images/merchants/commute-audio.png', '13800000002', true, NULL),
+    ('10000000-0000-4000-8000-000000000004', '00000000-0000-4000-8000-000000000002', '蓝调声学馆', 'blue-tone-audio', '覆盖有线和无线音频设备。', 'https://example.com/images/merchants/blue-tone-audio.png', '13800000002', true, NULL),
+    ('10000000-0000-4000-8000-000000000005', '00000000-0000-4000-8000-000000000003', '日常咖啡生活馆', 'daily-coffee', '适合家庭与办公室的咖啡设备。', 'https://example.com/images/merchants/daily-coffee.png', '13800000003', true, NULL),
+    ('10000000-0000-4000-8000-000000000006', '00000000-0000-4000-8000-000000000003', '晨间咖啡设备店', 'morning-coffee', '提供入门与进阶咖啡机。', 'https://example.com/images/merchants/morning-coffee.png', '13800000003', true, NULL),
+    ('10000000-0000-4000-8000-000000000007', '00000000-0000-4000-8000-000000000003', '沸点水具馆', 'boiling-kettle', '专注大容量和恒温电水壶。', 'https://example.com/images/merchants/boiling-kettle.png', '13800000003', true, NULL),
+    ('10000000-0000-4000-8000-000000000008', '00000000-0000-4000-8000-000000000003', '温度家电店', 'temperature-home', '为饮水和冲泡场景准备小家电。', 'https://example.com/images/merchants/temperature-home.png', '13800000003', true, NULL),
+    ('10000000-0000-4000-8000-000000000009', '00000000-0000-4000-8000-000000000004', '飞跃跑步旗舰店', 'flyover-running', '提供日常训练与竞速跑鞋。', 'https://example.com/images/merchants/flyover-running.png', '13800000004', true, NULL),
+    ('10000000-0000-4000-8000-000000000010', '00000000-0000-4000-8000-000000000004', '城市路跑装备店', 'city-running', '面向路跑训练和通勤步行。', 'https://example.com/images/merchants/city-running.png', '13800000004', true, NULL),
+    ('10000000-0000-4000-8000-000000000011', '00000000-0000-4000-8000-000000000004', '山径越野跑步店', 'trail-running', '提供越野和复杂路面跑鞋。', 'https://example.com/images/merchants/trail-running.png', '13800000004', true, NULL),
+    ('10000000-0000-4000-8000-000000000012', '00000000-0000-4000-8000-000000000004', '节奏运动生活馆', 'rhythm-sports', '覆盖日常运动和恢复训练装备。', 'https://example.com/images/merchants/rhythm-sports.png', '13800000004', true, NULL),
+    ('10000000-0000-4000-8000-000000000013', '00000000-0000-4000-8000-000000000005', '恒时腕表精品店', 'timeless-watches', '主营机械、石英和光动能腕表。', 'https://example.com/images/merchants/timeless-watches.png', '13800000005', true, NULL),
+    ('10000000-0000-4000-8000-000000000014', '00000000-0000-4000-8000-000000000005', '光域腕表馆', 'lume-watches', '提供通勤、商务和运动腕表。', 'https://example.com/images/merchants/lume-watches.png', '13800000005', true, NULL),
+    ('10000000-0000-4000-8000-000000000015', '00000000-0000-4000-8000-000000000005', '极昼运动表店', 'polar-watches', '侧重耐用、防水的运动腕表。', 'https://example.com/images/merchants/polar-watches.png', '13800000005', true, NULL),
+    ('10000000-0000-4000-8000-000000000016', '00000000-0000-4000-8000-000000000005', '表盘工坊', 'dial-workshop', '精选不同材质与机芯的腕表。', 'https://example.com/images/merchants/dial-workshop.png', '13800000005', true, NULL),
+    ('10000000-0000-4000-8000-000000000017', '00000000-0000-4000-8000-000000000006', '花漾美妆旗舰店', 'bloom-beauty', '提供日常通勤和宴会妆容产品。', 'https://example.com/images/merchants/bloom-beauty.png', '13800000006', true, NULL),
+    ('10000000-0000-4000-8000-000000000018', '00000000-0000-4000-8000-000000000006', '唇色实验室', 'lip-lab', '按色调和妆效挑选口红。', 'https://example.com/images/merchants/lip-lab.png', '13800000006', true, NULL),
+    ('10000000-0000-4000-8000-000000000019', '00000000-0000-4000-8000-000000000006', '玫瑰妆容馆', 'rose-makeup', '专注不同肤质可用的唇妆产品。', 'https://example.com/images/merchants/rose-makeup.png', '13800000006', true, NULL),
+    ('10000000-0000-4000-8000-000000000020', '00000000-0000-4000-8000-000000000006', '轻妆日用店', 'light-makeup', '提供轻松易用的日常彩妆。', 'https://example.com/images/merchants/light-makeup.png', '13800000006', true, NULL);
 
--- 用简单的单位向量填充演示 embedding；生产数据应由 embedding 服务生成。
-WITH product_seed (
-    id, merchant_id, sku, name, category_l1, category_l2, brand, description, price, stock,
-    attributes, selling_points, image_urls, status, embedding_axis
-) AS (
-    VALUES
-        (
-            '20000000-0000-4000-8000-000000000001'::uuid,
-            '10000000-0000-4000-8000-000000000001'::uuid,
-            'HEADPHONE-A1', '云雀 Air 降噪耳机', 'ELECTRONICS', 'HEADPHONES', '云雀',
-            '轻量头戴式主动降噪耳机，适合通勤。', 699.00::numeric, 80,
-            '{"form":"over-ear","connectivity":"bluetooth","noiseCancellation":true,"batteryHours":45,"color":"雾灰"}'::jsonb,
-            ARRAY['主动降噪适合通勤', '约 45 小时续航', '轻量头戴设计'],
-            ARRAY['https://example.com/images/products/headphone-a1-1.png'], 'on_sale', 1
-        ),
-        (
-            '20000000-0000-4000-8000-000000000002'::uuid,
-            '10000000-0000-4000-8000-000000000001'::uuid,
-            'HEADPHONE-B2', '潮汐 Pro 真无线耳机', 'ELECTRONICS', 'HEADPHONES', '潮汐',
-            '支持多设备连接的真无线降噪耳机。', 999.00::numeric, 45,
-            '{"form":"in-ear","connectivity":"bluetooth","noiseCancellation":true,"batteryHours":32,"waterResistance":"IPX5","color":"曜石黑"}'::jsonb,
-            ARRAY['双设备快速切换', '真无线主动降噪', 'IPX5 防水'],
-            ARRAY['https://example.com/images/products/headphone-b2-1.png'], 'on_sale', 2
-        ),
-        (
-            '20000000-0000-4000-8000-000000000003'::uuid,
-            '10000000-0000-4000-8000-000000000001'::uuid,
-            'HEADPHONE-C3', '原野 Lite 蓝牙耳机', 'ELECTRONICS', 'HEADPHONES', '原野',
-            '长续航入门头戴式蓝牙耳机。', 329.00::numeric, 120,
-            '{"form":"over-ear","connectivity":"bluetooth","noiseCancellation":false,"batteryHours":60,"color":"米白"}'::jsonb,
-            ARRAY['约 60 小时长续航', '入门价格友好', '柔软头戴佩戴舒适'],
-            ARRAY['https://example.com/images/products/headphone-c3-1.png'], 'on_sale', 3
-        ),
-        (
-            '20000000-0000-4000-8000-000000000004'::uuid,
-            '10000000-0000-4000-8000-000000000002'::uuid,
-            'COFFEE-M1', '晨雾 Mini 胶囊咖啡机', 'HOME_APPLIANCES', 'COFFEE_MACHINE', '晨雾',
-            '小体积胶囊咖啡机，适合单人和小户型。', 599.00::numeric, 35,
-            '{"type":"capsule","waterTankMl":650,"pressureBar":19,"color":"奶油白"}'::jsonb,
-            ARRAY['机身小巧节省台面空间', '19 Bar 萃取压力', '胶囊操作简单'],
-            ARRAY['https://example.com/images/products/coffee-m1-1.png'], 'on_sale', 11
-        ),
-        (
-            '20000000-0000-4000-8000-000000000005'::uuid,
-            '10000000-0000-4000-8000-000000000002'::uuid,
-            'COFFEE-M2', '山岚半自动咖啡机', 'HOME_APPLIANCES', 'COFFEE_MACHINE', '山岚',
-            '带蒸汽棒和压力表，适合进阶家庭咖啡。', 1699.00::numeric, 18,
-            '{"type":"semi-automatic","waterTankMl":1700,"pressureBar":15,"steamWand":true,"color":"银色"}'::jsonb,
-            ARRAY['专业蒸汽棒可打奶泡', '压力表辅助萃取', '1.7 升大水箱'],
-            ARRAY['https://example.com/images/products/coffee-m2-1.png'], 'on_sale', 12
-        ),
-        (
-            '20000000-0000-4000-8000-000000000006'::uuid,
-            '10000000-0000-4000-8000-000000000003'::uuid,
-            'KETTLE-X1', '清泉恒温水壶', 'HOME_APPLIANCES', 'ELECTRIC_KETTLE', '清泉',
-            '来自已禁用店铺的商品，用户端不应展示。', 239.00::numeric, 20,
-            '{"capacityL":1.5,"temperatureControl":true,"keepWarm":true}'::jsonb,
-            ARRAY['多档温度可调', '1.5 升容量', '支持保温'],
-            ARRAY['https://example.com/images/products/kettle-x1-1.png'], 'on_sale', 21
-        ),
-        -- 跑鞋：覆盖预算、缓震、足型、路面和性别等硬约束。
-        (
-            '20000000-0000-4000-8000-000000000101'::uuid,
-            '10000000-0000-4000-8000-000000000004'::uuid,
-            'RUN-001', 'Nike Pegasus 40 缓震跑鞋', 'SPORTS', 'RUNNING_SHOES', 'Nike',
-            'Air Zoom 中底提供稳定缓震，适合日常慢跑和长距离训练。', 899.00::numeric, 50,
-            '{"cushion":"high","weightClass":"medium","gender":"unisex","sizeRange":[36,46],"terrain":"road","originalPrice":1099,"isNewArrival":false}'::jsonb,
-            ARRAY['缓震充足', '透气鞋面', '日常训练百搭'],
-            ARRAY['https://example.com/images/products/run-001.png'], 'on_sale', 101
-        ),
-        (
-            '20000000-0000-4000-8000-000000000102'::uuid,
-            '10000000-0000-4000-8000-000000000004'::uuid,
-            'RUN-002', 'Adidas Ultraboost 22 跑鞋', 'SPORTS', 'RUNNING_SHOES', 'Adidas',
-            'Boost 中底带来柔软回弹，针织鞋面贴合自然。', 1299.00::numeric, 30,
-            '{"cushion":"high","weightClass":"medium","gender":"unisex","sizeRange":[38,46],"terrain":"road","originalPrice":1499,"isNewArrival":false}'::jsonb,
-            ARRAY['柔软缓震', '回弹明显', '适合长距离'],
-            ARRAY['https://example.com/images/products/run-002.png'], 'on_sale', 102
-        ),
-        (
-            '20000000-0000-4000-8000-000000000103'::uuid,
-            '10000000-0000-4000-8000-000000000004'::uuid,
-            'RUN-003', 'Saucony Endorphin Speed 3 竞速跑鞋', 'SPORTS', 'RUNNING_SHOES', 'Saucony',
-            '尼龙板搭配轻量泡棉，兼顾日常训练与比赛节奏。', 1399.00::numeric, 20,
-            '{"cushion":"medium","weightClass":"light","gender":"unisex","sizeRange":[39,45],"terrain":"road","plate":"nylon","originalPrice":1599,"isNewArrival":true}'::jsonb,
-            ARRAY['轻量设计', '推进感清晰', '训练比赛兼用'],
-            ARRAY['https://example.com/images/products/run-003.png'], 'on_sale', 103
-        ),
-        (
-            '20000000-0000-4000-8000-000000000104'::uuid,
-            '10000000-0000-4000-8000-000000000004'::uuid,
-            'RUN-004', 'Asics Gel-Kayano 30 稳定跑鞋', 'SPORTS', 'RUNNING_SHOES', 'Asics',
-            '稳定支撑系统搭配高缓震中底，适合扁平足和大体重跑者。', 1599.00::numeric, 25,
-            '{"cushion":"high","weightClass":"heavy","gender":"unisex","sizeRange":[38,46],"terrain":"road","footType":["flat","overpronation"],"originalPrice":1699,"isNewArrival":false}'::jsonb,
-            ARRAY['稳定支撑', '缓震持久', '适合扁平足'],
-            ARRAY['https://example.com/images/products/run-004.png'], 'on_sale', 104
-        ),
-        (
-            '20000000-0000-4000-8000-000000000105'::uuid,
-            '10000000-0000-4000-8000-000000000004'::uuid,
-            'RUN-005', 'HOKA Clifton 9 轻量缓震跑鞋', 'SPORTS', 'RUNNING_SHOES', 'HOKA',
-            '厚底缓震和轻量化设计兼顾跑步与日常步行。', 1180.00::numeric, 40,
-            '{"cushion":"high","weightClass":"light","gender":"unisex","sizeRange":[38,46],"terrain":"road","originalPrice":1380,"isNewArrival":false}'::jsonb,
-            ARRAY['厚底舒适', '轻量缓震', '通勤跑步兼用'],
-            ARRAY['https://example.com/images/products/run-005.png'], 'on_sale', 105
-        ),
-        (
-            '20000000-0000-4000-8000-000000000106'::uuid,
-            '10000000-0000-4000-8000-000000000004'::uuid,
-            'RUN-006', 'Nike Pegasus 39 入门跑鞋', 'SPORTS', 'RUNNING_SHOES', 'Nike',
-            '经典上一代日常训练鞋，适合作为入门选择。', 599.00::numeric, 60,
-            '{"cushion":"medium","weightClass":"medium","gender":"unisex","sizeRange":[36,45],"terrain":"road","originalPrice":799,"isNewArrival":false}'::jsonb,
-            ARRAY['价格友好', '经典耐穿', '适合入门训练'],
-            ARRAY['https://example.com/images/products/run-006.png'], 'on_sale', 106
-        ),
-        (
-            '20000000-0000-4000-8000-000000000107'::uuid,
-            '10000000-0000-4000-8000-000000000004'::uuid,
-            'RUN-007', 'New Balance FuelCell 女款跑鞋', 'SPORTS', 'RUNNING_SHOES', 'New Balance',
-            '轻量 FuelCell 中底和女性鞋楦，适合日常路跑。', 699.00::numeric, 15,
-            '{"cushion":"medium","weightClass":"light","gender":"female","color":"pink","sizeRange":[35,40],"terrain":"road","originalPrice":899,"isNewArrival":false}'::jsonb,
-            ARRAY['女性专属鞋楦', '轻量回弹', '粉色外观'],
-            ARRAY['https://example.com/images/products/run-007.png'], 'on_sale', 107
-        ),
-        (
-            '20000000-0000-4000-8000-000000000108'::uuid,
-            '10000000-0000-4000-8000-000000000004'::uuid,
-            'RUN-008', 'HOKA Speedgoat 5 越野跑鞋', 'SPORTS', 'RUNNING_SHOES', 'HOKA',
-            '专业越野鞋底提供复杂路面的抓地与保护。', 1580.00::numeric, 10,
-            '{"cushion":"high","weightClass":"medium","gender":"unisex","sizeRange":[39,46],"terrain":"trail","outsole":"Vibram","originalPrice":1780,"isNewArrival":false}'::jsonb,
-            ARRAY['越野专用', '强力抓地', '足部保护充分'],
-            ARRAY['https://example.com/images/products/run-008.png'], 'on_sale', 108
-        ),
-        (
-            '20000000-0000-4000-8000-000000000109'::uuid,
-            '10000000-0000-4000-8000-000000000004'::uuid,
-            'RUN-009', 'Nike Vaporfly 3 碳板竞速跑鞋', 'SPORTS', 'RUNNING_SHOES', 'Nike',
-            '全掌碳板搭配轻量高回弹中底，面向竞速和个人最佳成绩。', 1999.00::numeric, 8,
-            '{"cushion":"medium","weightClass":"ultralight","gender":"unisex","sizeRange":[39,45],"terrain":"road","plate":"carbon","originalPrice":2299,"isNewArrival":true}'::jsonb,
-            ARRAY['全掌碳板', '极致轻量', '竞速取向'],
-            ARRAY['https://example.com/images/products/run-009.png'], 'on_sale', 109
-        ),
-        (
-            '20000000-0000-4000-8000-000000000110'::uuid,
-            '10000000-0000-4000-8000-000000000004'::uuid,
-            'RUN-010', 'Asics Cumulus 25 日常训练鞋', 'SPORTS', 'RUNNING_SHOES', 'Asics',
-            '中性支撑和均衡缓震，适合稳定完成日常训练。', 899.00::numeric, 35,
-            '{"cushion":"medium","weightClass":"medium","gender":"unisex","sizeRange":[38,46],"terrain":"road","footType":["neutral"],"originalPrice":1099,"isNewArrival":false}'::jsonb,
-            ARRAY['均衡缓震', '中性支撑', '日常训练百搭'],
-            ARRAY['https://example.com/images/products/run-010.png'], 'on_sale', 110
-        ),
-        -- 腕表：覆盖机芯、材质、防水、性别和预算区间。
-        (
-            '20000000-0000-4000-8000-000000000201'::uuid,
-            '10000000-0000-4000-8000-000000000005'::uuid,
-            'WAT-001', 'Seiko 5 Sports 机械腕表', 'ACCESSORIES', 'WATCHES', 'Seiko',
-            '自动机械机芯搭配钢制表壳，适合入门机械表用户。', 2280.00::numeric, 40,
-            '{"movement":"automatic","material":"steel","gender":"male","waterResistance":"100m","originalPrice":2580,"isNewArrival":false}'::jsonb,
-            ARRAY['入门机械表', '100 米防水', '性价比突出'],
-            ARRAY['https://example.com/images/products/wat-001.png'], 'on_sale', 201
-        ),
-        (
-            '20000000-0000-4000-8000-000000000202'::uuid,
-            '10000000-0000-4000-8000-000000000005'::uuid,
-            'WAT-002', 'Casio G-Shock GA-2100', 'ACCESSORIES', 'WATCHES', 'Casio',
-            '轻量树脂表壳，兼顾抗震性能和街头风格。', 899.00::numeric, 50,
-            '{"movement":"quartz","material":"resin","gender":"unisex","waterResistance":"200m","originalPrice":1099,"isNewArrival":false}'::jsonb,
-            ARRAY['强力抗震', '200 米防水', '轻量街头造型'],
-            ARRAY['https://example.com/images/products/wat-002.png'], 'on_sale', 202
-        ),
-        (
-            '20000000-0000-4000-8000-000000000203'::uuid,
-            '10000000-0000-4000-8000-000000000005'::uuid,
-            'WAT-003', 'Citizen 光动能 AT8020', 'ACCESSORIES', 'WATCHES', 'Citizen',
-            '光动能驱动搭配钛金属表壳，支持电波校时。', 3680.00::numeric, 20,
-            '{"movement":"eco-drive","material":"titanium","gender":"male","waterResistance":"200m","radioControlled":true,"originalPrice":4280,"isNewArrival":false}'::jsonb,
-            ARRAY['光能驱动', '轻量钛金属', '电波自动校时'],
-            ARRAY['https://example.com/images/products/wat-003.png'], 'on_sale', 203
-        ),
-        (
-            '20000000-0000-4000-8000-000000000204'::uuid,
-            '10000000-0000-4000-8000-000000000005'::uuid,
-            'WAT-004', 'Tissot 力洛克机械腕表', 'ACCESSORIES', 'WATCHES', 'Tissot',
-            '经典商务外观，自动机械机芯提供约 80 小时动力储存。', 3880.00::numeric, 15,
-            '{"movement":"automatic","material":"steel","gender":"male","waterResistance":"50m","powerReserveHours":80,"originalPrice":4280,"isNewArrival":false}'::jsonb,
-            ARRAY['经典商务设计', '80 小时动储', '瑞士机械机芯'],
-            ARRAY['https://example.com/images/products/wat-004.png'], 'on_sale', 204
-        ),
-        (
-            '20000000-0000-4000-8000-000000000205'::uuid,
-            '10000000-0000-4000-8000-000000000005'::uuid,
-            'WAT-005', 'Casio 简约石英女表', 'ACCESSORIES', 'WATCHES', 'Casio',
-            '小表径简约设计，适合日常通勤搭配。', 399.00::numeric, 80,
-            '{"movement":"quartz","material":"steel","gender":"female","waterResistance":"30m","originalPrice":599,"isNewArrival":false}'::jsonb,
-            ARRAY['通勤百搭', '价格亲民', '小巧表径'],
-            ARRAY['https://example.com/images/products/wat-005.png'], 'on_sale', 205
-        ),
-        (
-            '20000000-0000-4000-8000-000000000206'::uuid,
-            '10000000-0000-4000-8000-000000000005'::uuid,
-            'WAT-006', 'Casio GW-B5600 智能运动表', 'ACCESSORIES', 'WATCHES', 'Casio',
-            '经典方形电子表，支持蓝牙连接和自动校时。', 1680.00::numeric, 25,
-            '{"movement":"digital","material":"resin","gender":"unisex","waterResistance":"200m","bluetooth":true,"originalPrice":1880,"isNewArrival":true}'::jsonb,
-            ARRAY['蓝牙连接', '多功能运动模式', '200 米防水'],
-            ARRAY['https://example.com/images/products/wat-006.png'], 'on_sale', 206
-        ),
-        (
-            '20000000-0000-4000-8000-000000000207'::uuid,
-            '10000000-0000-4000-8000-000000000005'::uuid,
-            'WAT-007', 'Seiko Presage 机械女表', 'ACCESSORIES', 'WATCHES', 'Seiko',
-            '复古珐琅质感表盘搭配自动机械机芯。', 4580.00::numeric, 10,
-            '{"movement":"automatic","material":"steel","gender":"female","waterResistance":"50m","dial":"enamel-style","originalPrice":4980,"isNewArrival":false}'::jsonb,
-            ARRAY['复古表盘工艺', '自动机械机芯', '优雅女表设计'],
-            ARRAY['https://example.com/images/products/wat-007.png'], 'on_sale', 207
-        ),
-        (
-            '20000000-0000-4000-8000-000000000208'::uuid,
-            '10000000-0000-4000-8000-000000000005'::uuid,
-            'WAT-008', 'Seiko Prospex 潜水腕表', 'ACCESSORIES', 'WATCHES', 'Seiko',
-            '大表径专业潜水表，提供可靠防水和夜光读取。', 5280.00::numeric, 12,
-            '{"movement":"automatic","material":"steel","gender":"male","waterResistance":"200m","diameterMm":44,"originalPrice":5680,"isNewArrival":false}'::jsonb,
-            ARRAY['专业潜水规格', '44 毫米大表径', '夜光显示'],
-            ARRAY['https://example.com/images/products/wat-008.png'], 'on_sale', 208
-        ),
-        (
-            '20000000-0000-4000-8000-000000000209'::uuid,
-            '10000000-0000-4000-8000-000000000005'::uuid,
-            'WAT-009', 'Tissot 经典三针石英表', 'ACCESSORIES', 'WATCHES', 'Tissot',
-            '简洁三针设计，适合商务和日常通勤。', 2480.00::numeric, 18,
-            '{"movement":"quartz","material":"steel","gender":"male","waterResistance":"30m","originalPrice":2980,"isNewArrival":false}'::jsonb,
-            ARRAY['商务通勤', '经典三针', '维护简单'],
-            ARRAY['https://example.com/images/products/wat-009.png'], 'on_sale', 209
-        ),
-        (
-            '20000000-0000-4000-8000-000000000210'::uuid,
-            '10000000-0000-4000-8000-000000000005'::uuid,
-            'WAT-010', 'Seiko GMT 限量机械表', 'ACCESSORIES', 'WATCHES', 'Seiko',
-            '支持双时区显示的限量自动机械腕表。', 7880.00::numeric, 5,
-            '{"movement":"automatic","material":"steel","gender":"male","waterResistance":"100m","gmt":true,"limitedUnits":500,"originalPrice":8880,"isNewArrival":true}'::jsonb,
-            ARRAY['GMT 双时区', '限量 500 枚', '收藏属性'],
-            ARRAY['https://example.com/images/products/wat-010.png'], 'on_sale', 210
-        ),
-        -- 品牌耳机：补足同品类内的价格和属性差异，便于召回与精排。
-        (
-            '20000000-0000-4000-8000-000000000301'::uuid,
-            '10000000-0000-4000-8000-000000000001'::uuid,
-            'HDP-001', 'Sony WH-1000XM5 降噪耳机', 'ELECTRONICS', 'HEADPHONES', 'Sony',
-            '头戴式旗舰主动降噪耳机，兼顾通勤降噪和通话清晰度。', 2399.00::numeric, 30,
-            '{"form":"over-ear","noiseCancellation":true,"noiseCancellationLevel":"high","batteryHours":30,"connectivity":"bluetooth","originalPrice":2899,"isNewArrival":true}'::jsonb,
-            ARRAY['旗舰主动降噪', '约 30 小时续航', '通话清晰'],
-            ARRAY['https://example.com/images/products/hdp-001.png'], 'on_sale', 301
-        ),
-        (
-            '20000000-0000-4000-8000-000000000302'::uuid,
-            '10000000-0000-4000-8000-000000000001'::uuid,
-            'HDP-002', 'Apple AirPods Pro 2', 'ELECTRONICS', 'HEADPHONES', 'Apple',
-            '入耳式主动降噪耳机，适合 Apple 设备用户。', 1899.00::numeric, 40,
-            '{"form":"in-ear","noiseCancellation":true,"noiseCancellationLevel":"high","batteryHours":6,"connectivity":"bluetooth","ecosystem":"Apple","originalPrice":1999,"isNewArrival":true}'::jsonb,
-            ARRAY['Apple 生态协同', '自适应降噪', '便携入耳设计'],
-            ARRAY['https://example.com/images/products/hdp-002.png'], 'on_sale', 302
-        ),
-        (
-            '20000000-0000-4000-8000-000000000303'::uuid,
-            '10000000-0000-4000-8000-000000000001'::uuid,
-            'HDP-003', 'Bose QuietComfort 45', 'ELECTRONICS', 'HEADPHONES', 'Bose',
-            '强调长时间佩戴舒适性的经典头戴式降噪耳机。', 2199.00::numeric, 20,
-            '{"form":"over-ear","noiseCancellation":true,"noiseCancellationLevel":"high","batteryHours":24,"connectivity":"bluetooth","originalPrice":2499,"isNewArrival":false}'::jsonb,
-            ARRAY['经典主动降噪', '轻量舒适佩戴', '约 24 小时续航'],
-            ARRAY['https://example.com/images/products/hdp-003.png'], 'on_sale', 303
-        ),
-        (
-            '20000000-0000-4000-8000-000000000304'::uuid,
-            '10000000-0000-4000-8000-000000000001'::uuid,
-            'HDP-004', 'Sennheiser Momentum 4', 'ELECTRONICS', 'HEADPHONES', 'Sennheiser',
-            '注重音质表现并提供超长续航的头戴式无线耳机。', 2599.00::numeric, 15,
-            '{"form":"over-ear","noiseCancellation":true,"noiseCancellationLevel":"medium","batteryHours":60,"connectivity":"bluetooth","originalPrice":2999,"isNewArrival":false}'::jsonb,
-            ARRAY['高解析音质', '约 60 小时续航', '支持主动降噪'],
-            ARRAY['https://example.com/images/products/hdp-004.png'], 'on_sale', 304
-        ),
-        (
-            '20000000-0000-4000-8000-000000000305'::uuid,
-            '10000000-0000-4000-8000-000000000001'::uuid,
-            'HDP-005', 'Edifier 入门真无线耳机', 'ELECTRONICS', 'HEADPHONES', 'Edifier',
-            '价格友好的真无线耳机，满足日常通勤和基础通话。', 299.00::numeric, 100,
-            '{"form":"in-ear","noiseCancellation":false,"batteryHours":8,"connectivity":"bluetooth","originalPrice":499,"isNewArrival":false}'::jsonb,
-            ARRAY['价格亲民', '日常通勤够用', '小巧便携'],
-            ARRAY['https://example.com/images/products/hdp-005.png'], 'on_sale', 305
-        ),
-        -- 口红：覆盖颜色、妆效、品牌和价格敏感度。
-        (
-            '20000000-0000-4000-8000-000000000401'::uuid,
-            '10000000-0000-4000-8000-000000000006'::uuid,
-            'LIP-001', 'YSL 小金条口红 52', 'BEAUTY', 'LIPSTICK', 'YSL',
-            '温柔豆沙色搭配哑光妆效，适合日常通勤。', 380.00::numeric, 80,
-            '{"shade":"soft-rose","finish":"matte","skinType":"all","originalPrice":420,"isNewArrival":false}'::jsonb,
-            ARRAY['温柔豆沙色', '哑光高级妆效', '日常显白'],
-            ARRAY['https://example.com/images/products/lip-001.png'], 'on_sale', 401
-        ),
-        (
-            '20000000-0000-4000-8000-000000000402'::uuid,
-            '10000000-0000-4000-8000-000000000006'::uuid,
-            'LIP-002', 'Dior 烈艳蓝金口红 999', 'BEAUTY', 'LIPSTICK', 'Dior',
-            '经典正红色和缎光妆效，适合正式场合。', 360.00::numeric, 60,
-            '{"shade":"classic-red","finish":"satin","skinType":"all","originalPrice":400,"isNewArrival":false}'::jsonb,
-            ARRAY['经典正红', '缎光质感', '正式场合百搭'],
-            ARRAY['https://example.com/images/products/lip-002.png'], 'on_sale', 402
-        ),
-        (
-            '20000000-0000-4000-8000-000000000403'::uuid,
-            '10000000-0000-4000-8000-000000000006'::uuid,
-            'LIP-003', '3CE 云朵雾面口红 908', 'BEAUTY', 'LIPSTICK', '3CE',
-            '柔和奶茶色雾面口红，适合预算有限的年轻用户。', 140.00::numeric, 120,
-            '{"shade":"milk-tea","finish":"matte","skinType":"normal","originalPrice":180,"isNewArrival":false}'::jsonb,
-            ARRAY['学生预算友好', '温柔奶茶色', '轻盈雾面'],
-            ARRAY['https://example.com/images/products/lip-003.png'], 'on_sale', 403
-        ),
-        (
-            '20000000-0000-4000-8000-000000000404'::uuid,
-            '10000000-0000-4000-8000-000000000006'::uuid,
-            'LIP-004', 'MAC 子弹头口红 Ruby Woo', 'BEAUTY', 'LIPSTICK', 'MAC',
-            '复古红色搭配丝绒哑光妆效。', 220.00::numeric, 90,
-            '{"shade":"retro-red","finish":"matte","skinType":"all","originalPrice":260,"isNewArrival":false}'::jsonb,
-            ARRAY['复古红调', '丝绒质感', '经典色号'],
-            ARRAY['https://example.com/images/products/lip-004.png'], 'on_sale', 404
-        ),
-        (
-            '20000000-0000-4000-8000-000000000405'::uuid,
-            '10000000-0000-4000-8000-000000000006'::uuid,
-            'LIP-005', 'Armani 红管口红 405', 'BEAUTY', 'LIPSTICK', 'Armani',
-            '鲜活番茄红色和丝绒哑光妆效，适合提亮肤色。', 320.00::numeric, 50,
-            '{"shade":"tomato-red","finish":"matte","skinType":"all","originalPrice":360,"isNewArrival":true}'::jsonb,
-            ARRAY['鲜活番茄红', '显白提气色', '丝绒哑光'],
-            ARRAY['https://example.com/images/products/lip-005.png'], 'on_sale', 405
-        )
+-- 每个店铺 10 件商品。所有 attributes 都只使用当前 category_slots 中声明的键和值；
+-- 品牌、文案、图片等展示信息则留在独立列中，避免干扰结构化筛选。
+WITH seed_base AS (
+    SELECT
+        product_no,
+        CASE
+            WHEN product_no <= 40 THEN 'ELECTRONICS'
+            WHEN product_no <= 80 THEN 'HOME_APPLIANCES'
+            WHEN product_no <= 120 THEN 'SPORTS'
+            WHEN product_no <= 160 THEN 'FASHION'
+            ELSE 'BEAUTY'
+        END AS category_l1,
+        CASE
+            WHEN product_no <= 40 THEN 'HEADPHONES'
+            WHEN product_no <= 60 THEN 'COFFEE_MACHINE'
+            WHEN product_no <= 80 THEN 'ELECTRIC_KETTLE'
+            WHEN product_no <= 120 THEN 'RUNNING_SHOES'
+            WHEN product_no <= 160 THEN 'WATCHES'
+            ELSE 'LIPSTICK'
+        END AS category_l2,
+        CASE
+            WHEN product_no <= 40 THEN 1 + ((product_no - 1) / 10)::int
+            WHEN product_no <= 60 THEN 5 + ((product_no - 41) / 10)::int
+            WHEN product_no <= 80 THEN 7 + ((product_no - 61) / 10)::int
+            WHEN product_no <= 120 THEN 9 + ((product_no - 81) / 10)::int
+            WHEN product_no <= 160 THEN 13 + ((product_no - 121) / 10)::int
+            ELSE 17 + ((product_no - 161) / 10)::int
+        END AS merchant_slot
+    FROM generate_series(1, 200) AS sequence(product_no)
+),
+product_seed AS (
+    SELECT
+        ('20000000-0000-4000-8000-' || lpad(product_no::text, 12, '0'))::uuid AS id,
+        ('10000000-0000-4000-8000-' || lpad(merchant_slot::text, 12, '0'))::uuid AS merchant_id,
+        category_l1,
+        category_l2,
+        CASE category_l2
+            WHEN 'HEADPHONES' THEN 'HDP-' || lpad(product_no::text, 3, '0')
+            WHEN 'COFFEE_MACHINE' THEN 'COF-' || lpad((product_no - 40)::text, 3, '0')
+            WHEN 'ELECTRIC_KETTLE' THEN 'KET-' || lpad((product_no - 60)::text, 3, '0')
+            WHEN 'RUNNING_SHOES' THEN 'RUN-' || lpad((product_no - 80)::text, 3, '0')
+            WHEN 'WATCHES' THEN 'WAT-' || lpad((product_no - 120)::text, 3, '0')
+            ELSE 'LIP-' || lpad((product_no - 160)::text, 3, '0')
+        END AS sku,
+        CASE product_no
+            WHEN 1 THEN '云雀 Air 降噪耳机'
+            WHEN 2 THEN '潮汐 Pro 真无线耳机'
+            WHEN 3 THEN '原野 Lite 蓝牙耳机'
+            WHEN 41 THEN '晨雾 Mini 胶囊咖啡机'
+            WHEN 42 THEN '山岚半自动咖啡机'
+            WHEN 61 THEN '清泉恒温水壶'
+            WHEN 81 THEN 'Nike Pegasus 40 缓震跑鞋'
+            WHEN 82 THEN 'Adidas Ultraboost 22 跑鞋'
+            WHEN 83 THEN 'Saucony Endorphin Speed 3 竞速跑鞋'
+            WHEN 84 THEN 'Asics Gel-Kayano 30 稳定跑鞋'
+            WHEN 85 THEN 'HOKA Clifton 9 轻量缓震跑鞋'
+            WHEN 86 THEN 'Nike Pegasus 39 入门跑鞋'
+            WHEN 87 THEN 'New Balance FuelCell 女款跑鞋'
+            WHEN 88 THEN 'HOKA Speedgoat 5 越野跑鞋'
+            WHEN 89 THEN 'Nike Vaporfly 3 竞速跑鞋'
+            WHEN 90 THEN 'Asics Cumulus 25 日常训练鞋'
+            WHEN 121 THEN 'Seiko 5 Sports 机械腕表'
+            WHEN 122 THEN 'Casio G-Shock GA-2100'
+            WHEN 123 THEN 'Citizen 光动能 AT8020'
+            WHEN 124 THEN 'Tissot 力洛克机械腕表'
+            WHEN 128 THEN 'Seiko Prospex 潜水腕表'
+            WHEN 161 THEN 'YSL 小金条口红 52'
+            WHEN 162 THEN 'Dior 烈艳蓝金口红 999'
+            WHEN 163 THEN '3CE 云朵雾面口红 908'
+            WHEN 164 THEN 'MAC 子弹头口红 Ruby Woo'
+            WHEN 165 THEN 'Armani 红管口红 405'
+            WHEN 166 THEN '雅诗兰黛 倾慕口红 420'
+            ELSE CASE category_l2
+                WHEN 'HEADPHONES' THEN '声澜系列 ' || product_no || ' 无线耳机'
+                WHEN 'COFFEE_MACHINE' THEN '萃享系列 ' || (product_no - 40) || ' 咖啡机'
+                WHEN 'ELECTRIC_KETTLE' THEN '清饮系列 ' || (product_no - 60) || ' 电水壶'
+                WHEN 'RUNNING_SHOES' THEN '飞跃节奏 ' || (product_no - 80) || ' 跑鞋'
+                WHEN 'WATCHES' THEN '恒时臻选 ' || (product_no - 120) || ' 腕表'
+                ELSE '花漾唇色 ' || (product_no - 160) || ' 口红'
+            END
+        END AS name,
+        CASE product_no
+            WHEN 1 THEN '云雀'
+            WHEN 2 THEN '潮汐'
+            WHEN 3 THEN '原野'
+            WHEN 41 THEN '晨雾'
+            WHEN 42 THEN '山岚'
+            WHEN 61 THEN '清泉'
+            WHEN 81 THEN 'Nike'
+            WHEN 82 THEN 'Adidas'
+            WHEN 83 THEN 'Saucony'
+            WHEN 84 THEN 'Asics'
+            WHEN 85 THEN 'HOKA'
+            WHEN 86 THEN 'Nike'
+            WHEN 87 THEN 'New Balance'
+            WHEN 88 THEN 'HOKA'
+            WHEN 89 THEN 'Nike'
+            WHEN 90 THEN 'Asics'
+            WHEN 121 THEN 'Seiko'
+            WHEN 122 THEN 'Casio'
+            WHEN 123 THEN 'Citizen'
+            WHEN 124 THEN 'Tissot'
+            WHEN 128 THEN 'Seiko'
+            WHEN 161 THEN 'YSL'
+            WHEN 162 THEN 'Dior'
+            WHEN 163 THEN '3CE'
+            WHEN 164 THEN 'MAC'
+            WHEN 165 THEN 'Armani'
+            WHEN 166 THEN '雅诗兰黛'
+            ELSE CASE category_l2
+                WHEN 'HEADPHONES' THEN (ARRAY['声阔', '索尼', '漫步者', 'Bose'])[(product_no - 1) % 4 + 1]
+                WHEN 'COFFEE_MACHINE' THEN (ARRAY['萃享', '咖啡记', '云萃'])[(product_no - 41) % 3 + 1]
+                WHEN 'ELECTRIC_KETTLE' THEN (ARRAY['清饮', '沸点', '温度'])[(product_no - 61) % 3 + 1]
+                WHEN 'RUNNING_SHOES' THEN (ARRAY['飞跃', '步云', '路驰', '山径'])[(product_no - 81) % 4 + 1]
+                WHEN 'WATCHES' THEN (ARRAY['恒时', '光域', '极昼', '表盘'])[(product_no - 121) % 4 + 1]
+                ELSE (ARRAY['花漾', '玫瑰', '轻妆', '唇色'])[(product_no - 161) % 4 + 1]
+            END
+        END AS brand,
+        CASE category_l2
+            WHEN 'HEADPHONES' THEN '适合通勤、影音和日常通话的耳机。'
+            WHEN 'COFFEE_MACHINE' THEN '为家庭和办公室准备的咖啡机。'
+            WHEN 'ELECTRIC_KETTLE' THEN '适合冲泡和日常饮水的电水壶。'
+            WHEN 'RUNNING_SHOES' THEN '为路跑、训练和运动恢复设计的跑鞋。'
+            WHEN 'WATCHES' THEN '覆盖通勤、商务和运动场景的腕表。'
+            ELSE '适合不同肤质和妆效偏好的口红。'
+        END AS description,
+        CASE product_no
+            WHEN 1 THEN 699.00
+            WHEN 2 THEN 999.00
+            WHEN 3 THEN 329.00
+            WHEN 41 THEN 599.00
+            WHEN 42 THEN 1699.00
+            WHEN 61 THEN 239.00
+            WHEN 81 THEN 899.00
+            WHEN 82 THEN 1299.00
+            WHEN 83 THEN 1399.00
+            WHEN 84 THEN 1599.00
+            WHEN 85 THEN 1180.00
+            WHEN 86 THEN 599.00
+            WHEN 87 THEN 1099.00
+            WHEN 88 THEN 1580.00
+            WHEN 89 THEN 1999.00
+            WHEN 90 THEN 899.00
+            WHEN 121 THEN 2280.00
+            WHEN 122 THEN 899.00
+            WHEN 123 THEN 3680.00
+            WHEN 124 THEN 3880.00
+            WHEN 128 THEN 5280.00
+            WHEN 161 THEN 380.00
+            WHEN 162 THEN 360.00
+            WHEN 163 THEN 140.00
+            WHEN 164 THEN 220.00
+            WHEN 165 THEN 320.00
+            WHEN 166 THEN 350.00
+            ELSE CASE category_l2
+                WHEN 'HEADPHONES' THEN 1199.00 + ((product_no % 6) * 200)
+                WHEN 'COFFEE_MACHINE' THEN 1299.00 + ((product_no % 4) * 250)
+                WHEN 'ELECTRIC_KETTLE' THEN 159.00 + ((product_no % 5) * 70)
+                WHEN 'RUNNING_SHOES' THEN 1099.00 + ((product_no % 8) * 110)
+                WHEN 'WATCHES' THEN 999.00 + ((product_no % 8) * 500)
+                ELSE 120.00 + ((product_no % 7) * 45)
+            END
+        END::numeric AS price,
+        CASE product_no
+            WHEN 1 THEN 80
+            WHEN 2 THEN 45
+            WHEN 3 THEN 70
+            WHEN 81 THEN 50
+            WHEN 85 THEN 40
+            WHEN 86 THEN 60
+            WHEN 121 THEN 65
+            ELSE 12 + ((product_no * 7) % 24)
+        END AS stock,
+        CASE category_l2
+            WHEN 'HEADPHONES' THEN jsonb_build_object(
+                'form', CASE
+                    WHEN product_no = 1 THEN 'over-ear'
+                    WHEN product_no = 2 THEN 'in-ear'
+                    ELSE (ARRAY['in-ear', 'over-ear'])[(product_no - 1) % 2 + 1]
+                END,
+                'connectivity', CASE
+                    WHEN product_no <= 3 THEN 'bluetooth'
+                    WHEN product_no % 5 = 0 THEN 'wired'
+                    ELSE 'bluetooth'
+                END,
+                'noiseCancellation', CASE
+                    WHEN product_no IN (1, 2) THEN true
+                    WHEN product_no = 3 THEN false
+                    ELSE product_no % 3 = 0
+                END,
+                'batteryHours', (ARRAY[5, 6, 8, 24, 30, 32, 45, 60])[(product_no - 1) % 8 + 1]
+            )
+            WHEN 'COFFEE_MACHINE' THEN jsonb_build_object(
+                'type', CASE WHEN product_no = 41 THEN 'capsule' ELSE 'semi-automatic' END,
+                'steamWand', product_no = 42,
+                'pressureBar', CASE
+                    WHEN product_no = 41 THEN 19
+                    WHEN product_no = 42 THEN 15
+                    ELSE (ARRAY[9, 15, 19, 20])[(product_no - 41) % 4 + 1]
+                END,
+                'waterTankMl', CASE
+                    WHEN product_no = 41 THEN 600
+                    WHEN product_no = 42 THEN 1500
+                    ELSE (ARRAY[600, 800, 1000, 1500, 2000])[(product_no - 41) % 5 + 1]
+                END
+            )
+            WHEN 'ELECTRIC_KETTLE' THEN jsonb_build_object(
+                'capacityL', CASE
+                    WHEN product_no = 61 THEN 1.5
+                    ELSE (ARRAY[1.0, 1.2, 1.5, 1.7, 2.0])[(product_no - 61) % 5 + 1]
+                END,
+                'temperatureControl', CASE WHEN product_no = 61 THEN true ELSE product_no % 2 = 0 END,
+                'keepWarm', CASE WHEN product_no = 61 THEN true ELSE product_no % 3 <> 0 END
+            )
+            WHEN 'RUNNING_SHOES' THEN jsonb_build_object(
+                'gender', CASE
+                    WHEN product_no = 87 THEN 'female'
+                    WHEN product_no % 7 = 0 THEN 'male'
+                    ELSE 'unisex'
+                END,
+                'size', jsonb_build_array(35 + (product_no % 5), 42 + (product_no % 5)),
+                'terrain', CASE
+                    WHEN product_no = 88 THEN 'trail'
+                    WHEN product_no % 6 = 0 THEN 'trail'
+                    ELSE 'road'
+                END,
+                'cushion', CASE
+                    WHEN product_no IN (81, 82, 84, 85) THEN 'high'
+                    WHEN product_no IN (83, 86, 87, 89, 90) THEN 'medium'
+                    ELSE (ARRAY['high', 'medium'])[(product_no - 81) % 2 + 1]
+                END,
+                'footType', CASE
+                    WHEN product_no = 84 THEN jsonb_build_array('flat', 'overpronation')
+                    WHEN product_no % 3 = 0 THEN to_jsonb('overpronation'::text)
+                    ELSE to_jsonb('neutral'::text)
+                END
+            )
+            WHEN 'WATCHES' THEN jsonb_build_object(
+                'movement', CASE
+                    WHEN product_no IN (121, 124, 128) THEN 'automatic'
+                    WHEN product_no = 122 THEN 'quartz'
+                    WHEN product_no = 123 THEN 'eco-drive'
+                    ELSE (ARRAY['automatic', 'quartz', 'eco-drive'])[(product_no - 121) % 3 + 1]
+                END,
+                'gender', CASE
+                    WHEN product_no % 5 = 0 THEN 'female'
+                    WHEN product_no % 2 = 0 THEN 'unisex'
+                    ELSE 'male'
+                END,
+                'material', CASE
+                    WHEN product_no = 122 THEN 'resin'
+                    WHEN product_no = 123 THEN 'titanium'
+                    ELSE (ARRAY['steel', 'titanium', 'resin'])[(product_no - 121) % 3 + 1]
+                END,
+                'waterResistance', CASE
+                    WHEN product_no = 122 THEN 200
+                    WHEN product_no = 123 THEN 200
+                    WHEN product_no = 128 THEN 200
+                    ELSE (ARRAY[30, 50, 100, 200])[(product_no - 121) % 4 + 1]
+                END
+            )
+            ELSE jsonb_build_object(
+                'shade', CASE product_no
+                    WHEN 161 THEN 'rose'
+                    WHEN 162 THEN 'ruby-red'
+                    WHEN 163 THEN 'milk-tea'
+                    WHEN 164 THEN 'ruby-red'
+                    WHEN 165 THEN 'tomato-red'
+                    ELSE (ARRAY['milk-tea', 'tomato-red', 'coral', 'rose', 'ruby-red'])[(product_no - 161) % 5 + 1]
+                END,
+                'finish', CASE product_no
+                    WHEN 161 THEN 'matte'
+                    WHEN 162 THEN 'satin'
+                    WHEN 163 THEN 'matte'
+                    WHEN 164 THEN 'matte'
+                    WHEN 165 THEN 'matte'
+                    ELSE (ARRAY['matte', 'satin', 'glossy'])[(product_no - 161) % 3 + 1]
+                END,
+                'skinType', CASE product_no
+                    WHEN 161 THEN 'dry'
+                    WHEN 162 THEN 'normal'
+                    WHEN 163 THEN 'normal'
+                    WHEN 164 THEN 'oily'
+                    WHEN 165 THEN 'oily'
+                    ELSE (ARRAY['dry', 'oily', 'normal'])[(product_no - 161) % 3 + 1]
+                END
+            )
+        END AS attributes,
+        CASE category_l2
+            WHEN 'HEADPHONES' THEN ARRAY['佩戴舒适', '日常通勤', '清晰通话']
+            WHEN 'COFFEE_MACHINE' THEN ARRAY['操作直观', '适合家用', '稳定萃取']
+            WHEN 'ELECTRIC_KETTLE' THEN ARRAY['容量可选', '快速烧水', '日常好用']
+            WHEN 'RUNNING_SHOES' THEN ARRAY['稳定贴合', '适合训练', '轻盈回弹']
+            WHEN 'WATCHES' THEN ARRAY['可靠机芯', '日常佩戴', '多场景搭配']
+            ELSE ARRAY['颜色饱满', '妆效清晰', '日常显气色']
+        END AS selling_points,
+        ARRAY['https://example.com/images/products/demo-' || lpad(product_no::text, 3, '0') || '.png'] AS image_urls,
+        'on_sale' AS status,
+        product_no AS embedding_axis
+    FROM seed_base
 )
 INSERT INTO products (
     id, merchant_id, sku, name, category_l1, category_l2, brand, description, price, stock,
     attributes, selling_points, image_urls, status, embedding
 )
 SELECT
-    ps.id, ps.merchant_id, ps.sku, ps.name, ps.category_l1, ps.category_l2, ps.brand, ps.description,
-    ps.price, ps.stock,
-    ps.attributes,
-    ps.selling_points, ps.image_urls, ps.status,
+    ps.id, ps.merchant_id, ps.sku, ps.name, ps.category_l1, ps.category_l2, ps.brand,
+    ps.description, ps.price, ps.stock, ps.attributes, ps.selling_points, ps.image_urls, ps.status,
     (
         SELECT array_agg(
             CASE WHEN dimension_no = ps.embedding_axis THEN 1.0::real ELSE 0.0::real END
@@ -522,55 +484,104 @@ SELECT
         )::vector(1024)
         FROM generate_series(1, 1024) AS dimensions(dimension_no)
     )
-FROM product_seed AS ps
-ON CONFLICT (id) DO UPDATE SET
-    merchant_id = EXCLUDED.merchant_id,
-    sku = EXCLUDED.sku,
-    name = EXCLUDED.name,
-    category_l1 = EXCLUDED.category_l1,
-    category_l2 = EXCLUDED.category_l2,
-    brand = EXCLUDED.brand,
-    description = EXCLUDED.description,
-    price = EXCLUDED.price,
-    stock = EXCLUDED.stock,
-    attributes = EXCLUDED.attributes,
-    selling_points = EXCLUDED.selling_points,
-    image_urls = EXCLUDED.image_urls,
-    status = EXCLUDED.status,
-    embedding = EXCLUDED.embedding,
-    deleted_at = NULL;
+FROM product_seed AS ps;
+
+-- 种子写入时立即复核数量、品类归属、未知键、必填值和枚举值，防止再次引入脏数据。
+DO $$
+DECLARE
+    seeded_product_count integer;
+    seeded_store_count integer;
+    seeded_owner_count integer;
+    invalid_product_count integer;
+BEGIN
+    SELECT count(*)
+    INTO seeded_product_count
+    FROM products
+    WHERE id::text LIKE '20000000-0000-4000-8000-%';
+
+    SELECT count(*), count(DISTINCT owner_user_id)
+    INTO seeded_store_count, seeded_owner_count
+    FROM merchants
+    WHERE id::text LIKE '10000000-0000-4000-8000-%'
+      AND deleted_at IS NULL;
+
+    IF seeded_product_count <> 200 OR seeded_store_count <> 20 OR seeded_owner_count <> 5 THEN
+        RAISE EXCEPTION
+            '演示种子规模错误：商家账号 %, 店铺 %, 商品 %',
+            seeded_owner_count, seeded_store_count, seeded_product_count;
+    END IF;
+
+    SELECT count(*)
+    INTO invalid_product_count
+    FROM products AS product
+    JOIN category_l2 AS category ON category.category_l2 = product.category_l2
+    WHERE product.id::text LIKE '20000000-0000-4000-8000-%'
+      AND (
+          product.category_l1 <> category.category_l1
+          OR EXISTS (
+              SELECT 1
+              FROM jsonb_object_keys(product.attributes) AS attribute_key(key)
+              WHERE NOT EXISTS (
+                  SELECT 1
+                  FROM category_slots AS slot
+                  WHERE slot.category_id = category.id
+                    AND slot.key = attribute_key.key
+              )
+          )
+          OR EXISTS (
+              SELECT 1
+              FROM category_slots AS slot
+              WHERE slot.category_id = category.id
+                AND slot.is_required
+                AND (
+                    NOT product.attributes ? slot.key
+                    OR product.attributes -> slot.key = 'null'::jsonb
+                    OR product.attributes -> slot.key = '""'::jsonb
+                    OR product.attributes -> slot.key = '[]'::jsonb
+                    OR product.attributes -> slot.key = '{}'::jsonb
+                )
+          )
+          OR EXISTS (
+              SELECT 1
+              FROM category_slots AS slot
+              WHERE slot.category_id = category.id
+                AND product.attributes ? slot.key
+                AND (
+                    (
+                        jsonb_typeof(product.attributes -> slot.key) = 'array'
+                        AND (
+                            jsonb_array_length(product.attributes -> slot.key) = 0
+                            OR EXISTS (
+                                SELECT 1
+                                FROM jsonb_array_elements(product.attributes -> slot.key) AS item(value)
+                                WHERE NOT slot.enum_values @> jsonb_build_array(item.value)
+                            )
+                        )
+                    )
+                    OR (
+                        jsonb_typeof(product.attributes -> slot.key) <> 'array'
+                        AND NOT slot.enum_values @> jsonb_build_array(product.attributes -> slot.key)
+                    )
+                )
+          )
+      );
+
+    IF invalid_product_count <> 0 THEN
+        RAISE EXCEPTION '演示种子包含 % 件不符合 taxonomy 的商品', invalid_product_count;
+    END IF;
+END;
+$$;
 
 INSERT INTO user_profile_static (
     user_id, gender, age, city, height_cm, weight_kg, skin_type,
     tech_savvy, budget_band, locale, updated_at
 )
 VALUES
-    (
-        '00000000-0000-4000-8000-000000000101',
-        'male', 29, '上海', 178, 68, 'normal', 'mid', 'mid', 'zh_cn',
-        CURRENT_TIMESTAMP - interval '1 day'
-    ),
-    (
-        '00000000-0000-4000-8000-000000000102',
-        'female', 32, '杭州', 165, 52, 'dry', 'novice', 'premium', 'zh_cn',
-        CURRENT_TIMESTAMP - interval '2 days'
-    ),
-    (
-        '00000000-0000-4000-8000-000000000103',
-        'female', 28, '北京', 168, 55, 'normal', 'expert', 'mid', 'zh_cn',
-        CURRENT_TIMESTAMP - interval '6 hours'
-    ),
-    (
-        -- 冷启动用户：保留空静态画像，用于验证无历史资料时的推荐降级。
-        '00000000-0000-4000-8000-000000000104',
-        NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'zh_cn',
-        CURRENT_TIMESTAMP
-    ),
-    (
-        '00000000-0000-4000-8000-000000000105',
-        'male', 35, '深圳', 180, 75, 'oily', 'mid', 'premium', 'zh_cn',
-        CURRENT_TIMESTAMP - interval '12 hours'
-    )
+    ('00000000-0000-4000-8000-000000000101', 'male', 29, '上海', 178, 68, 'normal', 'mid', 'mid', 'zh_cn', CURRENT_TIMESTAMP - interval '1 day'),
+    ('00000000-0000-4000-8000-000000000102', 'female', 32, '杭州', 165, 52, 'dry', 'novice', 'premium', 'zh_cn', CURRENT_TIMESTAMP - interval '2 days'),
+    ('00000000-0000-4000-8000-000000000103', 'female', 28, '北京', 168, 55, 'normal', 'expert', 'mid', 'zh_cn', CURRENT_TIMESTAMP - interval '6 hours'),
+    ('00000000-0000-4000-8000-000000000104', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'zh_cn', CURRENT_TIMESTAMP),
+    ('00000000-0000-4000-8000-000000000105', 'male', 35, '深圳', 180, 75, 'oily', 'mid', 'premium', 'zh_cn', CURRENT_TIMESTAMP - interval '12 hours')
 ON CONFLICT (user_id) DO UPDATE SET
     gender = EXCLUDED.gender,
     age = EXCLUDED.age,
@@ -588,49 +599,11 @@ INSERT INTO user_profile_dynamic (
     recent_purchased, price_sensitivity, avg_order_amount, updated_at
 )
 VALUES
-    (
-        '00000000-0000-4000-8000-000000000101',
-        '{"HEADPHONES":0.94}',
-        '{"云雀":0.72,"潮汐":0.55}',
-        ARRAY[
-            '20000000-0000-4000-8000-000000000001'::uuid,
-            '20000000-0000-4000-8000-000000000002'::uuid
-        ],
-        '{}'::uuid[], 0.35, NULL, CURRENT_TIMESTAMP - interval '20 minutes'
-    ),
-    (
-        '00000000-0000-4000-8000-000000000102',
-        '{"COFFEE_MACHINE":0.88}',
-        '{"山岚":0.68,"晨雾":0.62}',
-        ARRAY['20000000-0000-4000-8000-000000000005'::uuid],
-        ARRAY['20000000-0000-4000-8000-000000000005'::uuid],
-        0.25, 1699.00, CURRENT_TIMESTAMP - interval '2 hours'
-    ),
-    (
-        '00000000-0000-4000-8000-000000000103',
-        '{"RUNNING_SHOES":0.93}',
-        '{"Nike":0.75,"Asics":0.68,"HOKA":0.46}',
-        ARRAY[
-            '20000000-0000-4000-8000-000000000101'::uuid,
-            '20000000-0000-4000-8000-000000000106'::uuid,
-            '20000000-0000-4000-8000-000000000110'::uuid
-        ],
-        '{}'::uuid[], 0.40, NULL, CURRENT_TIMESTAMP - interval '15 minutes'
-    ),
-    (
-        '00000000-0000-4000-8000-000000000104',
-        '{}', '{}', '{}', '{}', NULL, NULL, CURRENT_TIMESTAMP
-    ),
-    (
-        '00000000-0000-4000-8000-000000000105',
-        '{"HEADPHONES":0.82,"WATCHES":0.45}',
-        '{"Sony":0.61,"Casio":0.55,"Seiko":0.42}',
-        ARRAY[
-            '20000000-0000-4000-8000-000000000301'::uuid,
-            '20000000-0000-4000-8000-000000000202'::uuid
-        ],
-        '{}'::uuid[], 0.30, NULL, CURRENT_TIMESTAMP - interval '1 hour'
-    )
+    ('00000000-0000-4000-8000-000000000101', '{"HEADPHONES":0.94}', '{"云雀":0.72,"潮汐":0.55}', ARRAY['20000000-0000-4000-8000-000000000001'::uuid, '20000000-0000-4000-8000-000000000002'::uuid], '{}'::uuid[], 0.35, NULL, CURRENT_TIMESTAMP - interval '20 minutes'),
+    ('00000000-0000-4000-8000-000000000102', '{"COFFEE_MACHINE":0.88}', '{"山岚":0.68,"晨雾":0.62}', ARRAY['20000000-0000-4000-8000-000000000042'::uuid], ARRAY['20000000-0000-4000-8000-000000000042'::uuid], 0.25, 1699.00, CURRENT_TIMESTAMP - interval '2 hours'),
+    ('00000000-0000-4000-8000-000000000103', '{"RUNNING_SHOES":0.93}', '{"Nike":0.75,"Asics":0.68,"HOKA":0.46}', ARRAY['20000000-0000-4000-8000-000000000081'::uuid, '20000000-0000-4000-8000-000000000086'::uuid, '20000000-0000-4000-8000-000000000090'::uuid], '{}'::uuid[], 0.40, NULL, CURRENT_TIMESTAMP - interval '15 minutes'),
+    ('00000000-0000-4000-8000-000000000104', '{}', '{}', '{}'::uuid[], '{}'::uuid[], NULL, NULL, CURRENT_TIMESTAMP),
+    ('00000000-0000-4000-8000-000000000105', '{"HEADPHONES":0.82,"WATCHES":0.45}', '{"Sony":0.61,"Casio":0.55,"Seiko":0.42}', ARRAY['20000000-0000-4000-8000-000000000121'::uuid, '20000000-0000-4000-8000-000000000122'::uuid], '{}'::uuid[], 0.30, NULL, CURRENT_TIMESTAMP - interval '1 hour')
 ON CONFLICT (user_id) DO UPDATE SET
     category_affinity = EXCLUDED.category_affinity,
     brand_affinity = EXCLUDED.brand_affinity,
@@ -645,134 +618,24 @@ INSERT INTO sessions (
     started_at, last_active_at, ended_at
 )
 VALUES
-    (
-        '30000000-0000-4000-8000-000000000001',
-        '00000000-0000-4000-8000-000000000101',
-        'active', '用户想找千元以内、适合通勤且带主动降噪的耳机。',
-        '31000000-0000-4000-8000-000000000002',
-        CURRENT_TIMESTAMP - interval '10 minutes', CURRENT_TIMESTAMP - interval '2 minutes', NULL
-    ),
-    (
-        '30000000-0000-4000-8000-000000000002',
-        '00000000-0000-4000-8000-000000000102',
-        'closed', '用户查询了家用半自动咖啡机并完成下单。',
-        '32000000-0000-4000-8000-000000000001',
-        CURRENT_TIMESTAMP - interval '2 days', CURRENT_TIMESTAMP - interval '2 days',
-        CURRENT_TIMESTAMP - interval '2 days' + interval '8 minutes'
-    ),
-    (
-        '30000000-0000-4000-8000-000000000003',
-        '00000000-0000-4000-8000-000000000104',
-        'closed', '冷启动用户提出写周报请求，系统识别为不支持的请求并使用固定兜底回复。',
-        '33000000-0000-4000-8000-000000000001',
-        CURRENT_TIMESTAMP - interval '1 hour', CURRENT_TIMESTAMP - interval '58 minutes',
-        CURRENT_TIMESTAMP - interval '58 minutes'
-    ),
-    (
-        '30000000-0000-4000-8000-000000000004',
-        '00000000-0000-4000-8000-000000000103',
-        'closed', '用户经过逐轮澄清，确定购买千元内用于日常路跑的跑鞋。',
-        '34000000-0000-4000-8000-000000000003',
-        CURRENT_TIMESTAMP - interval '30 minutes', CURRENT_TIMESTAMP - interval '20 minutes',
-        CURRENT_TIMESTAMP - interval '20 minutes'
-    )
-ON CONFLICT (id) DO UPDATE SET
-    user_id = EXCLUDED.user_id,
-    status = EXCLUDED.status,
-    conversation_summary = EXCLUDED.conversation_summary,
-    last_turn_id = EXCLUDED.last_turn_id,
-    started_at = EXCLUDED.started_at,
-    last_active_at = EXCLUDED.last_active_at,
-    ended_at = EXCLUDED.ended_at;
+    ('30000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000101', 'active', '用户想找千元以内、适合通勤且带主动降噪的耳机。', '31000000-0000-4000-8000-000000000002', CURRENT_TIMESTAMP - interval '10 minutes', CURRENT_TIMESTAMP - interval '2 minutes', NULL),
+    ('30000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000102', 'closed', '用户查询了家用半自动咖啡机并完成下单。', '32000000-0000-4000-8000-000000000001', CURRENT_TIMESTAMP - interval '2 days', CURRENT_TIMESTAMP - interval '2 days', CURRENT_TIMESTAMP - interval '2 days' + interval '8 minutes'),
+    ('30000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000104', 'closed', '冷启动用户提出写周报请求，系统识别为不支持的请求并使用固定兜底回复。', '33000000-0000-4000-8000-000000000001', CURRENT_TIMESTAMP - interval '1 hour', CURRENT_TIMESTAMP - interval '58 minutes', CURRENT_TIMESTAMP - interval '58 minutes'),
+    ('30000000-0000-4000-8000-000000000004', '00000000-0000-4000-8000-000000000103', 'closed', '用户经过逐轮澄清，确定购买千元内用于日常路跑的跑鞋。', '34000000-0000-4000-8000-000000000003', CURRENT_TIMESTAMP - interval '30 minutes', CURRENT_TIMESTAMP - interval '20 minutes', CURRENT_TIMESTAMP - interval '20 minutes');
 
+-- 展示会话保留少量历史消息，供用户端历史记录页演示。
 INSERT INTO session_messages (
     id, session_id, turn_id, seq, role, message_type, content, metadata
 )
 VALUES
-    (
-        '40000000-0000-4000-8000-000000000001',
-        '30000000-0000-4000-8000-000000000001',
-        '31000000-0000-4000-8000-000000000001', 0, 'user', 'transcript',
-        '我想买一个通勤用的降噪耳机，预算一千以内。',
-        '{"asrModel":"qwen-audio-3.0-asr-flash-streaming"}'
-    ),
-    (
-        '40000000-0000-4000-8000-000000000002',
-        '30000000-0000-4000-8000-000000000001',
-        '31000000-0000-4000-8000-000000000001', 1, 'assistant', 'product_cards',
-        '已为你找到 3 款耳机。',
-        '{"productIds":["20000000-0000-4000-8000-000000000001","20000000-0000-4000-8000-000000000002","20000000-0000-4000-8000-000000000003"]}'
-    ),
-    (
-        '40000000-0000-4000-8000-000000000003',
-        '30000000-0000-4000-8000-000000000001',
-        '31000000-0000-4000-8000-000000000002', 0, 'user', 'transcript',
-        '就买第一款。', '{}'
-    ),
-    (
-        '40000000-0000-4000-8000-000000000004',
-        '30000000-0000-4000-8000-000000000001',
-        '31000000-0000-4000-8000-000000000002', 1, 'assistant', 'order',
-        '已生成待确认订单，请确认是否购买云雀 Air 降噪耳机。', '{}'
-    ),
-    (
-        '40000000-0000-4000-8000-000000000101',
-        '30000000-0000-4000-8000-000000000003',
-        '33000000-0000-4000-8000-000000000001', 0, 'user', 'transcript',
-        '帮我写一份周报。', '{}'
-    ),
-    (
-        '40000000-0000-4000-8000-000000000102',
-        '30000000-0000-4000-8000-000000000003',
-        '33000000-0000-4000-8000-000000000001', 1, 'assistant', 'text',
-        '抱歉，我目前只能协助商品推荐、查询、对比和下单。你可以告诉我想买什么商品。',
-        '{"fallback":true,"intent":"UNSUPPORTED_REQUEST"}'
-    ),
-    (
-        '40000000-0000-4000-8000-000000000103',
-        '30000000-0000-4000-8000-000000000004',
-        '34000000-0000-4000-8000-000000000001', 0, 'user', 'transcript',
-        '我想买双跑鞋。', '{}'
-    ),
-    (
-        '40000000-0000-4000-8000-000000000104',
-        '30000000-0000-4000-8000-000000000004',
-        '34000000-0000-4000-8000-000000000001', 1, 'assistant', 'text',
-        '你的预算上限是多少？', '{"clarificationStatus":"ASK","slot":"budgetMax"}'
-    ),
-    (
-        '40000000-0000-4000-8000-000000000105',
-        '30000000-0000-4000-8000-000000000004',
-        '34000000-0000-4000-8000-000000000002', 0, 'user', 'transcript',
-        '一千元以内。', '{}'
-    ),
-    (
-        '40000000-0000-4000-8000-000000000106',
-        '30000000-0000-4000-8000-000000000004',
-        '34000000-0000-4000-8000-000000000002', 1, 'assistant', 'text',
-        '主要用于什么场景？', '{"clarificationStatus":"ASK","slot":"useCase"}'
-    ),
-    (
-        '40000000-0000-4000-8000-000000000107',
-        '30000000-0000-4000-8000-000000000004',
-        '34000000-0000-4000-8000-000000000003', 0, 'user', 'transcript',
-        '主要是日常路跑训练。', '{}'
-    ),
-    (
-        '40000000-0000-4000-8000-000000000108',
-        '30000000-0000-4000-8000-000000000004',
-        '34000000-0000-4000-8000-000000000003', 1, 'assistant', 'product_cards',
-        '已为你找到 3 双符合千元预算的日常路跑鞋。',
-        '{"productIds":["20000000-0000-4000-8000-000000000101","20000000-0000-4000-8000-000000000110","20000000-0000-4000-8000-000000000106"]}'
-    )
-ON CONFLICT (id) DO UPDATE SET
-    session_id = EXCLUDED.session_id,
-    turn_id = EXCLUDED.turn_id,
-    seq = EXCLUDED.seq,
-    role = EXCLUDED.role,
-    message_type = EXCLUDED.message_type,
-    content = EXCLUDED.content,
-    metadata = EXCLUDED.metadata;
+    ('40000000-0000-4000-8000-000000000001', '30000000-0000-4000-8000-000000000001', '31000000-0000-4000-8000-000000000001', 0, 'user', 'transcript', '想买一副通勤降噪耳机，预算一千元以内。', '{}'),
+    ('40000000-0000-4000-8000-000000000002', '30000000-0000-4000-8000-000000000001', '31000000-0000-4000-8000-000000000001', 1, 'assistant', 'product_cards', '已为你找到 3 款耳机。', '{"productIds":["20000000-0000-4000-8000-000000000001","20000000-0000-4000-8000-000000000002","20000000-0000-4000-8000-000000000003"]}'),
+    ('40000000-0000-4000-8000-000000000003', '30000000-0000-4000-8000-000000000001', '31000000-0000-4000-8000-000000000002', 0, 'user', 'transcript', '就买第一款。', '{}'),
+    ('40000000-0000-4000-8000-000000000004', '30000000-0000-4000-8000-000000000001', '31000000-0000-4000-8000-000000000002', 1, 'assistant', 'order', '已生成待确认订单，请确认是否购买云雀 Air 降噪耳机。', '{}'),
+    ('40000000-0000-4000-8000-000000000101', '30000000-0000-4000-8000-000000000003', '33000000-0000-4000-8000-000000000001', 0, 'user', 'transcript', '帮我写一份周报。', '{}'),
+    ('40000000-0000-4000-8000-000000000102', '30000000-0000-4000-8000-000000000003', '33000000-0000-4000-8000-000000000001', 1, 'assistant', 'text', '抱歉，我目前只能协助商品推荐、查询、对比和下单。你可以告诉我想买什么商品。', '{"fallback":true,"intent":"UNSUPPORTED_REQUEST"}'),
+    ('40000000-0000-4000-8000-000000000103', '30000000-0000-4000-8000-000000000004', '34000000-0000-4000-8000-000000000001', 0, 'user', 'transcript', '我想买双跑鞋。', '{}'),
+    ('40000000-0000-4000-8000-000000000104', '30000000-0000-4000-8000-000000000004', '34000000-0000-4000-8000-000000000001', 1, 'assistant', 'text', '你的预算上限是多少？', '{"clarificationStatus":"ASK","slot":"budgetMax"}');
 
 INSERT INTO orders (
     id, user_id, merchant_id, product_id, session_id, source_turn_id,
@@ -780,113 +643,17 @@ INSERT INTO orders (
     product_snapshot, failure_reason, expires_at, confirmed_at, created_at
 )
 VALUES
-    (
-        '50000000-0000-4000-8000-000000000001',
-        '00000000-0000-4000-8000-000000000101',
-        '10000000-0000-4000-8000-000000000001',
-        '20000000-0000-4000-8000-000000000001',
-        '30000000-0000-4000-8000-000000000001',
-        '31000000-0000-4000-8000-000000000002',
-        'voice-order-session-001-turn-002', 'pending', 1, 699.00,
-        '{"merchantId":"10000000-0000-4000-8000-000000000001","name":"声动数码"}',
-        '{"productId":"20000000-0000-4000-8000-000000000001","sku":"HEADPHONE-A1","name":"云雀 Air 降噪耳机","categoryL1":"ELECTRONICS","categoryL2":"HEADPHONES","imageUrl":"https://example.com/images/products/headphone-a1-1.png"}',
-        NULL, CURRENT_TIMESTAMP + interval '15 minutes', NULL, CURRENT_TIMESTAMP
-    ),
-    (
-        '50000000-0000-4000-8000-000000000002',
-        '00000000-0000-4000-8000-000000000102',
-        '10000000-0000-4000-8000-000000000002',
-        '20000000-0000-4000-8000-000000000005',
-        '30000000-0000-4000-8000-000000000002',
-        '32000000-0000-4000-8000-000000000001',
-        'voice-order-session-002-turn-001', 'success', 1, 1699.00,
-        '{"merchantId":"10000000-0000-4000-8000-000000000002","name":"日常家电"}',
-        '{"productId":"20000000-0000-4000-8000-000000000005","sku":"COFFEE-M2","name":"山岚半自动咖啡机","categoryL1":"HOME_APPLIANCES","categoryL2":"COFFEE_MACHINE","imageUrl":"https://example.com/images/products/coffee-m2-1.png"}',
-        NULL, CURRENT_TIMESTAMP - interval '2 days' + interval '15 minutes',
-        CURRENT_TIMESTAMP - interval '2 days' + interval '5 minutes',
-        CURRENT_TIMESTAMP - interval '2 days'
-    ),
-    (
-        '50000000-0000-4000-8000-000000000003',
-        '00000000-0000-4000-8000-000000000101',
-        '10000000-0000-4000-8000-000000000001',
-        '20000000-0000-4000-8000-000000000002',
-        NULL, NULL,
-        'voice-order-expired-demo-001', 'fail', 1, 999.00,
-        '{"merchantId":"10000000-0000-4000-8000-000000000001","name":"声动数码"}',
-        '{"productId":"20000000-0000-4000-8000-000000000002","sku":"HEADPHONE-B2","name":"潮汐 Pro 真无线耳机","categoryL1":"ELECTRONICS","categoryL2":"HEADPHONES","imageUrl":"https://example.com/images/products/headphone-b2-1.png"}',
-        'confirmation_timeout', CURRENT_TIMESTAMP - interval '3 days' + interval '15 minutes',
-        NULL, CURRENT_TIMESTAMP - interval '3 days'
-    )
-ON CONFLICT (id) DO UPDATE SET
-    user_id = EXCLUDED.user_id,
-    merchant_id = EXCLUDED.merchant_id,
-    product_id = EXCLUDED.product_id,
-    session_id = EXCLUDED.session_id,
-    source_turn_id = EXCLUDED.source_turn_id,
-    idempotency_key = EXCLUDED.idempotency_key,
-    quantity = EXCLUDED.quantity,
-    unit_price = EXCLUDED.unit_price,
-    merchant_snapshot = EXCLUDED.merchant_snapshot,
-    product_snapshot = EXCLUDED.product_snapshot;
+    ('50000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000101', '10000000-0000-4000-8000-000000000001', '20000000-0000-4000-8000-000000000001', '30000000-0000-4000-8000-000000000001', '31000000-0000-4000-8000-000000000002', 'voice-order-session-001-turn-002', 'pending', 1, 699.00, '{"merchantId":"10000000-0000-4000-8000-000000000001","name":"声动数码旗舰店"}', '{"productId":"20000000-0000-4000-8000-000000000001","sku":"HDP-001","name":"云雀 Air 降噪耳机","categoryL1":"ELECTRONICS","categoryL2":"HEADPHONES","imageUrl":"https://example.com/images/products/demo-001.png"}', NULL, CURRENT_TIMESTAMP + interval '15 minutes', NULL, CURRENT_TIMESTAMP),
+    ('50000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000102', '10000000-0000-4000-8000-000000000005', '20000000-0000-4000-8000-000000000042', '30000000-0000-4000-8000-000000000002', '32000000-0000-4000-8000-000000000001', 'voice-order-session-002-turn-001', 'success', 1, 1699.00, '{"merchantId":"10000000-0000-4000-8000-000000000005","name":"日常咖啡生活馆"}', '{"productId":"20000000-0000-4000-8000-000000000042","sku":"COF-002","name":"山岚半自动咖啡机","categoryL1":"HOME_APPLIANCES","categoryL2":"COFFEE_MACHINE","imageUrl":"https://example.com/images/products/demo-042.png"}', NULL, CURRENT_TIMESTAMP - interval '2 days' + interval '15 minutes', CURRENT_TIMESTAMP - interval '2 days' + interval '5 minutes', CURRENT_TIMESTAMP - interval '2 days'),
+    ('50000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000101', '10000000-0000-4000-8000-000000000001', '20000000-0000-4000-8000-000000000002', NULL, NULL, 'voice-order-expired-demo-001', 'fail', 1, 999.00, '{"merchantId":"10000000-0000-4000-8000-000000000001","name":"声动数码旗舰店"}', '{"productId":"20000000-0000-4000-8000-000000000002","sku":"HDP-002","name":"潮汐 Pro 真无线耳机","categoryL1":"ELECTRONICS","categoryL2":"HEADPHONES","imageUrl":"https://example.com/images/products/demo-002.png"}', 'confirmation_timeout', CURRENT_TIMESTAMP - interval '3 days' + interval '15 minutes', NULL, CURRENT_TIMESTAMP - interval '3 days');
 
 INSERT INTO session_states (
     id, session_id, turn_id, state_version, business_state, pending_order_id
 )
 VALUES
-    (
-        '60000000-0000-4000-8000-000000000001',
-        '30000000-0000-4000-8000-000000000001',
-        '31000000-0000-4000-8000-000000000001',
-        1,
-        '{"product_category":"HEADPHONES","slots":{"budgetMax":1000,"useCase":"commute","noiseCancellation":true},"pending_question":null,"product_cards":[{"productId":"20000000-0000-4000-8000-000000000001"},{"productId":"20000000-0000-4000-8000-000000000002"},{"productId":"20000000-0000-4000-8000-000000000003"}],"user_profile_updates":{}}',
-        NULL
-    ),
-    (
-        '60000000-0000-4000-8000-000000000002',
-        '30000000-0000-4000-8000-000000000001',
-        '31000000-0000-4000-8000-000000000002',
-        1,
-        '{"product_category":"HEADPHONES","slots":{"budgetMax":1000,"useCase":"commute","noiseCancellation":true},"pending_question":null,"product_cards":[],"user_profile_updates":{}}',
-        '50000000-0000-4000-8000-000000000001'
-    ),
-    (
-        '60000000-0000-4000-8000-000000000101',
-        '30000000-0000-4000-8000-000000000003',
-        '33000000-0000-4000-8000-000000000001',
-        1,
-        '{"user_profile_updates":{}}',
-        NULL
-    ),
-    (
-        '60000000-0000-4000-8000-000000000102',
-        '30000000-0000-4000-8000-000000000004',
-        '34000000-0000-4000-8000-000000000001',
-        1,
-        '{"product_category":"RUNNING_SHOES","slots":{},"pending_question":{"slot":"budgetMax","question":"你的预算上限是多少？"},"user_profile_updates":{}}',
-        NULL
-    ),
-    (
-        '60000000-0000-4000-8000-000000000103',
-        '30000000-0000-4000-8000-000000000004',
-        '34000000-0000-4000-8000-000000000002',
-        1,
-        '{"product_category":"RUNNING_SHOES","slots":{"budgetMax":1000},"pending_question":{"slot":"useCase","question":"主要用于什么场景？"},"user_profile_updates":{}}',
-        NULL
-    ),
-    (
-        '60000000-0000-4000-8000-000000000104',
-        '30000000-0000-4000-8000-000000000004',
-        '34000000-0000-4000-8000-000000000003',
-        1,
-        '{"product_category":"RUNNING_SHOES","slots":{"budgetMax":1000,"useCase":"daily-road-running"},"pending_question":null,"product_cards":[{"productId":"20000000-0000-4000-8000-000000000101"},{"productId":"20000000-0000-4000-8000-000000000110"},{"productId":"20000000-0000-4000-8000-000000000106"}],"user_profile_updates":{}}',
-        NULL
-    )
-ON CONFLICT (id) DO UPDATE SET
-    session_id = EXCLUDED.session_id,
-    turn_id = EXCLUDED.turn_id,
-    state_version = EXCLUDED.state_version,
-    business_state = EXCLUDED.business_state,
-    pending_order_id = EXCLUDED.pending_order_id;
+    ('60000000-0000-4000-8000-000000000001', '30000000-0000-4000-8000-000000000001', '31000000-0000-4000-8000-000000000001', 1, '{"product_category":"HEADPHONES","slots":{"budgetMax":1000,"useCase":"commute","noiseCancellation":true},"pending_question":null,"product_cards":[{"productId":"20000000-0000-4000-8000-000000000001"},{"productId":"20000000-0000-4000-8000-000000000002"},{"productId":"20000000-0000-4000-8000-000000000003"}],"user_profile_updates":{}}', NULL),
+    ('60000000-0000-4000-8000-000000000002', '30000000-0000-4000-8000-000000000001', '31000000-0000-4000-8000-000000000002', 1, '{"product_category":"HEADPHONES","slots":{"budgetMax":1000,"useCase":"commute","noiseCancellation":true},"pending_question":null,"product_cards":[],"user_profile_updates":{}}', '50000000-0000-4000-8000-000000000001'),
+    ('60000000-0000-4000-8000-000000000101', '30000000-0000-4000-8000-000000000003', '33000000-0000-4000-8000-000000000001', 1, '{"user_profile_updates":{}}', NULL),
+    ('60000000-0000-4000-8000-000000000102', '30000000-0000-4000-8000-000000000004', '34000000-0000-4000-8000-000000000001', 1, '{"product_category":"RUNNING_SHOES","slots":{},"pending_question":{"slot":"budgetMax","question":"你的预算上限是多少？"},"user_profile_updates":{}}', NULL);
 
 COMMIT;
