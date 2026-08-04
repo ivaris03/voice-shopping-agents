@@ -4,6 +4,7 @@ from voice_shopping_api.agents.nodes.recommendation import (
     RULE_BRAND_HIT,
     RULE_PRICE_OVER_AVG,
     RULE_REPEAT_PURCHASE,
+    _match_score,
     _reranker_score,
     _rule_adjustments,
 )
@@ -91,6 +92,10 @@ def test_reranker_score_clamps_out_of_range() -> None:
     assert score == 1.0
     score = _reranker_score(PRODUCT, {"utterance": "跑鞋"}, {product_id: -0.2})
     assert score == 0.0
+
+
+def test_match_score_caps_brand_boost_at_one() -> None:
+    assert _match_score(RULE_BRAND_HIT, 1.0) == 1.0
 
 
 def test_reranker_score_lexical_fallback_without_model() -> None:
