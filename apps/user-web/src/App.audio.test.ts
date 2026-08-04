@@ -216,7 +216,7 @@ describe('assistant reply audio coordination', () => {
     })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('需求澄清 Agent 运行中')
+    expect(wrapper.text()).toContain('需求澄清正在进行')
     wrapper.unmount()
   })
 

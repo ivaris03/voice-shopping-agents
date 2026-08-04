@@ -4,6 +4,7 @@ import {
   ProductDetailModal,
   apiBaseUrl,
   audioWsBaseUrl,
+  formatCategoryLabel,
   merchantWebUrl,
   platformWebUrl,
   requestJson,
@@ -93,9 +94,9 @@ const isBrowsePage = computed(() => currentRoute.value === '/browse')
 const isOrdersPage = computed(() => currentRoute.value === '/orders')
 const activeNavHref = computed(() => `#${currentRoute.value}`)
 const pageEyebrow = computed(() => {
-  if (isBrowsePage.value) return 'VOICE COMMERCE · CATALOG'
-  if (isOrdersPage.value) return 'VOICE COMMERCE · ORDERS'
-  return 'VOICE COMMERCE · USER'
+  if (isBrowsePage.value) return '声选导购 · 商品浏览'
+  if (isOrdersPage.value) return '声选导购 · 我的订单'
+  return '声选导购 · 用户端'
 })
 const pageHeadline = computed(() => {
   if (isBrowsePage.value) return '慢慢逛，也能快速找到对的。'
@@ -216,13 +217,6 @@ const visibleProducts = computed(() =>
 const successfulOrders = computed(() => orders.value.filter((order) => order.status === 'success').length)
 const pendingOrders = computed(() => orders.value.filter((order) => order.status === 'pending').length)
 
-const categoryLabels: Record<string, string> = {
-  HEADPHONES: '耳机',
-  COFFEE_MACHINE: '咖啡机',
-  RUNNING_SHOES: '跑鞋',
-  WATCHES: '腕表',
-  LIPSTICK: '口红',
-}
 const orderStatusLabels: Record<Order['status'], string> = {
   pending: '待确认',
   success: '已完成',
@@ -230,16 +224,16 @@ const orderStatusLabels: Record<Order['status'], string> = {
 }
 const quickPrompts = ['通勤降噪耳机，预算一千以内', '适合日常跑步的鞋', '送给朋友的口红']
 const workflowNodeLabels: Record<string, string> = {
-  intent_agent: '意图识别 Agent 运行中',
-  clarification_agent: '需求澄清 Agent 运行中',
-  recommendation_agent: '商品召回与推荐 Agent 运行中',
+  intent_agent: '意图识别正在进行',
+  clarification_agent: '需求澄清正在进行',
+  recommendation_agent: '商品召回与推荐正在进行',
   order_node: '订单处理节点运行中',
-  emotional_agent: '回复 Agent 运行中',
+  emotional_agent: '回复生成正在进行',
   compliance_check: '合规检查节点运行中',
 }
 
 function categoryLabel(value: string) {
-  return categoryLabels[value] ?? value.replaceAll('_', ' ')
+  return formatCategoryLabel(value)
 }
 
 function orderStatusLabel(value: Order['status']) {
@@ -512,9 +506,8 @@ function handleEvent(event: ApiEvent<Record<string, unknown>>) {
   if (event.type === 'flow.status') {
     const status = String(event.payload.status ?? '')
     if (status === 'processing') {
-      const backendLabel = String(event.payload.label ?? '')
       const nodeName = String(event.payload.node ?? '')
-      flowStatus.value = backendLabel || workflowNodeLabels[nodeName] || 'Agent 正在理解与筛选…'
+      flowStatus.value = workflowNodeLabels[nodeName] || '智能导购正在理解与筛选…'
     } else if (status === 'completed') {
       flowStatus.value = '可以继续说'
     }
@@ -589,7 +582,7 @@ function handleEvent(event: ApiEvent<Record<string, unknown>>) {
     finishTurn(event.turnId)
   }
   if (event.type === 'flow.error') {
-    error.value = String(event.payload.message ?? 'Agent 处理失败')
+    error.value = String(event.payload.message ?? '智能导购处理失败')
     flowStatus.value = '处理失败，请重试'
     finishTurn(event.turnId === 'unknown' ? activeTurnId : event.turnId, true)
   }
@@ -680,7 +673,7 @@ function connectAudio(): Promise<void> {
           } else {
             messages.value.push({ role: 'user', text: transcript, turnId: event.turnId })
           }
-          flowStatus.value = 'Agent 正在理解与筛选…'
+          flowStatus.value = '智能导购正在理解与筛选…'
           error.value = ''
         }
         if (event.turnId === latestVoiceTurnId) isBargingIn = false
@@ -1115,7 +1108,7 @@ onBeforeUnmount(() => {
         <div class="voice-controls">
           <div class="voice-heading-row">
             <div>
-              <p class="eyebrow">LIVE SHOPPING AGENT</p>
+              <p class="eyebrow">实时语音导购</p>
               <h2>把需求说给我听</h2>
             </div>
             <span class="voice-live-badge"><span class="status-dot"></span>在线</span>
@@ -1173,7 +1166,7 @@ onBeforeUnmount(() => {
       </section>
 
       <section v-if="isVoicePage && recommendations.length" class="section-panel">
-        <div class="section-heading"><div><span class="section-kicker">PERSONAL PICKS</span><h2>为你精排的商品</h2><p>先看匹配度，再打开详情或生成待确认订单。</p></div><span class="section-count">{{ recommendations.length }} 个推荐</span></div>
+        <div class="section-heading"><div><span class="section-kicker">个性化推荐</span><h2>为你精排的商品</h2><p>先看匹配度，再打开详情或生成待确认订单。</p></div><span class="section-count">{{ recommendations.length }} 个推荐</span></div>
         <div class="product-grid">
           <article
             v-for="card in recommendations"
@@ -1196,7 +1189,7 @@ onBeforeUnmount(() => {
 
       <section v-if="isBrowsePage" class="section-panel">
         <div class="section-heading">
-          <div><span class="section-kicker">BROWSE THE CATALOG</span><h2>在售商品</h2><p>只展示启用店铺中有库存的商品，先逛逛再让导购帮你挑。</p></div>
+          <div><span class="section-kicker">商品浏览</span><h2>在售商品</h2><p>只展示启用店铺中有库存的商品，先逛逛再让导购帮你挑。</p></div>
           <span class="section-count">{{ visibleProducts.length }} / {{ products.length }} 件</span>
         </div>
         <div class="category-filter-row" aria-label="商品分类">
@@ -1227,7 +1220,7 @@ onBeforeUnmount(() => {
       </section>
 
       <section v-if="isOrdersPage" class="section-panel">
-        <div class="section-heading"><div><span class="section-kicker">YOUR ORDERS</span><h2>我的订单</h2><p>待确认订单将在十五分钟后失效，确认前会再次校验价格和库存。</p></div><span v-if="pendingOrders" class="badge badge--pending">{{ pendingOrders }} 笔待确认</span></div>
+        <div class="section-heading"><div><span class="section-kicker">订单管理</span><h2>我的订单</h2><p>待确认订单将在十五分钟后失效，确认前会再次校验价格和库存。</p></div><span v-if="pendingOrders" class="badge badge--pending">{{ pendingOrders }} 笔待确认</span></div>
         <p v-if="!orders.length" class="empty-state">还没有订单，先去逛逛商品或开始语音导购吧。</p>
         <div v-else class="table-wrap">
           <table class="data-table">

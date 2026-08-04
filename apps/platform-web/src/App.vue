@@ -2,6 +2,9 @@
 import {
   AppShell,
   ProductDetailModal,
+  formatCatalogAttributeLabel,
+  formatCatalogAttributeValue,
+  formatCategoryLabel,
   requestJson,
   type Category,
   type CategoryLevelOne,
@@ -180,7 +183,7 @@ const pageHeadline = computed(() => {
 const pageDescription = computed(() => {
   if (isOperationPage.value) return '这是独立的操作页面，完成后会回到对应的管理视图。'
   if (isProductPage.value) return '默认全局浏览；可按商家、店铺单选或多选，再叠加商品条件过滤。'
-  if (isMerchantPage.value) return '店铺启停会实时影响用户端的商品浏览和 Agent 推荐候选。'
+  if (isMerchantPage.value) return '店铺启停会实时影响用户端的商品浏览和智能导购推荐候选。'
   if (isOrdersPage.value) return '查看全平台订单状态与交易结果，快速识别异常记录。'
   return '从品类、可推荐商品和必填槽位三个维度，快速定位导购范围。'
 })
@@ -216,21 +219,15 @@ function formatDateTime(value: string) {
 }
 
 function categoryLabel(value: string) {
-  return value.replaceAll('_', ' ')
-}
-
-const categoryDisplayNames: Record<string, string> = {
-  HEADPHONES: '耳机',
-  COFFEE_MACHINE: '咖啡机',
-  ELECTRIC_KETTLE: '电热水壶',
-  RUNNING_SHOES: '跑鞋',
-  WATCHES: '腕表',
-  LIPSTICK: '口红',
+  return formatCategoryLabel(value)
 }
 
 function categoryDisplayName(value: string) {
-  const label = categoryDisplayNames[value]
-  return label ? `${label} · ${value}` : value
+  return categoryLabel(value)
+}
+
+function formatSlotValues(values: CategorySlot['enumValues']) {
+  return values.map((value) => formatCatalogAttributeValue(value)).join(' / ')
 }
 
 function getCategorySupport(category: Category): CategorySupport {
@@ -369,7 +366,7 @@ async function saveSlot() {
 }
 
 async function deleteCategoryLevelOne(category: CategoryLevelOne) {
-  if (!window.confirm(`确认删除一级分类“${category.code}”吗？`)) return
+  if (!window.confirm(`确认删除一级分类“${categoryLabel(category.code)}”吗？`)) return
   try {
     await requestJson(`/platform/category-level-ones/${category.id}`, { method: 'DELETE' })
     await loadData()
@@ -379,7 +376,7 @@ async function deleteCategoryLevelOne(category: CategoryLevelOne) {
 }
 
 async function deleteCategory(category: Category) {
-  if (!window.confirm(`确认删除二级分类“${category.categoryL2}”吗？`)) return
+  if (!window.confirm(`确认删除二级分类“${categoryLabel(category.categoryL2)}”吗？`)) return
   try {
     await requestJson(`/platform/categories/${category.id}`, { method: 'DELETE' })
     await loadData()
@@ -389,7 +386,7 @@ async function deleteCategory(category: Category) {
 }
 
 async function deleteSlot(slot: CategorySlot) {
-  if (!window.confirm(`确认删除槽位“${slot.key}”吗？`)) return
+  if (!window.confirm(`确认删除槽位“${formatCatalogAttributeLabel(slot.key)}”吗？`)) return
   try {
     await requestJson(`/platform/category-slots/${slot.id}`, { method: 'DELETE' })
     await loadData()
@@ -477,7 +474,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', routeFromHash))
 
 <template>
   <AppShell
-    eyebrow="VOICE COMMERCE · PLATFORM"
+    eyebrow="声选导购 · 平台端"
     title="声选平台"
     :description="pageDescription"
     :nav-items="navItems"
@@ -500,7 +497,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', routeFromHash))
 
       <section v-if="isTaxonomyPage" class="taxonomy-diagnostic-strip" aria-label="导购支持概览">
         <div class="taxonomy-diagnostic-strip__lead">
-          <span class="section-kicker">AGENT READINESS</span>
+          <span class="section-kicker">智能导购就绪度</span>
           <strong>导购支持范围</strong>
         </div>
         <dl class="taxonomy-diagnostic-metrics">
@@ -512,16 +509,16 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', routeFromHash))
       </section>
 
       <section v-if="isTaxonomyPage" class="section-panel">
-        <div class="section-heading"><div><span class="section-kicker">SUPPORT DIRECTORY</span><h2>支持品类与槽位</h2><p>品类、在库供给和必填需求槽位集中展示，用于判断当前导购是否具备推荐条件。</p></div><span class="section-count">{{ categoryLevelOnes.length }} 个一级分类 · {{ categories.length }} 个二级分类</span></div>
+        <div class="section-heading"><div><span class="section-kicker">品类支持目录</span><h2>支持品类与槽位</h2><p>品类、在库供给和必填需求槽位集中展示，用于判断当前导购是否具备推荐条件。</p></div><span class="section-count">{{ categoryLevelOnes.length }} 个一级分类 · {{ categories.length }} 个二级分类</span></div>
         <div class="taxonomy-filter" aria-label="支持目录筛选">
-          <label class="form-field taxonomy-filter__search">搜索品类或槽位<input v-model="taxonomyQuery" class="input" placeholder="例如：耳机、HEADPHONES、connectivity" /></label>
-          <label class="form-field">一级分类<select v-model="taxonomyLevelOneFilter" class="select"><option value="">全部一级分类</option><option v-for="levelOne in categoryLevelOnes" :key="levelOne.id" :value="levelOne.id">{{ levelOne.code }}</option></select></label>
+          <label class="form-field taxonomy-filter__search">搜索品类或槽位<input v-model="taxonomyQuery" class="input" placeholder="例如：耳机、耳机代码、连接方式" /></label>
+          <label class="form-field">一级分类<select v-model="taxonomyLevelOneFilter" class="select"><option value="">全部一级分类</option><option v-for="levelOne in categoryLevelOnes" :key="levelOne.id" :value="levelOne.id">{{ categoryLabel(levelOne.code) }}</option></select></label>
         </div>
         <p v-if="loading" class="empty-state">正在加载品类结构…</p>
         <p v-else-if="!taxonomyGroups.length" class="empty-state">{{ hasTaxonomyFilter ? '未找到匹配的品类或槽位。' : '还没有分类，请先新增一级分类。' }}</p>
         <div v-else class="taxonomy-list">
           <article v-for="group in taxonomyGroups" :key="group.levelOne.id" class="taxonomy-group">
-            <div class="taxonomy-heading"><div><span class="badge">一级分类</span><h3>{{ group.levelOne.code }}</h3></div><button v-if="!group.categories.length" class="danger-button small-button" type="button" @click="deleteCategoryLevelOne(group.levelOne)">删除一级分类</button></div>
+            <div class="taxonomy-heading"><div><span class="badge">一级分类</span><h3>{{ categoryLabel(group.levelOne.code) }}</h3></div><button v-if="!group.categories.length" class="danger-button small-button" type="button" @click="deleteCategoryLevelOne(group.levelOne)">删除一级分类</button></div>
             <p v-if="!group.categories.length" class="muted">暂无二级分类。</p>
             <div v-else class="taxonomy-children">
               <article v-for="category in group.categories" :key="category.id" class="taxonomy-child">
@@ -535,7 +532,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', routeFromHash))
                   </dl>
                   <div class="section-actions"><button class="ghost-button small-button" type="button" @click="browseCategoryProducts(category)">查看商品</button><button class="danger-button small-button" type="button" @click="deleteCategory(category)">删除二级分类</button></div>
                 </div>
-                <div class="slot-list"><span v-for="slot in category.slots" :key="slot.id" class="slot-chip" :class="{ 'slot-chip--optional': !slot.isRequired }">{{ slot.key }} · {{ slot.isRequired ? '必填' : '选填' }} · {{ slot.enumValues.join(' / ') }}<button class="ghost-button small-button" type="button" @click="openSlotEditor(slot)">编辑</button><button class="danger-button small-button" type="button" @click="deleteSlot(slot)">删除</button></span><span v-if="!category.slots.length" class="muted">暂无槽位。</span></div>
+                <div class="slot-list"><span v-for="slot in category.slots" :key="slot.id" class="slot-chip" :class="{ 'slot-chip--optional': !slot.isRequired }">{{ formatCatalogAttributeLabel(slot.key) }} · {{ slot.isRequired ? '必填' : '选填' }} · {{ formatSlotValues(slot.enumValues) }}<button class="ghost-button small-button" type="button" @click="openSlotEditor(slot)">编辑</button><button class="danger-button small-button" type="button" @click="deleteSlot(slot)">删除</button></span><span v-if="!category.slots.length" class="muted">暂无槽位。</span></div>
               </article>
             </div>
           </article>
@@ -543,35 +540,35 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', routeFromHash))
       </section>
 
       <section v-else-if="isProductPage" class="section-panel">
-        <div class="section-heading"><div><span class="section-kicker">GLOBAL CATALOG</span><h2>全局商品浏览</h2><p>未选择范围时展示全部商品；勾选商家或店铺即可进行单选、多选组合筛选。</p></div><span class="section-count">{{ visibleProducts.length }} / {{ products.length }} 件</span></div>
+        <div class="section-heading"><div><span class="section-kicker">全局商品目录</span><h2>全局商品浏览</h2><p>未选择范围时展示全部商品；勾选商家或店铺即可进行单选、多选组合筛选。</p></div><span class="section-count">{{ visibleProducts.length }} / {{ products.length }} 件</span></div>
         <div class="scope-filter-grid">
           <section class="selection-pane"><div class="selection-pane__heading"><strong>按商家筛选</strong><div class="section-actions"><button class="ghost-button small-button" type="button" @click="selectAllMerchants">全选</button><button class="ghost-button small-button" type="button" @click="clearProductScope">清空</button></div></div><div class="checkbox-list"><label v-for="merchant in merchantGroups" :key="merchant.ownerUserId" class="selection-option"><input v-model="selectedMerchantKeys" type="checkbox" :value="merchant.ownerUserId" /><span><strong>{{ merchant.ownerDisplayName }}</strong><small>{{ merchant.stores.length }} 家店铺</small></span></label></div></section>
           <section class="selection-pane"><div class="selection-pane__heading"><strong>按店铺筛选</strong><span class="muted">可多选</span></div><div class="checkbox-list"><label v-for="store in availableStores" :key="store.id" class="selection-option"><input v-model="selectedStoreIds" type="checkbox" :value="store.id" /><span><strong>{{ store.name }}</strong><small>{{ store.productCount }} 件商品 · {{ store.isEnabled ? '启用' : '禁用' }}</small></span></label><span v-if="!availableStores.length" class="muted">没有匹配的店铺。</span></div></section>
         </div>
-        <div class="filter-toolbar filter-toolbar--platform" aria-label="商品条件筛选"><label class="form-field filter-toolbar__search">搜索商品<input v-model="productQuery" class="input" placeholder="商品名、SKU、品牌或店铺" /></label><label class="form-field">状态<select v-model="productStatus" class="select"><option value="">全部状态</option><option value="on_sale">在售</option><option value="draft">草稿</option><option value="off_sale">已下架</option></select></label><label class="form-field">品类<select v-model="productCategory" class="select"><option value="">全部品类</option><option v-for="category in categories" :key="category.id" :value="category.categoryL2">{{ categoryLabel(category.categoryL2) }}</option></select></label><label class="form-field">库存<select v-model="productStock" class="select"><option value="all">全部库存</option><option value="available">有库存</option><option value="low">低库存（≤10）</option><option value="out">缺货</option></select></label></div>
+        <div class="filter-toolbar filter-toolbar--platform" aria-label="商品条件筛选"><label class="form-field filter-toolbar__search">搜索商品<input v-model="productQuery" class="input" placeholder="商品名、商品编码（SKU）、品牌或店铺" /></label><label class="form-field">状态<select v-model="productStatus" class="select"><option value="">全部状态</option><option value="on_sale">在售</option><option value="draft">草稿</option><option value="off_sale">已下架</option></select></label><label class="form-field">品类<select v-model="productCategory" class="select"><option value="">全部品类</option><option v-for="category in categories" :key="category.id" :value="category.categoryL2">{{ categoryLabel(category.categoryL2) }}</option></select></label><label class="form-field">库存<select v-model="productStock" class="select"><option value="all">全部库存</option><option value="available">有库存</option><option value="low">低库存（≤10）</option><option value="out">缺货</option></select></label></div>
         <p v-if="loading" class="empty-state">正在加载全局商品…</p>
         <p v-else-if="!visibleProducts.length" class="empty-state">当前范围没有符合条件的商品。</p>
         <div v-else class="table-wrap"><table class="data-table"><thead><tr><th>商品</th><th>商家 / 店铺</th><th>标准品类</th><th>价格</th><th>库存</th><th>状态</th></tr></thead><tbody><tr v-for="product in visibleProducts" :key="product.id" class="product-row" tabindex="0" @click="openProduct(product)"><td><strong>{{ product.name }}</strong><br /><span class="muted">{{ product.sku }} · {{ product.brand || '无品牌' }}</span></td><td>{{ product.merchantName }}</td><td>{{ categoryLabel(product.categoryL2) }}</td><td class="order-total">¥{{ formatPrice(product.price) }}</td><td>{{ product.stock }}</td><td><span class="badge" :class="{ 'badge--disabled': product.status !== 'on_sale' }">{{ product.status === 'on_sale' ? '在售' : product.status === 'draft' ? '草稿' : '已下架' }}</span></td></tr></tbody></table></div>
       </section>
 
       <section v-else-if="isMerchantPage" class="section-panel">
-        <div class="section-heading"><div><span class="section-kicker">MERCHANT GOVERNANCE</span><h2>商家与店铺</h2><p>每个店铺的启停状态都会即时影响用户端和 Agent 可见的供给范围。</p></div></div>
+        <div class="section-heading"><div><span class="section-kicker">商家治理</span><h2>商家与店铺</h2><p>每个店铺的启停状态都会即时影响用户端和智能导购可见的供给范围。</p></div></div>
         <div class="merchant-group-list"><section v-for="merchant in merchantGroups" :key="merchant.ownerUserId" class="merchant-group"><div class="merchant-group__heading"><div><span class="badge">{{ merchant.stores.length }} 家店铺</span><h3>{{ merchant.ownerDisplayName }}</h3></div><span class="muted">{{ merchant.stores.reduce((total, store) => total + store.productCount, 0) }} 件商品</span></div><div class="store-grid"><article v-for="store in merchant.stores" :key="store.id" class="store-card"><span class="badge" :class="{ 'badge--disabled': !store.isEnabled }">{{ store.isEnabled ? '已启用' : '已禁用' }}</span><h3>{{ store.name }}</h3><p>{{ store.description || '暂无店铺介绍。' }}</p><p v-if="store.disabledReason" class="reason">禁用原因：{{ store.disabledReason }}</p><div class="card-footer"><span class="muted">{{ store.productCount }} 件商品</span><button :class="store.isEnabled ? 'danger-button' : 'secondary-button'" class="small-button" type="button" @click="openStatusEditor(store)">{{ store.isEnabled ? '禁用店铺' : '恢复启用' }}</button></div></article></div></section></div>
       </section>
 
       <section v-else-if="isOrdersPage" class="section-panel">
-        <div class="section-heading"><div><span class="section-kicker">PLATFORM ORDERS</span><h2>全平台订单</h2><p>从结果看交易状态，关注待确认和失败订单。</p></div><label class="form-field compact-field">订单状态<select v-model="orderStatus" class="select"><option value="">全部状态</option><option value="pending">待确认</option><option value="success">已完成</option><option value="fail">已取消</option></select></label></div>
+        <div class="section-heading"><div><span class="section-kicker">平台订单</span><h2>全平台订单</h2><p>从结果看交易状态，关注待确认和失败订单。</p></div><label class="form-field compact-field">订单状态<select v-model="orderStatus" class="select"><option value="">全部状态</option><option value="pending">待确认</option><option value="success">已完成</option><option value="fail">已取消</option></select></label></div>
         <p v-if="!visibleOrders.length" class="empty-state">当前没有匹配的订单。</p>
         <div v-else class="table-wrap"><table class="data-table"><thead><tr><th>商品</th><th>商家</th><th>用户</th><th>金额</th><th>状态</th><th>失败原因</th><th>时间</th></tr></thead><tbody><tr v-for="order in visibleOrders" :key="order.id"><td>{{ order.productSnapshot.name }}</td><td>{{ order.merchantSnapshot.name }}</td><td>{{ order.userId.slice(0, 8) }}…</td><td class="order-total">¥{{ formatPrice(order.totalAmount) }}</td><td><span class="badge" :class="`badge--${order.status}`">{{ order.status === 'pending' ? '待确认' : order.status === 'success' ? '已完成' : '已取消' }}</span></td><td>{{ order.failureReason || '—' }}</td><td><time :datetime="order.createdAt">{{ formatDateTime(order.createdAt) }}</time></td></tr></tbody></table></div>
       </section>
 
-      <section v-else-if="isLevelOneEditor" class="section-panel operation-page"><div class="operation-page__intro"><span class="section-kicker">LEVEL ONE CATEGORY</span><h2>新增一级品类</h2><p>一级品类是二级品类与商品属性的顶层组织方式。</p></div><form class="form-grid operation-form" @submit.prevent="createCategoryLevelOne"><label class="form-field form-field--wide">一级分类编码<input v-model="categoryL1Form.code" class="input" placeholder="ELECTRONICS" required /></label><div class="form-actions form-field--full"><button class="ghost-button" type="button" @click="goTo('/taxonomy')">取消</button><button class="primary-button" type="submit" :disabled="categorySaving">{{ categorySaving ? '创建中…' : '创建一级品类' }}</button></div></form></section>
+      <section v-else-if="isLevelOneEditor" class="section-panel operation-page"><div class="operation-page__intro"><span class="section-kicker">一级品类</span><h2>新增一级品类</h2><p>一级品类是二级品类与商品属性的顶层组织方式。</p></div><form class="form-grid operation-form" @submit.prevent="createCategoryLevelOne"><label class="form-field form-field--wide">一级分类编码<input v-model="categoryL1Form.code" class="input" placeholder="例如：ELECTRONICS（数码电子）" required /></label><div class="form-actions form-field--full"><button class="ghost-button" type="button" @click="goTo('/taxonomy')">取消</button><button class="primary-button" type="submit" :disabled="categorySaving">{{ categorySaving ? '创建中…' : '创建一级品类' }}</button></div></form></section>
 
-      <section v-else-if="isLevelTwoEditor" class="section-panel operation-page"><div class="operation-page__intro"><span class="section-kicker">LEVEL TWO CATEGORY</span><h2>新增二级品类</h2><p>二级品类将直接用于商品归类、筛选和 Agent 的推荐条件。</p></div><form class="form-grid operation-form" @submit.prevent="createCategory"><label class="form-field">关联一级分类<select v-model="categoryForm.categoryL1Id" class="select" required><option value="" disabled>请选择一级分类</option><option v-for="item in categoryLevelOnes" :key="item.id" :value="item.id">{{ item.code }}</option></select></label><label class="form-field">二级分类编码<input v-model="categoryForm.categoryL2" class="input" placeholder="HEADPHONES" required /></label><div class="form-actions form-field--full"><button class="ghost-button" type="button" @click="goTo('/taxonomy')">取消</button><button class="primary-button" type="submit" :disabled="categorySaving || !categoryLevelOnes.length">{{ categorySaving ? '创建中…' : '创建二级品类' }}</button></div></form></section>
+      <section v-else-if="isLevelTwoEditor" class="section-panel operation-page"><div class="operation-page__intro"><span class="section-kicker">二级品类</span><h2>新增二级品类</h2><p>二级品类将直接用于商品归类、筛选和智能导购的推荐条件。</p></div><form class="form-grid operation-form" @submit.prevent="createCategory"><label class="form-field">关联一级分类<select v-model="categoryForm.categoryL1Id" class="select" required><option value="" disabled>请选择一级分类</option><option v-for="item in categoryLevelOnes" :key="item.id" :value="item.id">{{ categoryLabel(item.code) }}</option></select></label><label class="form-field">二级分类编码<input v-model="categoryForm.categoryL2" class="input" placeholder="例如：HEADPHONES（耳机）" required /></label><div class="form-actions form-field--full"><button class="ghost-button" type="button" @click="goTo('/taxonomy')">取消</button><button class="primary-button" type="submit" :disabled="categorySaving || !categoryLevelOnes.length">{{ categorySaving ? '创建中…' : '创建二级品类' }}</button></div></form></section>
 
-      <section v-else-if="isSlotEditor" class="section-panel operation-page"><div class="operation-page__intro"><span class="section-kicker">PRODUCT SLOT</span><h2>{{ editingSlot ? '编辑槽位' : '新增槽位' }}</h2><p>槽位的可选值会成为商品资料的标准化参数，并帮助 Agent 澄清用户需求。</p></div><form class="form-grid operation-form" @submit.prevent="saveSlot"><label class="form-field">所属一级分类<select v-model="slotForm.categoryL1Id" class="select" :disabled="Boolean(editingSlot)" required><option value="" disabled>请选择一级分类</option><option v-for="item in categoryLevelOnes" :key="item.id" :value="item.id">{{ item.code }}</option></select></label><label class="form-field">所属二级分类<select v-model="slotForm.categoryId" class="select" :disabled="Boolean(editingSlot) || !slotForm.categoryL1Id" required><option value="" disabled>请选择二级分类</option><option v-for="category in slotCategories" :key="category.id" :value="category.id">{{ category.categoryL2 }}</option></select></label><label class="form-field">槽位 Key<input v-model="slotForm.key" class="input" :disabled="Boolean(editingSlot)" placeholder="connectivity" required /></label><label class="form-field">是否必填<select v-model="slotForm.isRequired" class="select"><option :value="true">必填</option><option :value="false">选填</option></select></label><label class="form-field form-field--wide">枚举值（逗号分隔）<input v-model="slotForm.enumValues" class="input" placeholder="bluetooth, wired" required /></label><div class="form-actions form-field--full"><button class="ghost-button" type="button" @click="goTo('/taxonomy')">取消</button><button class="primary-button" type="submit" :disabled="categorySaving || !slotCategories.length">{{ categorySaving ? '保存中…' : editingSlot ? '保存修改' : '创建槽位' }}</button></div></form></section>
+      <section v-else-if="isSlotEditor" class="section-panel operation-page"><div class="operation-page__intro"><span class="section-kicker">商品属性</span><h2>{{ editingSlot ? '编辑槽位' : '新增槽位' }}</h2><p>槽位的可选值会成为商品资料的标准化参数，并帮助智能导购澄清用户需求。</p></div><form class="form-grid operation-form" @submit.prevent="saveSlot"><label class="form-field">所属一级分类<select v-model="slotForm.categoryL1Id" class="select" :disabled="Boolean(editingSlot)" required><option value="" disabled>请选择一级分类</option><option v-for="item in categoryLevelOnes" :key="item.id" :value="item.id">{{ categoryLabel(item.code) }}</option></select></label><label class="form-field">所属二级分类<select v-model="slotForm.categoryId" class="select" :disabled="Boolean(editingSlot) || !slotForm.categoryL1Id" required><option value="" disabled>请选择二级分类</option><option v-for="category in slotCategories" :key="category.id" :value="category.id">{{ categoryLabel(category.categoryL2) }}</option></select></label><label class="form-field">槽位标识（Key）<input v-model="slotForm.key" class="input" :disabled="Boolean(editingSlot)" placeholder="例如：connectivity（连接方式）" required /></label><label class="form-field">是否必填<select v-model="slotForm.isRequired" class="select"><option :value="true">必填</option><option :value="false">选填</option></select></label><label class="form-field form-field--wide">枚举值（逗号分隔）<input v-model="slotForm.enumValues" class="input" placeholder="例如：bluetooth（蓝牙）、wired（有线）" required /></label><div class="form-actions form-field--full"><button class="ghost-button" type="button" @click="goTo('/taxonomy')">取消</button><button class="primary-button" type="submit" :disabled="categorySaving || !slotCategories.length">{{ categorySaving ? '保存中…' : editingSlot ? '保存修改' : '创建槽位' }}</button></div></form></section>
 
-      <section v-else-if="isStatusEditor && statusStore" class="section-panel operation-page"><div class="operation-page__intro"><span class="section-kicker">STORE STATUS</span><h2>{{ statusStore.isEnabled ? '禁用店铺' : '恢复店铺' }}</h2><p>{{ statusStore.name }} {{ statusStore.isEnabled ? '被禁用后，其商品会从用户端和 Agent 候选中移除。' : '恢复后会按商品自身状态重新参与供给。' }}</p></div><form class="form-stack operation-form" @submit.prevent="saveStoreStatus"><label v-if="statusStore.isEnabled" class="form-field">禁用原因<textarea v-model="disabledReason" class="textarea" required /></label><p v-else class="empty-state">确认恢复后，该店铺在售且有库存的商品将重新可被用户浏览。</p><div class="form-actions"><button class="ghost-button" type="button" @click="goTo('/merchants')">取消</button><button :class="statusStore.isEnabled ? 'danger-button' : 'primary-button'" type="submit" :disabled="statusSaving">{{ statusSaving ? '保存中…' : statusStore.isEnabled ? '确认禁用' : '确认恢复' }}</button></div></form></section>
+      <section v-else-if="isStatusEditor && statusStore" class="section-panel operation-page"><div class="operation-page__intro"><span class="section-kicker">店铺状态</span><h2>{{ statusStore.isEnabled ? '禁用店铺' : '恢复店铺' }}</h2><p>{{ statusStore.name }} {{ statusStore.isEnabled ? '被禁用后，其商品会从用户端和智能导购候选中移除。' : '恢复后会按商品自身状态重新参与供给。' }}</p></div><form class="form-stack operation-form" @submit.prevent="saveStoreStatus"><label v-if="statusStore.isEnabled" class="form-field">禁用原因<textarea v-model="disabledReason" class="textarea" required /></label><p v-else class="empty-state">确认恢复后，该店铺在售且有库存的商品将重新可被用户浏览。</p><div class="form-actions"><button class="ghost-button" type="button" @click="goTo('/merchants')">取消</button><button :class="statusStore.isEnabled ? 'danger-button' : 'primary-button'" type="submit" :disabled="statusSaving">{{ statusSaving ? '保存中…' : statusStore.isEnabled ? '确认禁用' : '确认恢复' }}</button></div></form></section>
     </div>
     <ProductDetailModal v-if="selectedProduct && isProductPage" :product="selectedProduct" @close="closeProductDetails" />
   </AppShell>

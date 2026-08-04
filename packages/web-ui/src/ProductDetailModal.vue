@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted } from 'vue'
-import type { Product } from './index'
+import {
+  formatCatalogAttributeLabel,
+  formatCatalogAttributeValue,
+  formatCategoryLabel,
+  type Product,
+} from './index'
 
 const props = withDefaults(
   defineProps<{
@@ -30,12 +35,6 @@ const productInitial = computed(() => props.product.name.slice(0, 1))
 
 function formatPrice(value: number) {
   return Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
-
-function formatAttribute(value: unknown) {
-  if (value === null || value === undefined || value === '') return '—'
-  if (typeof value === 'object') return JSON.stringify(value)
-  return String(value)
 }
 
 function formatDate(value: string) {
@@ -90,10 +89,10 @@ onBeforeUnmount(() => {
 
         <div class="product-detail-content">
           <div class="product-detail-tags">
-            <span class="badge">{{ product.categoryL2 }}</span>
+            <span class="badge">{{ formatCategoryLabel(product.categoryL2) }}</span>
             <span class="badge" :class="{ 'badge--disabled': product.status !== 'on_sale' }">{{ statusLabels[product.status] }}</span>
           </div>
-          <p v-if="product.categoryL1" class="product-detail-category">{{ product.categoryL1 }} / {{ product.categoryL2 }}</p>
+          <p v-if="product.categoryL1" class="product-detail-category">{{ formatCategoryLabel(product.categoryL1) }} / {{ formatCategoryLabel(product.categoryL2) }}</p>
           <h2 id="product-detail-title">{{ product.name }}</h2>
           <p v-if="product.brand" class="product-detail-brand">{{ product.brand }}</p>
           <p id="product-detail-description" class="product-detail-description">{{ product.description || '暂无商品描述。' }}</p>
@@ -106,7 +105,7 @@ onBeforeUnmount(() => {
           </div>
 
           <dl class="product-detail-facts">
-            <div><dt>SKU</dt><dd>{{ product.sku || '—' }}</dd></div>
+            <div><dt>商品编码（SKU）</dt><dd>{{ product.sku || '—' }}</dd></div>
             <div><dt>商品状态</dt><dd>{{ statusLabels[product.status] }}</dd></div>
             <div v-if="formatDate(product.updatedAt)"><dt>最近更新</dt><dd>{{ formatDate(product.updatedAt) }}</dd></div>
           </dl>
@@ -124,8 +123,8 @@ onBeforeUnmount(() => {
         <h3>商品参数</h3>
         <dl class="product-detail-attributes">
           <div v-for="[key, value] in attributeEntries" :key="key">
-            <dt>{{ key }}</dt>
-            <dd>{{ formatAttribute(value) }}</dd>
+            <dt>{{ formatCatalogAttributeLabel(key) }}</dt>
+            <dd>{{ formatCatalogAttributeValue(value) }}</dd>
           </div>
         </dl>
       </div>

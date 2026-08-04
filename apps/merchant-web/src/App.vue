@@ -2,6 +2,9 @@
 import {
   AppShell,
   ProductDetailModal,
+  formatCatalogAttributeLabel,
+  formatCatalogAttributeValue,
+  formatCategoryLabel,
   requestJson,
   type Category,
   type ItemsResponse,
@@ -124,7 +127,7 @@ function formatDateTime(value: string) {
 }
 
 function categoryLabel(value: string) {
-  return value.replaceAll('_', ' ')
+  return formatCategoryLabel(value)
 }
 
 async function loadData() {
@@ -325,7 +328,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', routeFromHash))
 
 <template>
   <AppShell
-    eyebrow="VOICE COMMERCE · MERCHANT"
+    eyebrow="声选导购 · 商家端"
     title="声选商家"
     :description="pageDescription"
     :nav-items="navItems"
@@ -346,7 +349,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', routeFromHash))
         <span class="hero-panel__label">当前账号数据边界</span>
         <div>
           <p class="hero-panel__value">{{ stores.length }} 家店 · {{ products.length }} 件商品</p>
-          <p class="hero-panel__note">累计成交 ¥{{ formatPrice(revenue) }}；所有写操作都由后端按 ownerUserId 复核。</p>
+          <p class="hero-panel__note">累计成交 ¥{{ formatPrice(revenue) }}；所有写操作都由后端按账号归属复核。</p>
         </div>
       </div>
     </template>
@@ -357,11 +360,11 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', routeFromHash))
       <template v-if="isCatalogPage">
         <section class="section-panel">
           <div class="section-heading">
-            <div><span class="section-kicker">INVENTORY WORKSPACE</span><h2>全部商品</h2><p>先看完整商品清单，再按店铺和经营条件快速筛选。</p></div>
+            <div><span class="section-kicker">商品管理</span><h2>全部商品</h2><p>先看完整商品清单，再按店铺和经营条件快速筛选。</p></div>
             <span class="section-count">{{ visibleProducts.length }} / {{ products.length }} 件</span>
           </div>
           <div class="filter-toolbar" aria-label="商品筛选">
-            <label class="form-field filter-toolbar__search">搜索商品<input v-model="productQuery" class="input" placeholder="商品名、SKU 或品牌" /></label>
+            <label class="form-field filter-toolbar__search">搜索商品<input v-model="productQuery" class="input" placeholder="商品名、商品编码（SKU）或品牌" /></label>
             <label class="form-field">店铺<select v-model="productStoreFilter" class="select"><option value="">全部店铺</option><option v-for="store in stores" :key="store.id" :value="store.id">{{ store.name }}</option></select></label>
             <label class="form-field">状态<select v-model="productStatusFilter" class="select"><option value="">全部状态</option><option value="on_sale">在售</option><option value="draft">草稿</option><option value="off_sale">已下架</option></select></label>
             <label class="form-field">品类<select v-model="productCategoryFilter" class="select"><option value="">全部品类</option><option v-for="category in categories" :key="category.id" :value="category.categoryL2">{{ categoryLabel(category.categoryL2) }}</option></select></label>
@@ -385,7 +388,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', routeFromHash))
         </section>
 
         <section class="section-panel">
-          <div class="section-heading"><div><span class="section-kicker">STORE MANAGEMENT</span><h2>我的店铺</h2><p>店铺是商品供给和订单边界，新增与修改都会在独立页面完成。</p></div><button class="secondary-button" type="button" @click="openStoreEditor()">新增店铺</button></div>
+          <div class="section-heading"><div><span class="section-kicker">店铺管理</span><h2>我的店铺</h2><p>店铺是商品供给和订单边界，新增与修改都会在独立页面完成。</p></div><button class="secondary-button" type="button" @click="openStoreEditor()">新增店铺</button></div>
           <div v-if="!stores.length" class="empty-state">还没有店铺，先新增一家店铺。</div>
           <div v-else class="store-grid">
             <article v-for="store in stores" :key="store.id" class="store-card">
@@ -398,31 +401,31 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', routeFromHash))
       </template>
 
       <section v-else-if="isOrdersPage" class="section-panel">
-        <div class="section-heading"><div><span class="section-kicker">ORDER DESK</span><h2>本店订单</h2><p>仅展示当前账号所拥有店铺的订单。</p></div><span class="badge badge--pending">{{ pendingOrders }} 笔待确认</span></div>
+        <div class="section-heading"><div><span class="section-kicker">订单管理</span><h2>本店订单</h2><p>仅展示当前账号所拥有店铺的订单。</p></div><span class="badge badge--pending">{{ pendingOrders }} 笔待确认</span></div>
         <p v-if="!orders.length" class="empty-state">暂时还没有订单。</p>
         <div v-else class="table-wrap"><table class="data-table"><thead><tr><th>商品</th><th>金额</th><th>状态</th><th>失败原因</th><th>创建时间</th></tr></thead><tbody><tr v-for="order in orders" :key="order.id"><td><strong>{{ order.productSnapshot.name }}</strong></td><td class="order-total">¥{{ formatPrice(order.totalAmount) }}</td><td><span class="badge" :class="`badge--${order.status}`">{{ order.status === 'pending' ? '待确认' : order.status === 'success' ? '已完成' : '已取消' }}</span></td><td>{{ order.failureReason || '—' }}</td><td><time :datetime="order.createdAt">{{ formatDateTime(order.createdAt) }}</time></td></tr></tbody></table></div>
       </section>
 
       <section v-else-if="isStoreEditor" class="section-panel operation-page">
-        <div class="operation-page__intro"><span class="section-kicker">STORE EDITOR</span><h2>{{ editingStore ? '编辑店铺' : '新增店铺' }}</h2><p>完善店铺信息后，商品和订单会自动归入该店铺。</p></div>
+        <div class="operation-page__intro"><span class="section-kicker">店铺编辑</span><h2>{{ editingStore ? '编辑店铺' : '新增店铺' }}</h2><p>完善店铺信息后，商品和订单会自动归入该店铺。</p></div>
         <form class="form-grid operation-form" @submit.prevent="saveStore">
           <label class="form-field form-field--wide">店铺名称<input v-model="storeForm.name" class="input" required /></label>
           <label class="form-field">英文标识<input v-model="storeForm.slug" class="input" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" required /></label>
           <label class="form-field">联系电话<input v-model="storeForm.contactPhone" class="input" /></label>
-          <label class="form-field form-field--full">店铺简介<textarea v-model="storeForm.description" class="textarea" placeholder="让用户和 Agent 快速理解你的店铺特色" /></label>
-          <label class="form-field form-field--full">Logo 地址<input v-model="storeForm.logoUrl" class="input" placeholder="https://..." /></label>
+          <label class="form-field form-field--full">店铺简介<textarea v-model="storeForm.description" class="textarea" placeholder="让用户和智能导购快速理解你的店铺特色" /></label>
+          <label class="form-field form-field--full">店铺标识图地址（Logo URL）<input v-model="storeForm.logoUrl" class="input" placeholder="例如：https://..." /></label>
           <div class="form-actions form-field--full"><button class="ghost-button" type="button" @click="goTo('/catalog')">取消</button><button class="primary-button" type="submit" :disabled="saving">{{ saving ? '保存中…' : editingStore ? '保存修改' : '创建店铺' }}</button></div>
         </form>
       </section>
 
       <section v-else-if="isProductEditor" class="section-panel operation-page">
-        <div class="operation-page__intro"><span class="section-kicker">PRODUCT EDITOR</span><h2>{{ editingProduct ? '编辑商品' : '新增商品' }}</h2><p>商品事实会被 Agent 用于检索、比较和推荐，请尽量填写完整。</p></div>
+        <div class="operation-page__intro"><span class="section-kicker">商品编辑</span><h2>{{ editingProduct ? '编辑商品' : '新增商品' }}</h2><p>商品信息会被智能导购用于检索、比较和推荐，请尽量填写完整。</p></div>
         <form class="form-grid operation-form" @submit.prevent="saveProduct">
           <label class="form-field">所属店铺<select v-model="productForm.merchantId" class="select" required><option value="" disabled>请选择店铺</option><option v-for="store in stores" :key="store.id" :value="store.id">{{ store.name }}</option></select></label>
-          <label class="form-field">SKU<input v-model="productForm.sku" class="input" required /></label>
+          <label class="form-field">商品编码（SKU）<input v-model="productForm.sku" class="input" required /></label>
           <label class="form-field form-field--wide">商品名称<input v-model="productForm.name" class="input" required /></label>
-          <label class="form-field">一级品类<input :value="selectedCategory?.categoryL1 || productForm.categoryL1" class="input" disabled /></label>
-          <label class="form-field">二级品类<select v-model="productForm.categoryL2" class="select" required><option value="" disabled>请选择品类</option><option v-for="category in categories" :key="category.id" :value="category.categoryL2">{{ category.categoryL1 }} / {{ category.categoryL2 }}</option></select></label>
+          <label class="form-field">一级品类<input :value="categoryLabel(selectedCategory?.categoryL1 || productForm.categoryL1)" class="input" disabled /></label>
+          <label class="form-field">二级品类<select v-model="productForm.categoryL2" class="select" required><option value="" disabled>请选择品类</option><option v-for="category in categories" :key="category.id" :value="category.categoryL2">{{ categoryLabel(category.categoryL1) }} / {{ categoryLabel(category.categoryL2) }}</option></select></label>
           <label class="form-field">品牌<input v-model="productForm.brand" class="input" /></label>
           <label class="form-field">状态<select v-model="productForm.status" class="select"><option value="draft">草稿</option><option value="on_sale">上架</option><option value="off_sale">下架</option></select></label>
           <label class="form-field">价格<input v-model.number="productForm.price" class="input" min="0" step="0.01" type="number" required /></label>
@@ -430,7 +433,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', routeFromHash))
           <label class="form-field form-field--wide">卖点（逗号分隔）<input v-model="productForm.sellingPoints" class="input" /></label>
           <label class="form-field form-field--full">商品描述<textarea v-model="productForm.description" class="textarea" /></label>
           <label class="form-field form-field--full">图片地址（每行一个）<textarea v-model="productForm.imageUrls" class="textarea" placeholder="https://..." /></label>
-          <div v-if="selectedSlots.length" class="slot-fields form-field--full"><div class="slot-fields__heading"><strong>{{ selectedCategory?.categoryL2 }} 商品槽位</strong><span class="muted">必填槽位会参与 Agent 的需求澄清</span></div><div class="form-grid"><label v-for="slot in selectedSlots" :key="slot.key" class="form-field"><span>{{ slot.key }} <b v-if="slot.isRequired" class="required-mark">必填</b><span v-else class="muted">选填</span></span><select v-model="productAttributes[slot.key]" class="select" :required="slot.isRequired"><option :value="null">请选择</option><option v-for="value in slot.enumValues" :key="String(value)" :value="value">{{ value }}</option></select></label></div></div>
+          <div v-if="selectedSlots.length" class="slot-fields form-field--full"><div class="slot-fields__heading"><strong>{{ categoryLabel(selectedCategory?.categoryL2 || '') }} 商品槽位</strong><span class="muted">必填槽位会参与智能导购的需求澄清</span></div><div class="form-grid"><label v-for="slot in selectedSlots" :key="slot.key" class="form-field"><span>{{ formatCatalogAttributeLabel(slot.key) }} <b v-if="slot.isRequired" class="required-mark">必填</b><span v-else class="muted">选填</span></span><select v-model="productAttributes[slot.key]" class="select" :required="slot.isRequired"><option :value="null">请选择</option><option v-for="value in slot.enumValues" :key="String(value)" :value="value">{{ formatCatalogAttributeValue(value) }}</option></select></label></div></div>
           <div class="form-actions form-field--full"><button class="ghost-button" type="button" @click="goTo('/catalog')">取消</button><button class="primary-button" type="submit" :disabled="saving || !stores.length">{{ saving ? '保存中…' : editingProduct ? '保存修改' : '创建商品' }}</button></div>
         </form>
       </section>
