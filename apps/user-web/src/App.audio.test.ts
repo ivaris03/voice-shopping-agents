@@ -2,6 +2,7 @@
 
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 
 import App from './App.vue'
 
@@ -69,6 +70,28 @@ class FakeAudioContext {
 
   createGain() {
     return { gain: { value: 1 }, connect: vi.fn(), disconnect: vi.fn() }
+  }
+}
+
+function catalogProduct() {
+  return {
+    id: '20000000-0000-4000-8000-000000000001',
+    merchantId: '10000000-0000-4000-8000-000000000001',
+    merchantName: '声动数码',
+    sku: 'HEADPHONE-A1',
+    name: '云雀 Air 降噪耳机',
+    categoryL1: 'ELECTRONICS',
+    categoryL2: 'HEADPHONES',
+    brand: '云雀',
+    description: '轻量头戴式主动降噪耳机。',
+    price: 699,
+    stock: 80,
+    attributes: {},
+    sellingPoints: [],
+    imageUrls: [],
+    status: 'on_sale' as const,
+    createdAt: '',
+    updatedAt: '',
   }
 }
 
@@ -403,25 +426,7 @@ describe('assistant reply audio coordination', () => {
   })
 
   it('creates a catalog order without linking a browser-local session', async () => {
-    const product = {
-      id: '20000000-0000-4000-8000-000000000001',
-      merchantId: '10000000-0000-4000-8000-000000000001',
-      merchantName: '声动数码',
-      sku: 'HEADPHONE-A1',
-      name: '云雀 Air 降噪耳机',
-      categoryL1: 'ELECTRONICS',
-      categoryL2: 'HEADPHONES',
-      brand: '云雀',
-      description: '轻量头戴式主动降噪耳机。',
-      price: 699,
-      stock: 80,
-      attributes: {},
-      sellingPoints: [],
-      imageUrls: [],
-      status: 'on_sale',
-      createdAt: '',
-      updatedAt: '',
-    }
+    const product = catalogProduct()
     const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       if (String(input).endsWith('/catalog/products')) {
         return new Response(JSON.stringify({ items: [product] }), {
@@ -456,6 +461,146 @@ describe('assistant reply audio coordination', () => {
     })
     expect(body).not.toHaveProperty('sessionId')
     expect(body).not.toHaveProperty('sourceTurnId')
+    wrapper.unmount()
+  })
+
+  it('blocks a second catalog checkout while the first request is in flight', async () => {
+    const product = catalogProduct()
+    let resolveOrder: ((response: Response) => void) | undefined
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/catalog/products')) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ items: [product] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        )
+      }
+      if (url.endsWith('/orders') && init?.method === 'POST') {
+        return new Promise<Response>((resolve) => {
+          resolveOrder = resolve
+        })
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ items: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(App)
+    await flushPromises()
+    const buyButton = wrapper.findAll('button').find((button) => button.text().trim() === '购买')
+    if (!buyButton) throw new Error('Catalog buy button was not rendered')
+
+    await buyButton.trigger('click')
+    await flushPromises()
+    await buyButton.trigger('click')
+    await flushPromises()
+
+    const orderRequests = fetchMock.mock.calls.filter(
+      ([input, init]) => String(input).endsWith('/orders') && init?.method === 'POST',
+    )
+    expect(orderRequests).toHaveLength(1)
+    expect((buyButton.element as HTMLButtonElement).disabled).toBe(true)
+
+    resolveOrder?.(
+      new Response(JSON.stringify({}), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    await flushPromises()
+    await nextTick()
+    const completedBuyButton = wrapper.findAll('button').find((button) => button.text().trim() === '购买')
+    if (!completedBuyButton) throw new Error('Catalog buy button was not rendered after checkout')
+    expect((completedBuyButton.element as HTMLButtonElement).disabled).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('reuses a catalog idempotency key when the user retries a failed request', async () => {
+    const product = catalogProduct()
+    let orderAttempts = 0
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/catalog/products')) {
+        return new Response(JSON.stringify({ items: [product] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      if (url.endsWith('/orders') && init?.method === 'POST') {
+        orderAttempts += 1
+        if (orderAttempts === 1) {
+          return new Response(JSON.stringify({ detail: '暂时无法创建订单' }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        return new Response(JSON.stringify({}), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ items: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(App)
+    await flushPromises()
+    const buyButton = wrapper.findAll('button').find((button) => button.text().trim() === '购买')
+    if (!buyButton) throw new Error('Catalog buy button was not rendered')
+
+    await buyButton.trigger('click')
+    await flushPromises()
+    await buyButton.trigger('click')
+    await flushPromises()
+
+    const orderRequests = fetchMock.mock.calls.filter(
+      ([input, init]) => String(input).endsWith('/orders') && init?.method === 'POST',
+    )
+    expect(orderRequests).toHaveLength(2)
+    const keys = orderRequests.map(([, init]) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      return body.idempotencyKey
+    })
+    expect(keys[0]).toBe(keys[1])
+    wrapper.unmount()
+  })
+
+  it('blocks rapid text submissions until the current turn completes', async () => {
+    const wrapper = mount(App)
+    await flushPromises()
+    const textSocket = FakeWebSocket.instances.find((socket) => socket.url.includes('/ws/text/'))
+    const input = wrapper.get('[aria-label="导购消息"]')
+    const sendButton = wrapper.get('.voice-send-button')
+
+    await input.setValue('我想买一双通勤鞋')
+    await sendButton.trigger('click')
+    await flushPromises()
+    await sendButton.trigger('click')
+    await flushPromises()
+
+    const submissions = textSocket?.send.mock.calls
+      .map(([value]) => (typeof value === 'string' ? JSON.parse(value) as Record<string, unknown> : null))
+      .filter((value): value is Record<string, unknown> => value?.type === 'turn.submit')
+    expect(submissions).toHaveLength(1)
+    expect((sendButton.element as HTMLButtonElement).disabled).toBe(true)
+
+    const turnId = String(submissions?.[0]?.turnId)
+    textSocket?.emitJson({
+      type: 'text.completed',
+      turnId,
+      payload: { text: '好的，我来为你筛选。' },
+    })
+    await flushPromises()
+    expect((sendButton.element as HTMLButtonElement).disabled).toBe(false)
     wrapper.unmount()
   })
 })
