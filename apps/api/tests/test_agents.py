@@ -27,6 +27,7 @@ from voice_shopping_api.agents.service import _handle_order, state_events
 from voice_shopping_api.agents.state import (
     IntentResult,
     ProductReason,
+    RecommendationHook,
     ShoppingInputState,
     ShoppingOutputState,
     ShoppingRuntimeDependencies,
@@ -1327,6 +1328,91 @@ async def test_product_reason_model_uses_one_product_card_payload(
     assert result == ProductReason(product_id="product-1", reason="适合你的通勤场景。")
     assert "productCard" in str(captured["payload"])
     assert "一张商品卡" in str(captured["system_prompt"])
+
+
+@pytest.mark.asyncio
+async def test_recommendation_hook_model_uses_all_product_cards(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_structured_chat(
+        system_prompt: str, payload: dict[str, object], schema: type[object]
+    ) -> RecommendationHook:
+        captured["system_prompt"] = system_prompt
+        captured["payload"] = payload
+        assert schema is RecommendationHook
+        return RecommendationHook(
+            hook="如果您更在意性价比，推荐您选择第1款（基础台灯）；如果您需要调节色温，推荐您选择第2款（调光台灯）。"
+        )
+
+    monkeypatch.setattr(model_module, "_structured_chat", fake_structured_chat)
+    hook = await model_module.generate_recommendation_hook(
+        "推荐台灯",
+        [
+            {"productId": "lamp-1", "name": "基础台灯"},
+            {"productId": "lamp-2", "name": "调光台灯"},
+        ],
+        "warm-professional",
+    )
+
+    assert "第1款（基础台灯）" in hook
+    assert "productCards" in str(captured["payload"])
+    assert "选择钩子" in str(captured["system_prompt"])
+
+
+@pytest.mark.asyncio
+async def test_emotional_response_appends_a_fact_based_selection_hook() -> None:
+    async def load_catalog(
+        _: str, __: bool, ___: dict[str, object]
+    ) -> list[dict[str, object]]:
+        return []
+
+    result = await emotional_response(
+        {
+            "model_enabled": False,
+            "utterance": "推荐台灯",
+            "emotion_style": "warm-professional",
+            "product_cards": [
+                {
+                    "productId": "lamp-1",
+                    "name": "基础台灯",
+                    "price": 99,
+                    "sellingPoints": ["价格亲民"],
+                },
+                {
+                    "productId": "lamp-2",
+                    "name": "调光台灯",
+                    "price": 159,
+                    "sellingPoints": ["支持调节色温"],
+                },
+            ],
+        },
+        Runtime(context=ShoppingRuntimeDependencies(catalog_loader=load_catalog)),
+    )
+
+    speech = result["speech_text"]
+    assert speech.index("第1款基础台灯") < speech.index("如果您更在意性价比")
+    assert "如果您更在意性价比，推荐您选择第1款（基础台灯）" in speech
+    assert "如果您更看重支持调节色温，推荐您选择第2款（调光台灯）" in speech
+
+
+def test_selection_hook_requires_the_correct_displayed_product_name() -> None:
+    cards = [
+        {"productId": "lamp-1", "name": "基础台灯"},
+        {"productId": "lamp-2", "name": "调光台灯"},
+    ]
+
+    assert response_module._is_usable_hook(
+        "如果您更在意性价比，推荐您选择第1款（基础台灯）；"
+        "如果您需要调节色温，推荐您选择第2款（调光台灯）。",
+        cards,
+    )
+    assert not response_module._is_usable_hook(
+        "如果您更在意性价比，推荐您选择第1款（调光台灯）；"
+        "如果您需要调节色温，推荐您选择第2款（基础台灯）。",
+        cards,
+    )
 
 
 @pytest.mark.asyncio

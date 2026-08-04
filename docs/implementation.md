@@ -217,10 +217,12 @@ product.id in recentPurchased          -0.30
 2. 最多并发 3 个理由请求，模型返回的 `product_id` 必须和输入卡片一致，理由不能为空。
 3. 单卡模型失败、返回商品 ID 不一致或理由不合规时，只对该卡使用确定性 fallback。
 4. 通过校验的理由通过 `reason_publisher` 按 `productId` 增量推送。
-5. `_build_speech()` 将理由组装为完整话术；当前不是让模型一次性生成完整业务话术。
-6. `_build_speech()` 只负责生成完整话术；话术在 `compliance_check()` 中通过 `split_sentences()` 拆成短句逐一检查。
-7. 全部短句通过后进入 `publish_response`，通过 `speech_delta_publisher` 每 12 个字符切片，并通过 `speech_sentence_publisher` 按标点发送 TTS。
-8. 任一短句命中正则后路由到 `violation_response`，清空理由并替换 `speech_text`、`final_reply` 为 `COMPLIANCE_FALLBACK`，然后只发布固定违规提示。
+5. 情感应答会基于全部商品卡额外生成一条选择钩子，将价格或功能差异转成条件式建议；模型失败、
+   钩子不合规或未按展示序号引用商品时，使用基于价格和卖点的确定性 fallback。
+6. `_build_speech()` 将逐商品理由和选择钩子组装为完整话术；当前不是让模型一次性生成完整业务话术。
+7. `_build_speech()` 只负责生成完整话术；话术在 `compliance_check()` 中通过 `split_sentences()` 拆成短句逐一检查。
+8. 全部短句通过后进入 `publish_response`，通过 `speech_delta_publisher` 每 12 个字符切片，并通过 `speech_sentence_publisher` 按标点发送 TTS。
+9. 任一短句命中正则后路由到 `violation_response`，清空理由并替换 `speech_text`、`final_reply` 为 `COMPLIANCE_FALLBACK`，然后只发布固定违规提示。
 
 `state_events()` 会根据 `reasons_streamed` 和 `speech_streamed` 避免在流式已发送后重复生成历史增量；最终始终发送 `text.completed`。
 

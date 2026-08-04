@@ -1,10 +1,14 @@
 import asyncio
 import logging
+import re
 from typing import Any
 
 from langgraph.runtime import Runtime
 
-from voice_shopping_api.agents.model import generate_product_reason
+from voice_shopping_api.agents.model import (
+    generate_product_reason,
+    generate_recommendation_hook,
+)
 from voice_shopping_api.agents.nodes.constants import (
     COMPLIANCE_FALLBACK,
     COMPLIANCE_PATTERNS,
@@ -33,6 +37,98 @@ def _fallback_reason(index: int, card: dict[str, Any]) -> ProductReason:
     if not is_compliant(reason):
         reason = f"第{index}款商品符合你当前的筛选条件。"
     return ProductReason(product_id=card["productId"], reason=reason)
+
+
+def _card_name(card: dict[str, Any]) -> str:
+    return str(card.get("name") or "该商品").strip() or "该商品"
+
+
+def _card_label(index: int, card: dict[str, Any]) -> str:
+    return f"第{index}款（{_card_name(card)}）"
+
+
+def _card_highlight(card: dict[str, Any]) -> str:
+    selling_points = card.get("sellingPoints")
+    if isinstance(selling_points, list):
+        for point in selling_points:
+            text = str(point).strip()
+            if text:
+                return text
+    return "当前筛选条件"
+
+
+def _price_leader_index(cards: list[dict[str, Any]]) -> int | None:
+    prices: list[float] = []
+    for card in cards:
+        try:
+            price = float(card["price"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        prices.append(price)
+    if len(set(prices)) < 2:
+        return None
+    return prices.index(min(prices))
+
+
+def _fallback_recommendation_hook(cards: list[dict[str, Any]]) -> str:
+    """Build a useful, fact-only choice prompt when the hook model is unavailable."""
+    if not cards:
+        return ""
+    price_leader = _price_leader_index(cards)
+    clauses: list[str] = []
+    for index, card in enumerate(cards):
+        if index == price_leader:
+            clauses.append(f"如果您更在意性价比，推荐您选择{_card_label(index + 1, card)}")
+        else:
+            clauses.append(
+                f"如果您更看重{_card_highlight(card)}，推荐您选择{_card_label(index + 1, card)}"
+            )
+    return "；".join(clauses) + "。"
+
+
+def _is_usable_hook(hook: str, cards: list[dict[str, Any]]) -> bool:
+    if not hook or not is_compliant(hook):
+        return False
+    references = [
+        (int(index), name.strip())
+        for index, name in re.findall(r"第(\d+)款\s*[（(]([^）)]+)[）)]", hook)
+    ]
+    referenced_indexes = {index for index, _ in references}
+    raw_referenced_indexes = {int(index) for index in re.findall(r"第(\d+)款", hook)}
+    required_references = 2 if len(cards) > 1 else 1
+    if len(referenced_indexes) < required_references:
+        return False
+    if raw_referenced_indexes != referenced_indexes:
+        return False
+    if any(index < 1 or index > len(cards) for index in referenced_indexes):
+        return False
+    return all(name == _card_name(cards[index - 1]) for index, name in references)
+
+
+def _complete_sentence(text_value: str) -> str:
+    text_value = text_value.strip()
+    if text_value.endswith(("。", "！", "？", "!", "?")):
+        return text_value
+    return f"{text_value}。"
+
+
+async def _generate_recommendation_hook(state: ShoppingState) -> str:
+    cards = state["product_cards"]
+    fallback = _fallback_recommendation_hook(cards)
+    if not state.get("model_enabled"):
+        return fallback
+    try:
+        hook = await generate_recommendation_hook(
+            state.get("utterance", ""),
+            cards,
+            state.get("emotion_style", "warm-professional"),
+        )
+        if not _is_usable_hook(hook, cards):
+            raise ValueError("模型返回的选择钩子不完整、不合规或未引用商品名称")
+        return _complete_sentence(hook)
+    except Exception as exc:
+        logger.warning("Recommendation hook model failed; using deterministic fallback: %s", exc)
+        return fallback
 
 
 async def _generate_one_reason(
@@ -89,9 +185,10 @@ async def _generate_reasons(
     )
 
 
-def _build_speech(reasons: list[ProductReason]) -> str:
+def _build_speech(reasons: list[ProductReason], hook: str = "") -> str:
     speech = "我筛选出了三款商品。" if len(reasons) == 3 else f"我找到了{len(reasons)}款商品。"
-    return speech + " ".join(reason.reason for reason in reasons)
+    speech += " ".join(reason.reason for reason in reasons)
+    return f"{speech} {hook}" if hook else speech
 
 
 async def _publish_speech(
@@ -134,8 +231,11 @@ async def emotional_response(
     elif state.get("product_cards"):
         context = runtime.context
         reason_publisher = context.reason_publisher if context else None
-        reasons = await _generate_reasons(state, reason_publisher)
-        speech = _build_speech(reasons)
+        reasons, hook = await asyncio.gather(
+            _generate_reasons(state, reason_publisher),
+            _generate_recommendation_hook(state),
+        )
+        speech = _build_speech(reasons, hook)
         result = EmotionalResponseResult(reasons=reasons, speech_text=speech)
         return {
             "reasons": [reason.model_dump() for reason in result.reasons],

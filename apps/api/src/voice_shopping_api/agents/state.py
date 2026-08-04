@@ -47,6 +47,10 @@ class ProductReason(AgentModel):
     reason: str
 
 
+class RecommendationHook(AgentModel):
+    hook: str
+
+
 class EmotionalResponseResult(AgentModel):
     reasons: list[ProductReason]
     speech_text: str

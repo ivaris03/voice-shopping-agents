@@ -14,6 +14,7 @@ from voice_shopping_api.agents.prompts import (
     CLARIFICATION_SYSTEM_PROMPT,
     EMOTIONAL_RESPONSE_SYSTEM_PROMPT,
     PRODUCT_REASON_SYSTEM_PROMPT,
+    RECOMMENDATION_HOOK_SYSTEM_PROMPT,
     RECOMMENDATION_RERANK_INSTRUCTION,
     build_intent_system_prompt,
 )
@@ -22,6 +23,7 @@ from voice_shopping_api.agents.state import (
     EmotionalResponseResult,
     IntentResult,
     ProductReason,
+    RecommendationHook,
     SlotExtractionResult,
 )
 from voice_shopping_api.core.config import get_settings
@@ -429,3 +431,24 @@ async def generate_product_reason(
     if not reason.reason.strip():
         raise ValueError("模型返回的推荐理由为空")
     return reason
+
+
+async def generate_recommendation_hook(
+    utterance: str,
+    product_cards: list[dict[str, Any]],
+    emotion_style: str,
+) -> str:
+    """Generate one fact-grounded selection hook for the displayed product set."""
+    result = await _structured_chat(
+        RECOMMENDATION_HOOK_SYSTEM_PROMPT,
+        {
+            "utterance": utterance,
+            "emotionStyle": emotion_style,
+            "productCards": product_cards,
+        },
+        RecommendationHook,
+    )
+    hook = result.hook.strip()
+    if not hook:
+        raise ValueError("模型返回的选择钩子为空")
+    return hook
