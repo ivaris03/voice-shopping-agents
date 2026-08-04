@@ -21,10 +21,16 @@ from voice_shopping_api.agents.state import (
     ShoppingRuntimeDependencies,
     ShoppingState,
 )
+from voice_shopping_api.core.product_embedding import ATTRIBUTE_KEY_LABELS, render_attribute_value
 from voice_shopping_api.core.text import split_sentences
 
 logger = logging.getLogger(__name__)
 REASON_MODEL_CONCURRENCY = 3
+INSUFFICIENT_COMPARISON_NOTE = "当前资料不足以按不同偏好进一步区分"
+_SELECTION_CLAUSE_PATTERN = re.compile(
+    r"如果您(?P<condition>[^，,；。！？!?]+)[，,]\s*推荐您选择第(?P<index>\d+)款\s*"
+    r"[（(](?P<name>[^）)]+)[）)]"
+)
 
 
 def is_compliant(text_value: str) -> bool:
@@ -88,14 +94,77 @@ def _ensure_reason_identity(
     return ProductReason(product_id=card["productId"], reason=normalized)
 
 
-def _card_highlight(card: dict[str, Any]) -> str:
+def _comparison_key(value: object) -> str:
+    return re.sub(r"[\W_]+", "", str(value)).casefold()
+
+
+def _condition_key(value: object) -> str:
+    key = _comparison_key(value)
+    for prefix in ("更看重", "更在意", "看重", "在意", "需要", "希望", "偏好", "追求", "想要"):
+        if key.startswith(prefix):
+            return key[len(prefix) :]
+    return key
+
+
+def _has_comparison_value(value: object) -> bool:
+    return value is not None and value != "" and value != [] and value != {}
+
+
+def _unique_attribute_highlight(cards: list[dict[str, Any]], index: int) -> str | None:
+    attributes = cards[index].get("attributes")
+    if not isinstance(attributes, dict):
+        return None
+    all_attributes = [
+        card.get("attributes") if isinstance(card.get("attributes"), dict) else {}
+        for card in cards
+    ]
+    for key in sorted(attributes):
+        value = attributes[key]
+        if not _has_comparison_value(value):
+            continue
+        value_key = _comparison_key(value)
+        matches = sum(
+            1
+            for candidate in all_attributes
+            if key in candidate
+            and _has_comparison_value(candidate[key])
+            and _comparison_key(candidate[key]) == value_key
+        )
+        if matches != 1:
+            continue
+        label = ATTRIBUTE_KEY_LABELS.get(key, key)
+        rendered = render_attribute_value(key, value)
+        if rendered:
+            if isinstance(value, bool):
+                return f"具备{label}" if value else f"不具备{label}"
+            return f"{label}为{rendered}"
+    return None
+
+
+def _unique_selling_point_highlight(cards: list[dict[str, Any]], index: int) -> str | None:
+    card = cards[index]
     selling_points = card.get("sellingPoints")
-    if isinstance(selling_points, list):
-        for point in selling_points:
-            text = str(point).strip()
-            if text:
-                return text
-    return "当前筛选条件"
+    if not isinstance(selling_points, list):
+        return None
+    card_name_key = _comparison_key(_card_name(card))
+    for point in selling_points:
+        text = str(point).strip()
+        point_key = _comparison_key(text)
+        if not text or (card_name_key and card_name_key in point_key):
+            continue
+        matches = 0
+        for candidate in cards:
+            candidate_points = candidate.get("sellingPoints")
+            if not isinstance(candidate_points, list):
+                continue
+            if any(
+                _comparison_key(candidate_point) == point_key
+                for candidate_point in candidate_points
+            ):
+                matches += 1
+        if matches == 1:
+            return text
+    return None
 
 
 def _price_leader_index(cards: list[dict[str, Any]]) -> int | None:
@@ -106,44 +175,137 @@ def _price_leader_index(cards: list[dict[str, Any]]) -> int | None:
         except (KeyError, TypeError, ValueError):
             return None
         prices.append(price)
-    if len(set(prices)) < 2:
+    lowest = min(prices)
+    if len(set(prices)) < 2 or prices.count(lowest) != 1:
         return None
-    return prices.index(min(prices))
+    return prices.index(lowest)
+
+
+def _selection_options(cards: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str]:
+    """Return only fact-backed conditions that identify one displayed product."""
+    if not cards:
+        return [], ""
+    if len(cards) == 1:
+        highlight = _unique_attribute_highlight(cards, 0) or _unique_selling_point_highlight(
+            cards, 0
+        )
+        highlight = highlight or "当前筛选条件"
+        return [
+            {
+                "displayNumber": 1,
+                "productId": str(cards[0].get("productId") or ""),
+                "name": _card_name(cards[0]),
+                "condition": f"更看重{highlight}",
+            }
+        ], ""
+
+    options: list[dict[str, Any]] = []
+    selected_indexes: set[int] = set()
+    used_condition_keys: set[str] = set()
+    price_leader = _price_leader_index(cards)
+    if price_leader is not None:
+        options.append(
+            {
+                "displayNumber": price_leader + 1,
+                "productId": str(cards[price_leader].get("productId") or ""),
+                "name": _card_name(cards[price_leader]),
+                "condition": "更在意性价比",
+            }
+        )
+        selected_indexes.add(price_leader)
+        used_condition_keys.add(_condition_key("性价比"))
+
+    for index, card in enumerate(cards):
+        if index in selected_indexes:
+            continue
+        highlight = _unique_attribute_highlight(cards, index) or _unique_selling_point_highlight(
+            cards, index
+        )
+        if not highlight:
+            continue
+        condition = f"更看重{highlight}"
+        condition_key = _condition_key(condition)
+        if condition_key in used_condition_keys:
+            continue
+        options.append(
+            {
+                "displayNumber": index + 1,
+                "productId": str(card.get("productId") or ""),
+                "name": _card_name(card),
+                "condition": condition,
+            }
+        )
+        selected_indexes.add(index)
+        used_condition_keys.add(condition_key)
+
+    if len(selected_indexes) == len(cards):
+        return options, ""
+    if not options:
+        return options, f"这些商品的{INSUFFICIENT_COMPARISON_NOTE}"
+    return options, f"其余商品的{INSUFFICIENT_COMPARISON_NOTE}"
 
 
 def _fallback_recommendation_hook(cards: list[dict[str, Any]]) -> str:
     """Build a useful, fact-only choice prompt when the hook model is unavailable."""
-    if not cards:
+    options, insufficiency_note = _selection_options(cards)
+    if not options and not insufficiency_note:
         return ""
-    price_leader = _price_leader_index(cards)
-    clauses: list[str] = []
-    for index, card in enumerate(cards):
-        if index == price_leader:
-            clauses.append(f"如果您更在意性价比，推荐您选择{_card_label(index + 1, card)}")
-        else:
-            clauses.append(
-                f"如果您更看重{_card_highlight(card)}，推荐您选择{_card_label(index + 1, card)}"
-            )
+    clauses = [
+        f"如果您{option['condition']}，推荐您选择"
+        f"{_card_label(int(option['displayNumber']), cards[int(option['displayNumber']) - 1])}"
+        for option in options
+    ]
+    if insufficiency_note:
+        clauses.append(insufficiency_note)
     return "；".join(clauses) + "。"
 
 
-def _is_usable_hook(hook: str, cards: list[dict[str, Any]]) -> bool:
+def _is_usable_hook(
+    hook: str,
+    cards: list[dict[str, Any]],
+    selection_options: list[dict[str, Any]] | None = None,
+    insufficiency_note: str | None = None,
+) -> bool:
     if not hook or not is_compliant(hook):
         return False
+    if selection_options is None or insufficiency_note is None:
+        selection_options, insufficiency_note = _selection_options(cards)
+    matches = list(_SELECTION_CLAUSE_PATTERN.finditer(hook))
     references = [
-        (int(index), name.strip())
-        for index, name in re.findall(r"第(\d+)款\s*[（(]([^）)]+)[）)]", hook)
+        (
+            int(match.group("index")),
+            match.group("name").strip(),
+            _condition_key(match.group("condition")),
+        )
+        for match in matches
     ]
-    referenced_indexes = {index for index, _ in references}
+    referenced_indexes = {index for index, _, _ in references}
     raw_referenced_indexes = {int(index) for index in re.findall(r"第(\d+)款", hook)}
-    required_references = 2 if len(cards) > 1 else 1
-    if len(referenced_indexes) < required_references:
+    expected_by_index = {
+        int(option["displayNumber"]): (
+            _card_name(cards[int(option["displayNumber"]) - 1]),
+            _condition_key(option["condition"]),
+        )
+        for option in selection_options
+    }
+    expected_conditions = {condition for _, condition in expected_by_index.values()}
+    if len(expected_conditions) != len(expected_by_index):
+        return False
+    if len(references) != len(referenced_indexes):
         return False
     if raw_referenced_indexes != referenced_indexes:
         return False
-    if any(index < 1 or index > len(cards) for index in referenced_indexes):
+    if set(referenced_indexes) != set(expected_by_index):
         return False
-    return all(name == _card_name(cards[index - 1]) for index, name in references)
+    if "推荐您选择" in hook and not references:
+        return False
+    for index, name, condition in references:
+        expected_name, expected_condition = expected_by_index[index]
+        if name != expected_name or condition != expected_condition:
+            return False
+    if insufficiency_note:
+        return insufficiency_note in hook
+    return INSUFFICIENT_COMPARISON_NOTE not in hook
 
 
 def _complete_sentence(text_value: str) -> str:
@@ -155,7 +317,10 @@ def _complete_sentence(text_value: str) -> str:
 
 async def _generate_recommendation_hook(state: ShoppingState) -> str:
     cards = state["product_cards"]
+    selection_options, insufficiency_note = _selection_options(cards)
     fallback = _fallback_recommendation_hook(cards)
+    if not selection_options and not insufficiency_note:
+        return ""
     if not state.get("model_enabled"):
         return fallback
     try:
@@ -163,9 +328,11 @@ async def _generate_recommendation_hook(state: ShoppingState) -> str:
             state.get("utterance", ""),
             cards,
             state.get("emotion_style", "warm-professional"),
+            selection_options,
+            insufficiency_note,
         )
-        if not _is_usable_hook(hook, cards):
-            raise ValueError("模型返回的选择钩子不完整、不合规或未引用商品名称")
+        if not _is_usable_hook(hook, cards, selection_options, insufficiency_note):
+            raise ValueError("模型返回的选择钩子不完整、不合规或未按已验证差异引用商品")
         return _complete_sentence(hook)
     except Exception as exc:
         logger.warning("Recommendation hook model failed; using deterministic fallback: %s", exc)

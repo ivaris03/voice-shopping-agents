@@ -437,14 +437,18 @@ async def generate_recommendation_hook(
     utterance: str,
     product_cards: list[dict[str, Any]],
     emotion_style: str,
+    selection_options: list[dict[str, Any]] | None = None,
+    insufficiency_note: str = "",
 ) -> str:
-    """Generate one fact-grounded selection hook for the displayed product set."""
+    """Generate one selection hook from server-validated comparison options."""
     result = await _structured_chat(
         RECOMMENDATION_HOOK_SYSTEM_PROMPT,
         {
             "utterance": utterance,
             "emotionStyle": emotion_style,
             "productCards": product_cards,
+            "selectionOptions": selection_options or [],
+            "insufficiencyNote": insufficiency_note,
         },
         RecommendationHook,
     )

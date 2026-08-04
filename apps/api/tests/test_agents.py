@@ -1355,10 +1355,26 @@ async def test_recommendation_hook_model_uses_all_product_cards(
             {"productId": "lamp-2", "name": "调光台灯"},
         ],
         "warm-professional",
+        [
+            {
+                "displayNumber": 1,
+                "productId": "lamp-1",
+                "name": "基础台灯",
+                "condition": "更在意性价比",
+            },
+            {
+                "displayNumber": 2,
+                "productId": "lamp-2",
+                "name": "调光台灯",
+                "condition": "更看重支持调节色温",
+            },
+        ],
+        "",
     )
 
     assert "第1款（基础台灯）" in hook
     assert "productCards" in str(captured["payload"])
+    assert "selectionOptions" in str(captured["payload"])
     assert "选择钩子" in str(captured["system_prompt"])
 
 
@@ -1413,19 +1429,201 @@ def test_product_reason_removes_ambiguous_pronouns_and_adds_display_identity() -
 
 def test_selection_hook_requires_the_correct_displayed_product_name() -> None:
     cards = [
-        {"productId": "lamp-1", "name": "基础台灯"},
-        {"productId": "lamp-2", "name": "调光台灯"},
+        {
+            "productId": "lamp-1",
+            "name": "基础台灯",
+            "price": 99,
+            "sellingPoints": ["价格亲民"],
+        },
+        {
+            "productId": "lamp-2",
+            "name": "调光台灯",
+            "price": 159,
+            "sellingPoints": ["支持调节色温"],
+        },
     ]
 
     assert response_module._is_usable_hook(
         "如果您更在意性价比，推荐您选择第1款（基础台灯）；"
-        "如果您需要调节色温，推荐您选择第2款（调光台灯）。",
+        "如果您更看重支持调节色温，推荐您选择第2款（调光台灯）。",
         cards,
     )
     assert not response_module._is_usable_hook(
         "如果您更在意性价比，推荐您选择第1款（调光台灯）；"
-        "如果您需要调节色温，推荐您选择第2款（基础台灯）。",
+        "如果您更看重支持调节色温，推荐您选择第2款（基础台灯）。",
         cards,
+    )
+
+
+def test_selection_hook_does_not_recommend_shared_headphone_highlight_twice() -> None:
+    cards = [
+        {
+            "productId": "headphone-1",
+            "name": "Apple AirPods Max USB-C 头戴耳机",
+            "price": 3999,
+            "sellingPoints": ["头戴式包裹感", "降噪模式，通勤少些干扰"],
+            "attributes": {
+                "form": "over-ear",
+                "connectivity": "bluetooth",
+                "noiseCancellation": True,
+            },
+        },
+        {
+            "productId": "headphone-2",
+            "name": "Bose QuietComfort 无线降噪耳机",
+            "price": 2399,
+            "sellingPoints": ["头戴式包裹感", "降噪模式，通勤少些干扰"],
+            "attributes": {
+                "form": "over-ear",
+                "connectivity": "bluetooth",
+                "noiseCancellation": True,
+                "batteryHours": 24,
+            },
+        },
+        {
+            "productId": "headphone-3",
+            "name": "Bose QuietComfort Ultra 无线耳机",
+            "price": 3199,
+            "sellingPoints": ["头戴式包裹感", "降噪模式，通勤少些干扰"],
+            "attributes": {
+                "form": "over-ear",
+                "connectivity": "bluetooth",
+                "noiseCancellation": True,
+                "batteryHours": 24,
+            },
+        },
+    ]
+
+    hook = response_module._fallback_recommendation_hook(cards)
+
+    assert hook == (
+        "如果您更在意性价比，推荐您选择第2款（Bose QuietComfort 无线降噪耳机）；"
+        "其余商品的当前资料不足以按不同偏好进一步区分。"
+    )
+    assert hook.count("头戴式包裹感") == 0
+
+
+def test_selection_hook_uses_a_unique_structured_attribute() -> None:
+    cards = [
+        {
+            "productId": "headphone-1",
+            "name": "续航 20 小时耳机",
+            "price": 1999,
+            "sellingPoints": ["佩戴舒适"],
+            "attributes": {"batteryHours": 20},
+        },
+        {
+            "productId": "headphone-2",
+            "name": "续航 40 小时耳机",
+            "price": 1999,
+            "sellingPoints": ["佩戴舒适"],
+            "attributes": {"batteryHours": 40},
+        },
+    ]
+
+    hook = response_module._fallback_recommendation_hook(cards)
+
+    assert hook == (
+        "如果您更看重续航时长为20小时，推荐您选择第1款（续航 20 小时耳机）；"
+        "如果您更看重续航时长为40小时，推荐您选择第2款（续航 40 小时耳机）。"
+    )
+
+
+def test_price_leader_requires_a_unique_lowest_price() -> None:
+    cards = [
+        {"name": "商品一", "price": 99},
+        {"name": "商品二", "price": 99},
+        {"name": "商品三", "price": 159},
+    ]
+
+    assert response_module._price_leader_index(cards) is None
+
+
+def test_selection_hook_rejects_a_shared_condition_even_with_valid_product_names() -> None:
+    cards = [
+        {
+            "productId": "headphone-1",
+            "name": "Apple AirPods Max USB-C 头戴耳机",
+            "price": 3999,
+            "sellingPoints": ["头戴式包裹感"],
+        },
+        {
+            "productId": "headphone-2",
+            "name": "Bose QuietComfort 无线降噪耳机",
+            "price": 2399,
+            "sellingPoints": ["头戴式包裹感"],
+        },
+        {
+            "productId": "headphone-3",
+            "name": "Bose QuietComfort Ultra 无线耳机",
+            "price": 3199,
+            "sellingPoints": ["头戴式包裹感"],
+        },
+    ]
+
+    assert not response_module._is_usable_hook(
+        "如果您更看重头戴式包裹感，推荐您选择第1款（Apple AirPods Max USB-C 头戴耳机）；"
+        "如果您更在意性价比，推荐您选择第2款（Bose QuietComfort 无线降噪耳机）；"
+        "如果您更看重头戴式包裹感，推荐您选择第3款（Bose QuietComfort Ultra 无线耳机）。",
+        cards,
+    )
+
+
+@pytest.mark.asyncio
+async def test_model_selection_hook_falls_back_when_it_reuses_a_shared_condition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cards = [
+        {
+            "productId": "headphone-1",
+            "name": "Apple AirPods Max USB-C 头戴耳机",
+            "price": 3999,
+            "sellingPoints": ["头戴式包裹感"],
+        },
+        {
+            "productId": "headphone-2",
+            "name": "Bose QuietComfort 无线降噪耳机",
+            "price": 2399,
+            "sellingPoints": ["头戴式包裹感"],
+        },
+        {
+            "productId": "headphone-3",
+            "name": "Bose QuietComfort Ultra 无线耳机",
+            "price": 3199,
+            "sellingPoints": ["头戴式包裹感"],
+        },
+    ]
+
+    async def fake_generate_recommendation_hook(
+        _: str,
+        __: list[dict[str, object]],
+        ___: str,
+        ____: list[dict[str, object]],
+        _____: str,
+    ) -> str:
+        return (
+            "如果您更看重头戴式包裹感，推荐您选择第1款（Apple AirPods Max USB-C 头戴耳机）；"
+            "如果您更在意性价比，推荐您选择第2款（Bose QuietComfort 无线降噪耳机）；"
+            "如果您更看重头戴式包裹感，推荐您选择第3款（Bose QuietComfort Ultra 无线耳机）。"
+        )
+
+    monkeypatch.setattr(
+        response_module,
+        "generate_recommendation_hook",
+        fake_generate_recommendation_hook,
+    )
+
+    hook = await response_module._generate_recommendation_hook(
+        {
+            "model_enabled": True,
+            "utterance": "推荐一副头戴式蓝牙降噪耳机",
+            "product_cards": cards,
+        }
+    )
+
+    assert hook == (
+        "如果您更在意性价比，推荐您选择第2款（Bose QuietComfort 无线降噪耳机）；"
+        "其余商品的当前资料不足以按不同偏好进一步区分。"
     )
 
 

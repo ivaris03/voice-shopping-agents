@@ -135,7 +135,7 @@ def price_band_label(price: object) -> str:
     return label
 
 
-def _render_attribute_value(key: str, value: object) -> str:
+def render_attribute_value(key: str, value: object) -> str:
     if isinstance(value, bool):
         return "是" if value else "否"
     if isinstance(value, str):
@@ -150,11 +150,15 @@ def _render_attribute_value(key: str, value: object) -> str:
     if isinstance(value, list):
         if key == "sizeRange" and len(value) == 2:
             return f"{value[0]}-{value[1]}码"
-        return "、".join(_render_attribute_value(key, item) for item in value)
+        return "、".join(render_attribute_value(key, item) for item in value)
     if isinstance(value, (int, float)):
         unit = ATTRIBUTE_UNIT_LABELS.get(key)
         return f"{value:g}{unit}" if unit is not None else f"{value:g}"
     return str(value)
+
+
+# Keep the original private name available to internal callers and integrations.
+_render_attribute_value = render_attribute_value
 
 
 def build_product_embedding_text(
@@ -188,7 +192,7 @@ def build_product_embedding_text(
             if value is None or value == "" or value == []:
                 continue
             label = ATTRIBUTE_KEY_LABELS.get(key, key)
-            parts.append(f"{label}：{_render_attribute_value(key, value)}")
+            parts.append(f"{label}：{render_attribute_value(key, value)}")
         if parts:
             sections.append("属性：" + "、".join(parts))
     if price is not None:
