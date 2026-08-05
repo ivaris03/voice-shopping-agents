@@ -1228,7 +1228,7 @@ async def test_graph_routes_violation_before_publishing_original_response(
     async def publish_delta(value: str) -> None:
         deltas.append(value)
 
-    async def publish_sentence(value: str) -> None:
+    async def publish_sentence(value: str, _sentence_index: int, _sentence_count: int) -> None:
         sentences.append(value)
 
     monkeypatch.setattr(graph_module, "emotional_response", fake_emotional_response)
@@ -1262,7 +1262,7 @@ async def test_publish_response_only_publishes_the_post_compliance_text() -> Non
     async def publish_delta(value: str) -> None:
         deltas.append(value)
 
-    async def publish_sentence(value: str) -> None:
+    async def publish_sentence(value: str, _sentence_index: int, _sentence_count: int) -> None:
         sentences.append(value)
 
     violation = await violation_response({"speech_text": "第二句百分百有效。"})
@@ -1283,6 +1283,32 @@ async def test_publish_response_only_publishes_the_post_compliance_text() -> Non
 
 
 @pytest.mark.asyncio
+async def test_publish_response_passes_sentence_metadata_to_audio_publisher() -> None:
+    metadata: list[tuple[int, int]] = []
+
+    async def load_catalog(
+        _: str, __: bool, ___: dict[str, object]
+    ) -> list[dict[str, object]]:
+        return []
+
+    async def publish_sentence(_: str, sentence_index: int, sentence_count: int) -> None:
+        metadata.append((sentence_index, sentence_count))
+
+    result = await publish_response(
+        {"speech_text": "第一句安全。第二句安全。"},
+        Runtime(
+            context=ShoppingRuntimeDependencies(
+                catalog_loader=load_catalog,
+                speech_sentence_publisher=publish_sentence,
+            )
+        ),
+    )
+
+    assert result["speech_audio_streamed"] is True
+    assert metadata == [(1, 2), (2, 2)]
+
+
+@pytest.mark.asyncio
 async def test_compliance_node_checks_replaces_and_publishes_atomically() -> None:
     deltas: list[str] = []
     sentences: list[str] = []
@@ -1295,7 +1321,7 @@ async def test_compliance_node_checks_replaces_and_publishes_atomically() -> Non
     async def publish_delta(value: str) -> None:
         deltas.append(value)
 
-    async def publish_sentence(value: str) -> None:
+    async def publish_sentence(value: str, _sentence_index: int, _sentence_count: int) -> None:
         sentences.append(value)
 
     result = await compliance_node(

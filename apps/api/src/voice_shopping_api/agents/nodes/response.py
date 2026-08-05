@@ -510,9 +510,10 @@ async def _publish_speech(
         speech_streamed = bool(speech)
     speech_audio_streamed = False
     if context.speech_sentence_publisher:
-        for sentence in split_sentences(speech):
-            await context.speech_sentence_publisher(sentence)
-        speech_audio_streamed = True
+        sentences = split_sentences(speech)
+        for sentence_index, sentence in enumerate(sentences, start=1):
+            await context.speech_sentence_publisher(sentence, sentence_index, len(sentences))
+        speech_audio_streamed = bool(sentences)
     return speech_streamed, speech_audio_streamed
 
 

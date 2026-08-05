@@ -222,7 +222,7 @@ class CatalogFilters(TypedDict, total=False):
 CatalogLoader = Callable[[str, bool, CatalogFilters], Awaitable[list[dict[str, Any]]]]
 OrderHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 SpeechDeltaPublisher = Callable[[str], Awaitable[None]]
-SpeechSentencePublisher = Callable[[str], Awaitable[None]]
+SpeechSentencePublisher = Callable[[str, int, int], Awaitable[None]]
 ReasonPublisher = Callable[[ProductReason], Awaitable[None]]
 
 

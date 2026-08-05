@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from voice_shopping_api.realtime import asr, speech, tts
@@ -83,6 +85,47 @@ async def test_publish_audio_synthesizes_and_pushes_each_sentence(
     assert [message["payload"]["sentenceIndex"] for message in ends] == [1, 2]
     assert starts[0]["payload"]["sentenceCount"] == 2
     assert ends[-1]["payload"]["final"] is True
+
+
+@pytest.mark.asyncio
+async def test_run_turn_forwards_streamed_sentence_metadata_to_audio_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentence_calls: list[tuple[object, ...]] = []
+    done_calls: list[tuple[object, ...]] = []
+
+    class _SessionContext:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *_args) -> None:
+            return None
+
+    async def fake_process_turn(*_args, **kwargs):
+        await kwargs["on_speech_sentence"]("第一句。", 1, 2)
+        await kwargs["on_speech_sentence"]("第二句！", 2, 2)
+        return {"speech_audio_streamed": True}, []
+
+    async def fake_publish_audio_sentence(*args, **kwargs) -> None:
+        sentence_calls.append((*args, kwargs.get("user_id")))
+
+    async def fake_publish_audio_done(*args, **kwargs) -> None:
+        done_calls.append(args)
+
+    monkeypatch.setattr(realtime_hub, "async_session_factory", lambda: _SessionContext())
+    monkeypatch.setattr(realtime_hub, "process_turn", fake_process_turn)
+    hub = realtime_hub.RealtimeHub.__new__(realtime_hub.RealtimeHub)
+    hub.locks = {"session-1": asyncio.Lock()}
+    hub.publish_audio_sentence = fake_publish_audio_sentence
+    hub.publish_audio_done = fake_publish_audio_done
+
+    await hub.run_turn("session-1", "turn-1", "你好", "user-1")
+
+    assert sentence_calls == [
+        ("session-1", "turn-1", "第一句。", 1, 2, "user-1"),
+        ("session-1", "turn-1", "第二句！", 2, 2, "user-1"),
+    ]
+    assert done_calls == [("session-1", "turn-1", 2, "user-1")]
 
 
 @pytest.mark.asyncio

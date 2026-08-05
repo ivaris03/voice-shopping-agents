@@ -336,14 +336,17 @@ class RealtimeHub:
     ) -> None:
         streamed_sentence_count = 0
 
-        async def publish_streamed_sentence(sentence: str) -> None:
+        async def publish_streamed_sentence(
+            sentence: str, sentence_index: int, sentence_count: int
+        ) -> None:
             nonlocal streamed_sentence_count
-            streamed_sentence_count += 1
+            streamed_sentence_count = sentence_index
             await self.publish_audio_sentence(
                 session_id,
                 turn_id,
                 sentence,
-                streamed_sentence_count,
+                sentence_index,
+                sentence_count,
                 user_id=user_id,
             )
 
