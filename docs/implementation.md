@@ -351,6 +351,17 @@ audio.commit(turnId, clientMetrics)
 
 输出顺序：每个话术短句发送 `audio.start`、一个或多个 WAV 二进制分片、`audio.end`；全部短句完成后发送 `audio.done`。DashScope TTS 使用 24 kHz WAV；TTS 没有产出时使用 16 kHz 静音 WAV 触发客户端浏览器语音 fallback。音频消息不写入 Redis，不能通过 `session.resume` 恢复二进制。
 
+### 10.3 商家与商品目录缓存
+
+`core/catalog_cache.py` 对用户可见目录、商家自有店铺/商品和平台全量商家/商品列表执行
+Redis read-through 缓存。每个条目使用 `voice-shopping:cache:catalog:v{revision}:...` key，默认
+TTL 为 60 秒；商家、店铺或商品创建、更新、删除、启停，或者订单成功扣库存后，业务路径会在
+PostgreSQL 提交成功后递增 revision。Redis 不可用或缓存值无效时自动回退到数据库查询。
+
+目录缓存只用于展示列表，绝不参与订单确认、库存扣减、价格复核、会话恢复或权限判断。可通过
+`VOICE_SHOPPING_CATALOG_CACHE_ENABLED`、`VOICE_SHOPPING_CATALOG_CACHE_TTL_SECONDS` 和可选的
+`VOICE_SHOPPING_CATALOG_CACHE_REDIS_URL` 配置开关、TTL 和独立 Redis 实例。
+
 ## 11. 数据库和索引关键点
 
 - `merchants`、`products` 使用 `deleted_at` 软删除；启用状态和删除状态共同决定用户可见性。

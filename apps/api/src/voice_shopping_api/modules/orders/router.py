@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from voice_shopping_api.core.catalog_cache import CatalogCache, get_catalog_cache
 from voice_shopping_api.core.database import get_db_session
 from voice_shopping_api.core.identity import current_user_id
 from voice_shopping_api.core.queries import ORDER_COLUMNS, commit_or_conflict, rows
@@ -24,6 +25,7 @@ from voice_shopping_api.schemas.domain import (
 router = APIRouter()
 Db = Annotated[AsyncSession, Depends(get_db_session)]
 UserId = Annotated[UUID, Depends(current_user_id)]
+Cache = Annotated[CatalogCache, Depends(get_catalog_cache)]
 
 
 @router.get("/mine", response_model=ItemsResponse[OrderOut])
@@ -54,7 +56,9 @@ async def create_order(
 
 
 @router.post("/{order_id}/confirm", response_model=OrderOut)
-async def confirm(order_id: UUID, session: Db, user_id: UserId) -> dict[str, object]:
+async def confirm(
+    order_id: UUID, session: Db, user_id: UserId, cache: Cache
+) -> dict[str, object]:
     order = await confirm_order(session, user_id, order_id)
     if order["status"] in {"success", "fail"} and order.get("session_id"):
         await finalize_session_profile(
@@ -64,6 +68,8 @@ async def confirm(order_id: UUID, session: Db, user_id: UserId) -> dict[str, obj
             close_session=True,
         )
     await session.commit()
+    if order["status"] == "success":
+        await cache.invalidate()
     return order
 
 

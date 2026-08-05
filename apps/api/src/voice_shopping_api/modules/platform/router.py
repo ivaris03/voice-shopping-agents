@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from voice_shopping_api.core.catalog_cache import CatalogCache, get_catalog_cache
 from voice_shopping_api.core.database import get_db_session
 from voice_shopping_api.core.embeddings import embed_product_text
 from voice_shopping_api.core.product_embedding import embedding_text_for_product
@@ -36,6 +37,7 @@ from voice_shopping_api.schemas.domain import (
 
 router = APIRouter()
 Db = Annotated[AsyncSession, Depends(get_db_session)]
+Cache = Annotated[CatalogCache, Depends(get_catalog_cache)]
 
 
 @router.get("/categories", response_model=ItemsResponse[CategoryOut])
@@ -245,23 +247,26 @@ async def delete_category(category_id: UUID, session: Db) -> Response:
 
 
 @router.get("/merchants", response_model=ItemsResponse[MerchantOut])
-async def list_all_merchants(session: Db) -> dict[str, object]:
-    result = await session.execute(
-        text(
-            f"""
-            SELECT {PLATFORM_MERCHANT_COLUMNS} FROM merchants m
-            JOIN users u ON u.id = m.owner_user_id
-            LEFT JOIN products p ON p.merchant_id = m.id AND p.deleted_at IS NULL
-            WHERE m.deleted_at IS NULL GROUP BY m.id, u.display_name ORDER BY m.created_at
-            """
+async def list_all_merchants(session: Db, cache: Cache) -> dict[str, object]:
+    async def load() -> dict[str, object]:
+        result = await session.execute(
+            text(
+                f"""
+                SELECT {PLATFORM_MERCHANT_COLUMNS} FROM merchants m
+                JOIN users u ON u.id = m.owner_user_id
+                LEFT JOIN products p ON p.merchant_id = m.id AND p.deleted_at IS NULL
+                WHERE m.deleted_at IS NULL GROUP BY m.id, u.display_name ORDER BY m.created_at
+                """
+            )
         )
-    )
-    return {"items": rows(result)}
+        return {"items": rows(result)}
+
+    return await cache.get_or_load("all-merchants", {}, load)
 
 
 @router.patch("/merchants/{merchant_id}/status", response_model=MerchantOut)
 async def set_merchant_status(
-    merchant_id: UUID, payload: MerchantStatusUpdate, session: Db
+    merchant_id: UUID, payload: MerchantStatusUpdate, session: Db, cache: Cache
 ) -> dict[str, object]:
     result = await session.execute(
         text(
@@ -276,6 +281,7 @@ async def set_merchant_status(
     if result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="商家不存在")
     await session.commit()
+    await cache.invalidate()
     current = await session.execute(
         text(
             f"""
@@ -291,7 +297,7 @@ async def set_merchant_status(
 
 
 @router.post("/products/embeddings/rebuild")
-async def rebuild_product_embeddings(session: Db) -> dict[str, int]:
+async def rebuild_product_embeddings(session: Db, cache: Cache) -> dict[str, int]:
     """为全部未删除商品重新生成向量，覆盖占位或过期的 embedding。
 
     同步执行：当前数据量下每个商品一次 embedding 调用，整体几秒内完成；
@@ -320,20 +326,25 @@ async def rebuild_product_embeddings(session: Db) -> dict[str, int]:
         )
         updated += 1
     await session.commit()
+    if updated:
+        await cache.invalidate()
     return {"total": len(products), "updated": updated, "failed": failed}
 
 
 @router.get("/products", response_model=ItemsResponse[ProductOut])
-async def list_all_products(session: Db) -> dict[str, object]:
-    result = await session.execute(
-        text(
-            f"""
-            SELECT {PRODUCT_COLUMNS} FROM products p JOIN merchants m ON m.id = p.merchant_id
-            WHERE p.deleted_at IS NULL AND m.deleted_at IS NULL ORDER BY p.created_at DESC
-            """
+async def list_all_products(session: Db, cache: Cache) -> dict[str, object]:
+    async def load() -> dict[str, object]:
+        result = await session.execute(
+            text(
+                f"""
+                SELECT {PRODUCT_COLUMNS} FROM products p JOIN merchants m ON m.id = p.merchant_id
+                WHERE p.deleted_at IS NULL AND m.deleted_at IS NULL ORDER BY p.created_at DESC
+                """
+            )
         )
-    )
-    return {"items": rows(result)}
+        return {"items": rows(result)}
+
+    return await cache.get_or_load("all-products", {}, load)
 
 
 @router.get("/orders", response_model=ItemsResponse[OrderOut])

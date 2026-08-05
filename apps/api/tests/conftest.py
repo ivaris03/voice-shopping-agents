@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from voice_shopping_api.core.catalog_cache import CatalogCache, get_catalog_cache
 from voice_shopping_api.core.config import get_settings
 from voice_shopping_api.core.database import get_db_session
 from voice_shopping_api.core.migrations import apply_migrations, asyncpg_url, seed_demo_data
@@ -102,11 +103,13 @@ async def e2e_committing_session(e2e_engine: AsyncEngine) -> AsyncIterator[Async
 @pytest_asyncio.fixture
 async def e2e_client(e2e_session: AsyncSession) -> AsyncIterator[AsyncClient]:
     previous_override = app.dependency_overrides.get(get_db_session, _MISSING_OVERRIDE)
+    previous_cache_override = app.dependency_overrides.get(get_catalog_cache, _MISSING_OVERRIDE)
 
     async def override_db_session() -> AsyncIterator[AsyncSession]:
         yield e2e_session
 
     app.dependency_overrides[get_db_session] = override_db_session
+    app.dependency_overrides[get_catalog_cache] = lambda: CatalogCache(enabled=False)
     try:
         transport = ASGITransport(app=app, raise_app_exceptions=False)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -116,3 +119,7 @@ async def e2e_client(e2e_session: AsyncSession) -> AsyncIterator[AsyncClient]:
             app.dependency_overrides.pop(get_db_session, None)
         else:
             app.dependency_overrides[get_db_session] = previous_override
+        if previous_cache_override is _MISSING_OVERRIDE:
+            app.dependency_overrides.pop(get_catalog_cache, None)
+        else:
+            app.dependency_overrides[get_catalog_cache] = previous_cache_override

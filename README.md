@@ -28,6 +28,8 @@
   `qwen-audio-3.0-tts-plus` 分片下行；文本 Agent 和 TTS 未配置模型时可确定性降级，
   服务端 ASR 仍需要可用的 ASR 模型。
 - 订单：十五分钟待确认、价格/商家/商品/库存二次校验、事务扣库存、幂等键和成交快照。
+- 目录缓存：Redis 缓存用户、商家和平台端的商家/店铺/商品列表；写入成功后递增目录版本，
+  库存扣减也会失效相关列表，订单确认仍直接复核数据库。
 - 会话：`sessionId + turnId + seq` 事件排序、LangGraph Checkpointer 工作流恢复、
   `session_states` 业务状态投影、Redis 一小时事件日志重放，以及可选 LangSmith Trace。
 
