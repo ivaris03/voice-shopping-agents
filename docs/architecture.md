@@ -67,7 +67,7 @@ flowchart LR
 | ASR | `qwen-audio-3.0-asr-flash-streaming` |
 | TTS | `qwen-audio-3.0-tts-plus` |
 | 数据库 | PostgreSQL + PGVector、JSONB、数组、部分索引 |
-| 缓存/重放 | Redis taxonomy 快照、版本化目录列表缓存和文本事件列表；进程内 deque 作为事件热缓存 |
+| 缓存/重放 | Redis taxonomy 快照、版本化目录列表、商品向量缓存和文本事件列表；进程内 deque 作为事件热缓存 |
 | 前端 | 三个独立 Vue 应用 + `packages/web-ui` 共享包 |
 | 可观测性 | LangSmith，可选启用，失败不阻断业务请求 |
 
@@ -317,6 +317,7 @@ LangSmith 追踪由环境变量可选开启。代码会记录工作流的 sessio
 Redis 保存短期文本事件日志、可丢弃的 taxonomy 快照，以及商家、店铺和商品的列表快照。目录缓存 key 带全局
 revision，商家/店铺/商品写入或成功扣库存后在数据库提交成功后递增 revision；旧快照通过
 TTL 自动清理。Redis 不保存商品库存、订单、画像或会话业务事实，这些始终以 PostgreSQL 为准。
+商品向量缓存按模型和商品卡片指纹索引，用于复用可再生的索引输入。Redis 不保存商品库存、订单、画像或会话业务事实，这些始终以 PostgreSQL 为准。
 
 ## 12. 当前架构边界
 

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from voice_shopping_api.core.catalog_cache import CatalogCache, get_catalog_cache
 from voice_shopping_api.core.database import get_db_session
-from voice_shopping_api.core.embeddings import embed_product_text
+from voice_shopping_api.core.embeddings import resolve_product_embedding
 from voice_shopping_api.core.product_embedding import embedding_text_for_product
 from voice_shopping_api.core.queries import (
     ORDER_COLUMNS,
@@ -310,10 +310,14 @@ async def set_merchant_status(
 
 
 @router.post("/products/embeddings/rebuild")
-async def rebuild_product_embeddings(session: Db, cache: Cache) -> dict[str, int]:
-    """为全部未删除商品重新生成向量，覆盖占位或过期的 embedding。
+async def rebuild_product_embeddings(
+    session: Db,
+    cache: Annotated[CatalogCache | None, Depends(get_catalog_cache)] = None,
+) -> dict[str, int]:
+    """为全部未删除商品重建向量，并复用匹配的 Redis 缓存。
 
-    同步执行：当前数据量下每个商品一次 embedding 调用，整体几秒内完成；
+    缓存键包含 Embedding 模型和规范化商品卡片的指纹，因此模型或商品事实变化
+    时会自动未命中。同步执行：当前数据量下整体几秒内完成；
     商品数量增长后应改为后台任务，避免长时间占用请求连接。
     """
     result = await session.execute(
@@ -327,21 +331,33 @@ async def rebuild_product_embeddings(session: Db, cache: Cache) -> dict[str, int
     )
     products = result.mappings().all()
     updated = 0
+    cache_hits = 0
+    generated = 0
     failed = 0
     for product in products:
-        wire = await embed_product_text(embedding_text_for_product(product))
-        if wire is None:
+        embedding = await resolve_product_embedding(embedding_text_for_product(product))
+        if embedding is None:
             failed += 1
             continue
+        if embedding.cache_hit:
+            cache_hits += 1
+        else:
+            generated += 1
         await session.execute(
             text("UPDATE products SET embedding = CAST(:embedding AS vector) WHERE id = :id"),
-            {"id": product["id"], "embedding": wire},
+            {"id": product["id"], "embedding": embedding.wire},
         )
         updated += 1
     await session.commit()
-    if updated:
+    if updated and cache is not None:
         await cache.invalidate()
-    return {"total": len(products), "updated": updated, "failed": failed}
+    return {
+        "total": len(products),
+        "updated": updated,
+        "cacheHits": cache_hits,
+        "generated": generated,
+        "failed": failed,
+    }
 
 
 @router.get("/products", response_model=ItemsResponse[ProductOut])

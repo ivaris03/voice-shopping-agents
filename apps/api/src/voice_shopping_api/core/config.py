@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     catalog_cache_enabled: bool = True
     catalog_cache_ttl_seconds: int = Field(default=60, ge=1, le=3600)
     catalog_cache_redis_url: str = ""
+    product_embedding_cache_ttl_seconds: int = 30 * 24 * 60 * 60
     langgraph_checkpoint_enabled: bool = True
     langgraph_checkpoint_database_url: str = Field(
         default="",

@@ -11,6 +11,7 @@ from voice_shopping_api.api.router import api_router
 from voice_shopping_api.core.catalog_cache import catalog_cache
 from voice_shopping_api.core.config import get_settings
 from voice_shopping_api.core.database import engine
+from voice_shopping_api.core.embeddings import close_product_embedding_cache
 from voice_shopping_api.core.taxonomy import close_taxonomy_cache, start_taxonomy_cache
 from voice_shopping_api.realtime.hub import hub as realtime_hub
 from voice_shopping_api.realtime.router import router as realtime_router
@@ -30,6 +31,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await close_taxonomy_cache()
     await close_checkpointer()
     await catalog_cache.close()
+    await close_product_embedding_cache()
     await realtime_hub.close()
     await engine.dispose()
 
