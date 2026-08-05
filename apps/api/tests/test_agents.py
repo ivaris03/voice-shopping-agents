@@ -491,7 +491,9 @@ async def test_recommendation_agent_retrieves_after_clarification_is_ready() -> 
         "id": "20000000-0000-4000-8000-000000000101",
         "merchant_id": "10000000-0000-4000-8000-000000000004",
         "merchant_name": "飞跃运动旗舰店",
+        "sku": "RUN-TEST-001",
         "name": "日常缓震跑鞋",
+        "category_l1": "SPORTS",
         "category_l2": "RUNNING_SHOES",
         "brand": "Test",
         "description": "适合日常路跑",
@@ -506,6 +508,8 @@ async def test_recommendation_agent_retrieves_after_clarification_is_ready() -> 
         },
         "selling_points": ["缓震舒适"],
         "image_urls": [],
+        "created_at": "2026-08-04T11:47:05.198677Z",
+        "updated_at": "2026-08-04T13:48:47.279999Z",
     }
     retrievals: list[tuple[str, bool, dict[str, object]]] = []
 
@@ -533,6 +537,14 @@ async def test_recommendation_agent_retrieves_after_clarification_is_ready() -> 
     assert set(filters["slots"]) >= {"gender", "size", "terrain"}
     assert result["clarification_status"] == "READY"
     assert result["product_cards"][0]["productId"] == product["id"]
+    card = result["product_cards"][0]
+    assert card["sku"] == product["sku"]
+    assert card["categoryL1"] == product["category_l1"]
+    assert card["categoryL2"] == product["category_l2"]
+    assert card["description"] == product["description"]
+    assert card["attributes"] == product["attributes"]
+    assert card["createdAt"] == product["created_at"]
+    assert card["updatedAt"] == product["updated_at"]
 
 
 @pytest.mark.asyncio
@@ -1503,7 +1515,7 @@ def test_selection_hook_does_not_recommend_shared_headphone_highlight_twice() ->
     assert hook.count("头戴式包裹感") == 0
 
 
-def test_selection_hook_uses_a_unique_structured_attribute() -> None:
+def test_selection_hook_uses_the_longest_numeric_attribute_value() -> None:
     cards = [
         {
             "productId": "headphone-1",
@@ -1523,9 +1535,74 @@ def test_selection_hook_uses_a_unique_structured_attribute() -> None:
 
     hook = response_module._fallback_recommendation_hook(cards)
 
+    assert hook == "如果您更在意续航，推荐您选择第2款（续航 40 小时耳机），它的续航可达40小时。"
+
+
+def test_selection_hook_prefers_the_60_hour_headphone_over_the_45_hour_headphone() -> None:
+    cards = [
+        {
+            "productId": "shure-aonic-50-gen-2",
+            "name": "Shure AONIC 50 Gen 2 无线耳机",
+            "price": 2999,
+            "attributes": {"batteryHours": 45},
+        },
+        {
+            "productId": "sennheiser-momentum-4",
+            "name": "Sennheiser MOMENTUM 4 Wireless 头戴耳机",
+            "price": 2799,
+            "attributes": {"batteryHours": 60},
+        },
+    ]
+
+    hook = response_module._fallback_recommendation_hook(cards)
+
+    assert "如果您更在意续航，推荐您选择第2款（Sennheiser MOMENTUM 4 Wireless 头戴耳机）" in hook
+    assert "它的续航可达60小时" in hook
+    assert "更在意续航" in hook
+    assert "第1款（Shure AONIC 50 Gen 2 无线耳机）" not in hook.split("如果您更在意续航", 1)[-1]
+
+
+@pytest.mark.asyncio
+async def test_model_hook_with_a_lower_battery_leader_falls_back_to_the_longest_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cards = [
+        {
+            "productId": "shure-aonic-50-gen-2",
+            "name": "Shure AONIC 50 Gen 2 无线耳机",
+            "price": 2999,
+            "attributes": {"batteryHours": 45},
+        },
+        {
+            "productId": "sennheiser-momentum-4",
+            "name": "Sennheiser MOMENTUM 4 Wireless 头戴耳机",
+            "price": 2799,
+            "attributes": {"batteryHours": 60},
+        },
+    ]
+
+    async def fake_generate_recommendation_hook(
+        *_: object,
+    ) -> str:
+        return (
+            "如果您更在意性价比，推荐您选择第2款（Sennheiser MOMENTUM 4 Wireless 头戴耳机）；"
+            "如果您更看重续航时长为45小时，推荐您选择第1款（Shure AONIC 50 Gen 2 无线耳机）。"
+        )
+
+    monkeypatch.setattr(
+        response_module,
+        "generate_recommendation_hook",
+        fake_generate_recommendation_hook,
+    )
+
+    hook = await response_module._generate_recommendation_hook(
+        {"model_enabled": True, "product_cards": cards}
+    )
+
     assert hook == (
-        "如果您更看重续航时长为20小时，推荐您选择第1款（续航 20 小时耳机）；"
-        "如果您更看重续航时长为40小时，推荐您选择第2款（续航 40 小时耳机）。"
+        "如果您更在意性价比，推荐您选择第2款（Sennheiser MOMENTUM 4 Wireless 头戴耳机）；"
+        "如果您更在意续航，推荐您选择第2款（Sennheiser MOMENTUM 4 Wireless 头戴耳机），"
+        "它的续航可达60小时。"
     )
 
 

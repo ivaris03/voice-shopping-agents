@@ -193,7 +193,7 @@ product.id in recentPurchased          -0.30
 
 最终 `matchScore = min(1.0, rerankerScore + ruleScore)`，因此对外展示的匹配度最高为 100%；`scoreBreakdown` 保存 `reranker` 和命中的规则项。规则分相同依赖 Python 稳定排序保持第一阶段顺序。没有画像时不增加或扣减规则分。
 
-输出卡片字段包括 `productId`、`merchantId`、`merchantName`、`name`、`brand`、`price`、`stock`、`imageUrl`、`sellingPoints`、`attributes`、`matchScore` 和 `scoreBreakdown`。推荐节点不生成理由。
+输出卡片字段包括 `productId`、`merchantId`、`merchantName`、`sku`、`name`、`categoryL1`、`categoryL2`、`brand`、`description`、`price`、`stock`、`imageUrl`、`imageUrls`、`status`、`createdAt`、`updatedAt`、`sellingPoints`、`attributes`、`matchScore` 和 `scoreBreakdown`。这些字段均来自后端商品事实，推荐节点不生成理由。
 
 `PRODUCT_COMPARE` 和 `PRODUCT_QUERY` 有上一轮卡片时直接复用最多 3 张；查询意图优先选择用户话语中提到的商品名称，否则选择第一张。对比/查询的情绪风格为 `analytical-professional`，有商品推荐时为 `warm-professional`，无结果时为 `helpful-apologetic`。
 
@@ -219,8 +219,9 @@ product.id in recentPurchased          -0.30
 3. 单卡模型失败、返回商品 ID 不一致、理由不合规或无法补全商品身份时，只对该卡使用确定性 fallback。
 4. 通过校验的理由通过 `reason_publisher` 按 `productId` 增量推送。
 5. 情感应答先从全部商品卡提取能够唯一对应一件商品的价格、属性或卖点差异，再生成选择钩子；
-   共同条件不会分别推荐多件商品，资料不足时会明确说明。模型失败、钩子不合规或未按已验证差异
-   引用商品时，使用同一比较计划的确定性 fallback。
+   续航等有明确“越大越好”语义的数值属性只推荐唯一最大值，不能把较小值当成偏好选项；同一
+   商品可以同时对应多个不同条件。共同条件不会分别推荐多件商品，资料不足时会明确说明。模型
+   失败、钩子不合规或未按已验证差异引用商品时，使用同一比较计划的确定性 fallback。
 6. `_build_speech()` 将逐商品理由和选择钩子组装为完整话术；当前不是让模型一次性生成完整业务话术。
 7. `_build_speech()` 只负责生成完整话术；话术在 `compliance_check()` 中通过 `split_sentences()` 拆成短句逐一检查。
 8. 全部短句通过后进入 `publish_response`，通过 `speech_delta_publisher` 每 12 个字符切片，并通过 `speech_sentence_publisher` 按标点发送 TTS。

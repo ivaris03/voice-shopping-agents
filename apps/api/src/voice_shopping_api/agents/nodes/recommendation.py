@@ -22,6 +22,13 @@ RULE_REPEAT_PURCHASE = -0.3
 AVG_ORDER_AMOUNT_MULTIPLIER = 1.5
 
 
+def _serialize_timestamp(value: object) -> str:
+    if value is None:
+        return ""
+    isoformat = getattr(value, "isoformat", None)
+    return str(isoformat()) if callable(isoformat) else str(value)
+
+
 def _reranker_score(
     product: dict[str, Any],
     state: ShoppingState,
@@ -122,11 +129,19 @@ async def recommend_products(
             "productId": str(product["id"]),
             "merchantId": str(product["merchant_id"]),
             "merchantName": product.get("merchant_name"),
+            "sku": product.get("sku"),
             "name": product["name"],
+            "categoryL1": product.get("category_l1", ""),
+            "categoryL2": product.get("category_l2", ""),
             "brand": product.get("brand"),
+            "description": product.get("description", ""),
             "price": float(product["price"]),
             "stock": product["stock"],
             "imageUrl": (product.get("image_urls") or [None])[0],
+            "imageUrls": product.get("image_urls", []),
+            "status": product.get("status", "on_sale"),
+            "createdAt": _serialize_timestamp(product.get("created_at")),
+            "updatedAt": _serialize_timestamp(product.get("updated_at")),
             "sellingPoints": product.get("selling_points", []),
             "attributes": product.get("attributes", {}),
             "matchScore": _match_score(rule_score, reranker),

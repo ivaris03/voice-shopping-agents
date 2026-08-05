@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 import re
 from typing import Any
 
@@ -27,6 +28,13 @@ from voice_shopping_api.core.text import split_sentences
 logger = logging.getLogger(__name__)
 REASON_MODEL_CONCURRENCY = 3
 INSUFFICIENT_COMPARISON_NOTE = "当前资料不足以按不同偏好进一步区分"
+# Numeric attributes with an unambiguous "higher is better" interpretation.
+# They are handled as a comparison across cards instead of as independent
+# unique values, otherwise a lower value can be presented as a preference.
+_NUMERIC_PREFERENCE_ATTRIBUTES = {
+    "batteryHours": "续航",
+}
+_NUMERIC_VALUE_PATTERN = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)")
 _SELECTION_CLAUSE_PATTERN = re.compile(
     r"如果您(?P<condition>[^，,；。！？!?]+)[，,]\s*推荐您选择第(?P<index>\d+)款\s*"
     r"[（(](?P<name>[^）)]+)[）)]"
@@ -110,6 +118,44 @@ def _has_comparison_value(value: object) -> bool:
     return value is not None and value != "" and value != [] and value != {}
 
 
+def _numeric_value(value: object) -> float | None:
+    """Parse a numeric attribute while rejecting booleans and non-finite values."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        parsed = float(value)
+    elif isinstance(value, str):
+        match = _NUMERIC_VALUE_PATTERN.search(value.replace(",", ""))
+        if match is None:
+            return None
+        parsed = float(match.group(0))
+    else:
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _numeric_attribute_leader(
+    cards: list[dict[str, Any]], key: str
+) -> tuple[int, float, str] | None:
+    """Return the unique card with the largest complete numeric attribute."""
+    values: list[float] = []
+    for card in cards:
+        attributes = card.get("attributes")
+        if not isinstance(attributes, dict) or key not in attributes:
+            return None
+        parsed = _numeric_value(attributes[key])
+        if parsed is None:
+            return None
+        values.append(parsed)
+    if len(values) < 2 or len(set(values)) < 2:
+        return None
+    leader_value = max(values)
+    if values.count(leader_value) != 1:
+        return None
+    leader_index = values.index(leader_value)
+    return leader_index, leader_value, render_attribute_value(key, leader_value)
+
+
 def _unique_attribute_highlight(cards: list[dict[str, Any]], index: int) -> str | None:
     attributes = cards[index].get("attributes")
     if not isinstance(attributes, dict):
@@ -119,6 +165,10 @@ def _unique_attribute_highlight(cards: list[dict[str, Any]], index: int) -> str 
         for card in cards
     ]
     for key in sorted(attributes):
+        # Numeric preference fields are compared in the directionally-aware
+        # path below; never describe a lower value as an independent highlight.
+        if key in _NUMERIC_PREFERENCE_ATTRIBUTES:
+            continue
         value = attributes[key]
         if not _has_comparison_value(value):
             continue
@@ -202,6 +252,7 @@ def _selection_options(cards: list[dict[str, Any]]) -> tuple[list[dict[str, Any]
     options: list[dict[str, Any]] = []
     selected_indexes: set[int] = set()
     used_condition_keys: set[str] = set()
+    has_complete_numeric_comparison = False
     price_leader = _price_leader_index(cards)
     if price_leader is not None:
         options.append(
@@ -214,6 +265,31 @@ def _selection_options(cards: list[dict[str, Any]]) -> tuple[list[dict[str, Any]
         )
         selected_indexes.add(price_leader)
         used_condition_keys.add(_condition_key("性价比"))
+
+    # For numeric preferences, only the unique maximum is a valid leader.
+    # The complete comparison covers all cards, even when the same card also
+    # wins on price, so the hook can safely contain two conditions for it.
+    for key, label in _NUMERIC_PREFERENCE_ATTRIBUTES.items():
+        leader = _numeric_attribute_leader(cards, key)
+        if leader is None:
+            continue
+        leader_index, _, rendered = leader
+        condition = f"更在意{label}"
+        condition_key = _condition_key(condition)
+        if condition_key in used_condition_keys:
+            continue
+        options.append(
+            {
+                "displayNumber": leader_index + 1,
+                "productId": str(cards[leader_index].get("productId") or ""),
+                "name": _card_name(cards[leader_index]),
+                "condition": condition,
+                "fact": f"它的{label}可达{rendered}",
+            }
+        )
+        selected_indexes.add(leader_index)
+        used_condition_keys.add(condition_key)
+        has_complete_numeric_comparison = True
 
     for index, card in enumerate(cards):
         if index in selected_indexes:
@@ -238,7 +314,7 @@ def _selection_options(cards: list[dict[str, Any]]) -> tuple[list[dict[str, Any]
         selected_indexes.add(index)
         used_condition_keys.add(condition_key)
 
-    if len(selected_indexes) == len(cards):
+    if len(selected_indexes) == len(cards) or has_complete_numeric_comparison:
         return options, ""
     if not options:
         return options, f"这些商品的{INSUFFICIENT_COMPARISON_NOTE}"
@@ -253,6 +329,7 @@ def _fallback_recommendation_hook(cards: list[dict[str, Any]]) -> str:
     clauses = [
         f"如果您{option['condition']}，推荐您选择"
         f"{_card_label(int(option['displayNumber']), cards[int(option['displayNumber']) - 1])}"
+        + (f"，{option['fact']}" if option.get("fact") else "")
         for option in options
     ]
     if insufficiency_note:
@@ -281,27 +358,45 @@ def _is_usable_hook(
     ]
     referenced_indexes = {index for index, _, _ in references}
     raw_referenced_indexes = {int(index) for index in re.findall(r"第(\d+)款", hook)}
-    expected_by_index = {
-        int(option["displayNumber"]): (
-            _card_name(cards[int(option["displayNumber"]) - 1]),
-            _condition_key(option["condition"]),
+    expected_options: list[tuple[int, str, str, str]] = []
+    for option in selection_options:
+        try:
+            index = int(option["displayNumber"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        if index < 1 or index > len(cards):
+            return False
+        expected_options.append(
+            (
+                index,
+                _card_name(cards[index - 1]),
+                _condition_key(option["condition"]),
+                str(option.get("fact") or ""),
+            )
         )
-        for option in selection_options
-    }
-    expected_conditions = {condition for _, condition in expected_by_index.values()}
-    if len(expected_conditions) != len(expected_by_index):
+    expected_conditions = {condition for _, _, condition, _ in expected_options}
+    if len(expected_conditions) != len(expected_options):
         return False
-    if len(references) != len(referenced_indexes):
+    actual_pairs = {(index, condition) for index, _, condition in references}
+    expected_pairs = {(index, condition) for index, _, condition, _ in expected_options}
+    if len(references) != len(actual_pairs):
         return False
     if raw_referenced_indexes != referenced_indexes:
         return False
-    if set(referenced_indexes) != set(expected_by_index):
+    if len(references) != len(expected_options) or actual_pairs != expected_pairs:
         return False
     if "推荐您选择" in hook and not references:
         return False
     for index, name, condition in references:
-        expected_name, expected_condition = expected_by_index[index]
-        if name != expected_name or condition != expected_condition:
+        expected_names = {
+            expected_name
+            for expected_index, expected_name, expected_condition, _ in expected_options
+            if expected_index == index and expected_condition == condition
+        }
+        if name not in expected_names:
+            return False
+    for _, _, _, fact in expected_options:
+        if fact and fact not in hook:
             return False
     if insufficiency_note:
         return insufficiency_note in hook

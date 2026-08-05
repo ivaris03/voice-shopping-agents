@@ -29,8 +29,9 @@ RECOMMENDATION_HOOK_SYSTEM_PROMPT = """
 输入还会提供 selectionOptions 和 insufficiencyNote。selectionOptions 是服务端已验证、能够唯一
 对应一个商品的比较条件；只能对其中每一项各生成一次
 “如果您{condition}，推荐您选择第{displayNumber}款（{name}）”，其中 condition、displayNumber 和
-name 必须原样使用输入值。不得根据 productCards 新增、替换或合并选择条件，不得将相同或等价条件
-指向不同商品。若 insufficiencyNote 非空，必须在最后原样追加该句；若其为空，不得输出资料不足的
-说明。只能引用输入商品卡中的事实，不得编造价格、库存、功能、认证或比较结论，不得使用绝对化、
-医疗功效或收益承诺。不要重复逐商品介绍、不要输出解释或 Markdown。
+name 必须原样使用输入值。同一商品可以对应多个不同条件，不能因此漏掉任何一项；如果某项还提供
+fact 字段，必须在对应商品后原样追加该事实。不得根据 productCards 新增、替换或合并选择条件，
+不得将相同或等价条件指向不同商品。若 insufficiencyNote 非空，必须在最后原样追加该句；若其为空，
+不得输出资料不足的说明。只能引用输入商品卡中的事实，不得编造价格、库存、功能、认证或比较结论。
+不得使用绝对化、医疗功效或收益承诺。不要重复逐商品介绍、不要输出解释或 Markdown。
 """.strip()

@@ -21,12 +21,21 @@ interface RecommendationCard {
   productId: string
   merchantId: string
   merchantName?: string
+  sku?: string
   name: string
+  categoryL1?: string
+  categoryL2?: string
   brand?: string
+  description?: string
   price: number
   stock: number
   imageUrl?: string
+  imageUrls?: string[]
+  status?: Product['status']
+  createdAt?: string
+  updatedAt?: string
   sellingPoints: string[]
+  attributes?: Product['attributes']
   reason?: string
   reasonIsFallback?: boolean
   matchScore: number
@@ -88,6 +97,7 @@ const customerId = '00000000-0000-4000-8000-000000000101'
 // A page close explicitly finalizes the session, so a new page instance must
 // never reuse that terminal session ID.
 const sessionId = crypto.randomUUID()
+const REALTIME_CONNECT_TIMEOUT_MS = 8_000
 
 const currentRoute = ref('/voice')
 const isVoicePage = computed(() => currentRoute.value === '/voice')
@@ -172,6 +182,7 @@ watch(
 )
 
 const isRecording = ref(false)
+const isVoiceStarting = ref(false)
 const isAssistantSpeaking = ref(false)
 const isAssistantSpeechPaused = ref(false)
 let textSocket: WebSocket | null = null
@@ -609,195 +620,281 @@ function handleEvent(event: ApiEvent<Record<string, unknown>>) {
   if (event.type === 'order.updated') void loadData()
 }
 
+// Browsers may close a WebSocket without firing `error`; settle every
+// connection attempt so recording never waits on an orphaned Promise.
 function connectText(): Promise<void> {
   if (textSocket?.readyState === WebSocket.OPEN) return Promise.resolve()
   if (textSocket?.readyState === WebSocket.CONNECTING && textConnectPromise) return textConnectPromise
+  if (textSocket && textSocket.readyState !== WebSocket.CLOSED) {
+    textSocket.close()
+  }
   const socket = new WebSocket(`${textWsBaseUrl}/${sessionId}?userId=${customerId}`)
   textSocket = socket
-  textConnectPromise = new Promise((resolve, reject) => {
-    socket.onopen = () => {
-      textConnectPromise = null
-      flowStatus.value = '导购已就绪'
-      resolve()
-    }
-    socket.onerror = () => {
-      textConnectPromise = null
-      reject(new Error('文本连接失败'))
-    }
-    socket.onclose = () => {
-      if (textSocket === socket) textSocket = null
-      textConnectPromise = null
-      if (activeTurnSource === 'text') finishTurn(activeTurnId, true)
-      flowStatus.value = '连接已断开，发送或录音时会自动重连'
-    }
-    socket.onmessage = (message) => {
-      const event = JSON.parse(String(message.data)) as ApiEvent<Record<string, unknown>>
-      if (event.type !== 'session.connected') handleEvent(event)
-    }
+  let settled = false
+  let opened = false
+  let connectTimer = 0
+  let resolveConnection!: () => void
+  let rejectConnection!: (reason: Error) => void
+  const connection = new Promise<void>((resolve, reject) => {
+    resolveConnection = resolve
+    rejectConnection = reject
   })
-  return textConnectPromise
+  textConnectPromise = connection
+  const clearConnectTimer = () => {
+    if (connectTimer) {
+      window.clearTimeout(connectTimer)
+      connectTimer = 0
+    }
+  }
+  const failConnection = (message: string) => {
+    if (settled) return
+    settled = true
+    clearConnectTimer()
+    if (textSocket === socket) textSocket = null
+    if (textConnectPromise === connection) textConnectPromise = null
+    rejectConnection(new Error(message))
+  }
+  connectTimer = window.setTimeout(() => {
+    failConnection('文本连接超时，请检查导购服务')
+    try {
+      socket.close()
+    } catch {
+      // The socket may already have closed while the timeout callback ran.
+    }
+  }, REALTIME_CONNECT_TIMEOUT_MS)
+  socket.onopen = () => {
+    if (settled) return
+    settled = true
+    opened = true
+    clearConnectTimer()
+    if (textConnectPromise === connection) textConnectPromise = null
+    flowStatus.value = '导购已就绪'
+    resolveConnection()
+  }
+  socket.onerror = () => {
+    failConnection('文本连接失败')
+  }
+  socket.onclose = () => {
+    if (!opened) failConnection('文本连接已断开')
+    if (textSocket !== socket) return
+    if (textSocket === socket) textSocket = null
+    if (textConnectPromise === connection) textConnectPromise = null
+    if (activeTurnSource === 'text') finishTurn(activeTurnId, true)
+    if (opened) flowStatus.value = '连接已断开，发送或录音时会自动重连'
+  }
+  socket.onmessage = (message) => {
+    const event = JSON.parse(String(message.data)) as ApiEvent<Record<string, unknown>>
+    if (event.type !== 'session.connected') handleEvent(event)
+  }
+  return connection
 }
 
 function connectAudio(): Promise<void> {
   if (audioSocket?.readyState === WebSocket.OPEN) return Promise.resolve()
   if (audioSocket?.readyState === WebSocket.CONNECTING && audioConnectPromise) return audioConnectPromise
+  if (audioSocket && audioSocket.readyState !== WebSocket.CLOSED) {
+    audioSocket.close()
+  }
   const socket = new WebSocket(`${audioWsBaseUrl}/${sessionId}?userId=${customerId}`)
   audioSocket = socket
   socket.binaryType = 'blob'
-  audioConnectPromise = new Promise((resolve, reject) => {
-    socket.onopen = () => {
-      audioConnectPromise = null
-      resolve()
+  let settled = false
+  let opened = false
+  let connectTimer = 0
+  let resolveConnection!: () => void
+  let rejectConnection!: (reason: Error) => void
+  const connection = new Promise<void>((resolve, reject) => {
+    resolveConnection = resolve
+    rejectConnection = reject
+  })
+  audioConnectPromise = connection
+  const clearConnectTimer = () => {
+    if (connectTimer) {
+      window.clearTimeout(connectTimer)
+      connectTimer = 0
     }
-    socket.onerror = () => {
-      audioConnectPromise = null
-      reject(new Error('音频连接失败'))
+  }
+  const failConnection = (message: string) => {
+    if (settled) return
+    settled = true
+    clearConnectTimer()
+    if (audioSocket === socket) audioSocket = null
+    if (audioConnectPromise === connection) audioConnectPromise = null
+    rejectConnection(new Error(message))
+  }
+  connectTimer = window.setTimeout(() => {
+    failConnection('音频连接超时，请检查导购服务')
+    try {
+      socket.close()
+    } catch {
+      // The socket may already have closed while the timeout callback ran.
     }
-    socket.onclose = () => {
-      if (audioSocket === socket) audioSocket = null
-      audioConnectPromise = null
-      if (pendingAsrStart) {
-        window.clearTimeout(pendingAsrStart.timer)
-        pendingAsrStart.reject(new Error('ASR 连接已断开'))
-        pendingAsrStart = null
+  }, REALTIME_CONNECT_TIMEOUT_MS)
+  socket.onopen = () => {
+    if (settled) return
+    settled = true
+    opened = true
+    clearConnectTimer()
+    if (audioConnectPromise === connection) audioConnectPromise = null
+    resolveConnection()
+  }
+  socket.onerror = () => {
+    failConnection('音频连接失败')
+  }
+  socket.onclose = () => {
+    if (!opened) failConnection('音频连接已断开')
+    if (audioSocket !== socket) return
+    if (audioSocket === socket) audioSocket = null
+    if (audioConnectPromise === connection) audioConnectPromise = null
+    const voiceWasActive = isVoiceStarting.value || isRecording.value || activeTurnSource === 'voice'
+    if (pendingAsrStart) {
+      window.clearTimeout(pendingAsrStart.timer)
+      pendingAsrStart.reject(new Error('ASR 连接已断开'))
+      pendingAsrStart = null
+    }
+    if (isRecording.value) cleanupRecording()
+    if (activeTurnSource === 'voice') {
+      finishTurn(activeTurnId, true)
+    }
+    if (voiceWasActive) {
+      error.value = '音频连接已断开，请重新录音'
+      flowStatus.value = '语音识别失败，请重试'
+    }
+    for (const text of pendingSpeechByTurn.values()) speak(text)
+    pendingSpeechByTurn.clear()
+    incomingAudioSegment = null
+    pendingPcmFrames = []
+    asrReady = false
+    stopRequested = false
+  }
+  socket.onmessage = (message) => {
+    if (message.data instanceof Blob) {
+      if (incomingAudioSegment && !incomingAudioSegment.fallback && !incomingAudioSegment.suppressed) {
+        incomingAudioSegment.chunks.push(message.data)
       }
-      if (isRecording.value) cleanupRecording()
-      for (const text of pendingSpeechByTurn.values()) speak(text)
-      pendingSpeechByTurn.clear()
-      incomingAudioSegment = null
-      pendingPcmFrames = []
-      asrReady = false
-      stopRequested = false
+      return
     }
-    socket.onmessage = (message) => {
-      if (message.data instanceof Blob) {
-        if (incomingAudioSegment && !incomingAudioSegment.fallback && !incomingAudioSegment.suppressed) {
-          incomingAudioSegment.chunks.push(message.data)
-        }
+    const event = JSON.parse(String(message.data)) as {
+      type: string
+      turnId?: string
+      payload?: Record<string, unknown>
+    }
+    if (event.type === 'asr.completed') {
+      const transcript = String(event.payload?.transcript ?? '')
+      if (transcript && event.turnId) {
+        setLiveAsrTranscript(event.turnId, transcript, false)
+        flowStatus.value = '智能导购正在理解与筛选…'
+        error.value = ''
+      }
+      if (event.turnId === latestVoiceTurnId) isBargingIn = false
+    }
+    if (event.type === 'asr.partial') {
+      const transcript = String(event.payload?.transcript ?? '')
+      if (!transcript || !event.turnId) return
+      setLiveAsrTranscript(event.turnId, transcript, true)
+      flowStatus.value = '正在聆听，实时转写中…'
+    }
+    if (event.type === 'asr.sentence') {
+      const sentence = String(event.payload?.transcript ?? '')
+      if (!sentence || !event.turnId) return
+      const fullTranscript = String(event.payload?.fullTranscript ?? '')
+      if (fullTranscript) {
+        setLiveAsrTranscript(event.turnId, fullTranscript, true)
+        flowStatus.value = '正在聆听，已实时转写…'
         return
       }
-      const event = JSON.parse(String(message.data)) as {
-        type: string
-        turnId?: string
-        payload?: Record<string, unknown>
+      const liveMessage = messages.value.find(
+        (item) => item.role === 'user' && item.turnId === event.turnId && item.streaming,
+      )
+      if (liveMessage) {
+        liveMessage.text += sentence
+      } else {
+        setLiveAsrTranscript(event.turnId, sentence, true)
       }
-      if (event.type === 'asr.completed') {
-        const transcript = String(event.payload?.transcript ?? '')
-        if (transcript && event.turnId) {
-          setLiveAsrTranscript(event.turnId, transcript, false)
-          flowStatus.value = '智能导购正在理解与筛选…'
-          error.value = ''
-        }
-        if (event.turnId === latestVoiceTurnId) isBargingIn = false
-      }
-      if (event.type === 'asr.partial') {
-        const transcript = String(event.payload?.transcript ?? '')
-        if (!transcript || !event.turnId) return
-        setLiveAsrTranscript(event.turnId, transcript, true)
-        flowStatus.value = '正在聆听，实时转写中…'
-      }
-      if (event.type === 'asr.sentence') {
-        const sentence = String(event.payload?.transcript ?? '')
-        if (!sentence || !event.turnId) return
-        const fullTranscript = String(event.payload?.fullTranscript ?? '')
-        if (fullTranscript) {
-          setLiveAsrTranscript(event.turnId, fullTranscript, true)
-          flowStatus.value = '正在聆听，已实时转写…'
-          return
-        }
-        const liveMessage = messages.value.find(
-          (item) => item.role === 'user' && item.turnId === event.turnId && item.streaming,
-        )
-        if (liveMessage) {
-          liveMessage.text += sentence
-        } else {
-          setLiveAsrTranscript(event.turnId, sentence, true)
-        }
-        flowStatus.value = '正在聆听，已实时转写…'
-      }
-      if (event.type === 'asr.started') {
-        const pending = pendingAsrStart
-        if (pending && event.turnId === pending.turnId) {
-          window.clearTimeout(pending.timer)
-          pending.resolve()
-          pendingAsrStart = null
-        }
-      }
-      if (event.type === 'audio.error') {
-        const payload = event.payload ?? {}
-        const metrics = (payload.clientMetrics ?? {}) as Record<string, unknown>
-        const stage = String(payload.stage ?? '')
-        const hasReceivedBytes = Object.prototype.hasOwnProperty.call(payload, 'receivedBytes')
-        const receivedBytes = hasReceivedBytes ? Number(payload.receivedBytes) : null
-        const hasPeak = Object.prototype.hasOwnProperty.call(metrics, 'peak')
-        const hasDuration = Object.prototype.hasOwnProperty.call(metrics, 'durationMs')
-        const peak = Number(metrics.peak ?? 0)
-        const durationMs = Number(metrics.durationMs ?? 0)
-        let messageText = String(payload.message ?? '语音识别失败')
-        // Only ASR capture failures should turn transport metrics into
-        // microphone advice. Workflow/session errors may arrive on this same
-        // socket after a valid transcript has already been emitted.
-        const isCaptureError = !stage || stage === 'asr'
-        if (isCaptureError && receivedBytes !== null && receivedBytes <= 0) {
-          messageText = '后端没有收到麦克风音频，请检查 Chrome 麦克风权限'
-        } else if (isCaptureError && receivedBytes !== null && hasPeak && peak < 0.003) {
-          messageText = 'Chrome 麦克风输入接近静音，请检查当前输入设备或系统音量'
-        } else if (isCaptureError && hasDuration && durationMs > 0 && durationMs < 800) {
-          messageText = '录音时间太短，请说完后再点击停止录音'
-        }
-        const pending = pendingAsrStart
-        if (pending && event.turnId === pending.turnId) {
-          window.clearTimeout(pending.timer)
-          pending.reject(new Error(messageText))
-          pendingAsrStart = null
-        }
-        error.value = messageText
-        flowStatus.value = stage === 'workflow' ? '导购处理失败，请重试' : '语音识别失败，请重试'
-        if (event.turnId) finishTurn(event.turnId)
-      }
-      if (event.type === 'audio.start') {
-        const pendingText = event.turnId ? pendingSpeechByTurn.get(event.turnId) : undefined
-        if (event.turnId) pendingSpeechByTurn.delete(event.turnId)
-        const turnId = event.turnId ?? ''
-        const text = String(event.payload?.text ?? pendingText ?? '')
-        const fallback = event.payload?.fallback === true
-        const suppressed = Boolean(turnId && mutedSpeechTurnIds.has(turnId))
-        incomingAudioSegment = {
-          turnId,
-          text,
-          fallback,
-          suppressed,
-          chunks: [],
-        }
-        if (suppressed) return
-        if (fallback) {
-          speak(text, turnId)
-        } else if ('speechSynthesis' in window) {
-          window.speechSynthesis.cancel()
-          activeAssistantSpeech = null
-          isAssistantSpeaking.value = false
-          isAssistantSpeechPaused.value = false
-        }
-      }
-      if (event.type === 'audio.end') {
-        const segment = incomingAudioSegment
-        incomingAudioSegment = null
-        if (segment && !segment.suppressed && !segment.fallback && segment.chunks.length) {
-          audioQueue.push({
-            turnId: segment.turnId,
-            text: segment.text,
-            fallback: false,
-            audio: new Blob(segment.chunks, { type: 'audio/wav' }),
-          })
-          pumpAudioQueue()
-        }
-      }
-      if (event.type === 'audio.done' && event.turnId) {
-        pendingSpeechByTurn.delete(event.turnId)
+      flowStatus.value = '正在聆听，已实时转写…'
+    }
+    if (event.type === 'asr.started') {
+      const pending = pendingAsrStart
+      if (pending && event.turnId === pending.turnId) {
+        window.clearTimeout(pending.timer)
+        pending.resolve()
+        pendingAsrStart = null
       }
     }
-  })
-  return audioConnectPromise
+    if (event.type === 'audio.error') {
+      const payload = event.payload ?? {}
+      const metrics = (payload.clientMetrics ?? {}) as Record<string, unknown>
+      const stage = String(payload.stage ?? '')
+      const hasReceivedBytes = Object.prototype.hasOwnProperty.call(payload, 'receivedBytes')
+      const receivedBytes = hasReceivedBytes ? Number(payload.receivedBytes) : null
+      const hasPeak = Object.prototype.hasOwnProperty.call(metrics, 'peak')
+      const hasDuration = Object.prototype.hasOwnProperty.call(metrics, 'durationMs')
+      const peak = Number(metrics.peak ?? 0)
+      const durationMs = Number(metrics.durationMs ?? 0)
+      let messageText = String(payload.message ?? '语音识别失败')
+      // Only ASR capture failures should turn transport metrics into
+      // microphone advice. Workflow/session errors may arrive on this same
+      // socket after a valid transcript has already been emitted.
+      const isCaptureError = !stage || stage === 'asr'
+      if (isCaptureError && receivedBytes !== null && receivedBytes <= 0) {
+        messageText = '后端没有收到麦克风音频，请检查 Chrome 麦克风权限'
+      } else if (isCaptureError && receivedBytes !== null && hasPeak && peak < 0.003) {
+        messageText = 'Chrome 麦克风输入接近静音，请检查当前输入设备或系统音量'
+      } else if (isCaptureError && hasDuration && durationMs > 0 && durationMs < 800) {
+        messageText = '录音时间太短，请说完后再点击停止录音'
+      }
+      const pending = pendingAsrStart
+      if (pending && event.turnId === pending.turnId) {
+        window.clearTimeout(pending.timer)
+        pending.reject(new Error(messageText))
+        pendingAsrStart = null
+      }
+      error.value = messageText
+      flowStatus.value = stage === 'workflow' ? '导购处理失败，请重试' : '语音识别失败，请重试'
+      if (event.turnId) finishTurn(event.turnId)
+    }
+    if (event.type === 'audio.start') {
+      const pendingText = event.turnId ? pendingSpeechByTurn.get(event.turnId) : undefined
+      if (event.turnId) pendingSpeechByTurn.delete(event.turnId)
+      const turnId = event.turnId ?? ''
+      const text = String(event.payload?.text ?? pendingText ?? '')
+      const fallback = event.payload?.fallback === true
+      const suppressed = Boolean(turnId && mutedSpeechTurnIds.has(turnId))
+      incomingAudioSegment = {
+        turnId,
+        text,
+        fallback,
+        suppressed,
+        chunks: [],
+      }
+      if (suppressed) return
+      if (fallback) {
+        speak(text, turnId)
+      } else if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel()
+        activeAssistantSpeech = null
+        isAssistantSpeaking.value = false
+        isAssistantSpeechPaused.value = false
+      }
+    }
+    if (event.type === 'audio.end') {
+      const segment = incomingAudioSegment
+      incomingAudioSegment = null
+      if (segment && !segment.suppressed && !segment.fallback && segment.chunks.length) {
+        audioQueue.push({
+          turnId: segment.turnId,
+          text: segment.text,
+          fallback: false,
+          audio: new Blob(segment.chunks, { type: 'audio/wav' }),
+        })
+        pumpAudioQueue()
+      }
+    }
+    if (event.type === 'audio.done' && event.turnId) {
+      pendingSpeechByTurn.delete(event.turnId)
+    }
+  }
+  return connection
 }
 
 function startServerAsr(turnId: string): Promise<void> {
@@ -911,11 +1008,13 @@ async function sendUtterance() {
 }
 
 async function startVoice() {
-  if (isTurnInFlight.value) return
+  if (isTurnInFlight.value || isVoiceStarting.value || isRecording.value) return
   error.value = ''
   isBargingIn = true
   latestVoiceTurnId = ''
   stopAssistantSpeech()
+  isVoiceStarting.value = true
+  flowStatus.value = '正在连接语音通道…'
   try {
     await Promise.all([connectText(), connectAudio()])
     const audioConstraints: MediaTrackConstraints = {
@@ -964,6 +1063,7 @@ async function startVoice() {
     audioProcessor.connect(audioGain)
     audioGain.connect(audioContext.destination)
     isRecording.value = true
+    isVoiceStarting.value = false
     flowStatus.value = '正在聆听，ASR 模型连接中…'
     await startServerAsr(turnId)
     if (recordingTurnId !== turnId) return
@@ -977,6 +1077,8 @@ async function startVoice() {
     cleanupRecording(true)
     recordingTurnId = ''
     isBargingIn = false
+  } finally {
+    isVoiceStarting.value = false
   }
 }
 
@@ -1009,20 +1111,20 @@ function recommendationToProduct(card: RecommendationCard): Product {
     id: card.productId,
     merchantId: card.merchantId,
     merchantName: card.merchantName,
-    sku: '推荐商品',
+    sku: card.sku || '推荐商品',
     name: card.name,
-    categoryL1: '',
-    categoryL2: '推荐商品',
+    categoryL1: card.categoryL1 || '',
+    categoryL2: card.categoryL2 || '推荐商品',
     brand: card.brand,
-    description: '',
+    description: card.description || '',
     price: card.price,
     stock: card.stock,
-    attributes: {},
+    attributes: card.attributes ?? {},
     sellingPoints: card.sellingPoints,
-    imageUrls: card.imageUrl ? [card.imageUrl] : [],
-    status: 'on_sale',
-    createdAt: '',
-    updatedAt: '',
+    imageUrls: card.imageUrls?.length ? card.imageUrls : card.imageUrl ? [card.imageUrl] : [],
+    status: card.status ?? 'on_sale',
+    createdAt: card.createdAt ?? '',
+    updatedAt: card.updatedAt ?? '',
   }
 }
 
@@ -1098,7 +1200,11 @@ function notifySessionClosed() {
 
 onMounted(() => {
   syncRoute()
-  void Promise.all([loadData(), connectText(), connectAudio(), refreshAudioInputs()]).catch(() => undefined)
+  void Promise.all([loadData(), connectText(), connectAudio(), refreshAudioInputs()]).catch((reason) => {
+    if (error.value) return
+    error.value = reason instanceof Error ? reason.message : '导购连接失败'
+    flowStatus.value = '导购连接失败，请重试'
+  })
   window.addEventListener('pagehide', notifySessionClosed)
   window.addEventListener('hashchange', syncRoute)
   navigator.mediaDevices?.addEventListener?.('devicechange', handleAudioDeviceChange)
@@ -1157,16 +1263,16 @@ onBeforeUnmount(() => {
               class="mic-button"
               :class="{ 'mic-button--active': isRecording }"
               type="button"
-              :disabled="isTurnInFlight"
+              :disabled="isTurnInFlight || isVoiceStarting"
               :aria-label="isRecording ? '停止录音' : '开始录音'"
               @click="isRecording ? stopVoice() : startVoice()"
             >
-              <span class="mic-button__title">{{ isRecording ? '停止' : '开始说' }}</span>
-              <span class="mic-button__caption">{{ isRecording ? '提交本轮' : '语音输入' }}</span>
+              <span class="mic-button__title">{{ isRecording ? '停止' : isVoiceStarting ? '连接中' : '开始说' }}</span>
+              <span class="mic-button__caption">{{ isRecording ? '提交本轮' : isVoiceStarting ? '请稍候' : '语音输入' }}</span>
             </button>
             <div class="voice-action-copy">
-              <strong>{{ isRecording ? '正在听你说' : '点击开始说' }}</strong>
-              <span>{{ isRecording ? '说完后再次点击，提交这一轮需求' : '也可以在下方直接输入文字' }}</span>
+              <strong>{{ isRecording ? '正在听你说' : isVoiceStarting ? '正在连接语音' : '点击开始说' }}</strong>
+              <span>{{ isRecording ? '说完后再次点击，提交这一轮需求' : isVoiceStarting ? '正在准备麦克风，请稍候' : '也可以在下方直接输入文字' }}</span>
             </div>
             <button
               class="voice-pause-button"

@@ -7,11 +7,14 @@ import { nextTick } from 'vue'
 import App from './App.vue'
 
 class FakeWebSocket {
+  static readonly CONNECTING = 0
   static readonly OPEN = 1
+  static readonly CLOSED = 3
   static instances: FakeWebSocket[] = []
+  static closeBeforeOpen = false
 
   readonly url: string
-  readyState = FakeWebSocket.OPEN
+  readyState = FakeWebSocket.CONNECTING
   binaryType = ''
   onopen: (() => void) | null = null
   onerror: (() => void) | null = null
@@ -21,7 +24,15 @@ class FakeWebSocket {
   constructor(url: string | URL) {
     this.url = String(url)
     FakeWebSocket.instances.push(this)
-    queueMicrotask(() => this.onopen?.())
+    queueMicrotask(() => {
+      if (FakeWebSocket.closeBeforeOpen) {
+        this.readyState = FakeWebSocket.CLOSED
+        this.onclose?.()
+        return
+      }
+      this.readyState = FakeWebSocket.OPEN
+      this.onopen?.()
+    })
   }
 
   send = vi.fn()
@@ -103,6 +114,7 @@ describe('assistant reply audio coordination', () => {
 
   beforeEach(() => {
     FakeWebSocket.instances = []
+    FakeWebSocket.closeBeforeOpen = false
     localStorage.clear()
     window.location.hash = '#/voice'
     speak.mockClear()
@@ -254,6 +266,57 @@ describe('assistant reply audio coordination', () => {
     wrapper.unmount()
   })
 
+  it('keeps recommendation attributes when the catalog is not loaded before opening details', async () => {
+    const wrapper = mount(App)
+    await flushPromises()
+    const textSocket = FakeWebSocket.instances.find((socket) => socket.url.includes('/ws/text/'))
+    const card = {
+      productId: 'headphone-detail-1',
+      merchantId: 'merchant-1',
+      sku: 'AUD-DETAIL-1',
+      name: '续航 60 小时头戴耳机',
+      categoryL1: 'ELECTRONICS',
+      categoryL2: 'HEADPHONES',
+      description: '适合长途出行的头戴式蓝牙耳机。',
+      price: 2799,
+      stock: 10,
+      imageUrls: [],
+      status: 'on_sale',
+      createdAt: '2026-08-04T11:47:05.198677Z',
+      updatedAt: '2026-08-04T13:48:47.279999Z',
+      sellingPoints: ['头戴式包裹感'],
+      attributes: {
+        form: 'over-ear',
+        connectivity: 'bluetooth',
+        batteryHours: 60,
+        noiseCancellation: true,
+      },
+      matchScore: 0.9,
+    }
+
+    textSocket?.emitJson({
+      type: 'recommendation.cards',
+      turnId: 'turn-detail-attributes',
+      payload: { productCards: [card] },
+    })
+    await flushPromises()
+    await wrapper.get('.product-card--recommendation .product-card__details').trigger('click')
+    await nextTick()
+
+    const details = wrapper.find('.product-detail-dialog')
+    expect(details.exists()).toBe(true)
+    expect(details.text()).toContain('商品参数')
+    expect(details.text()).toContain('适合长途出行的头戴式蓝牙耳机。')
+    expect(details.text()).toContain('AUD-DETAIL-1')
+    expect(details.text()).toContain('数码电子（ELECTRONICS） / 耳机（HEADPHONES）')
+    expect(details.text()).toContain('最近更新')
+    expect(details.text()).toContain('续航时长（batteryHours）')
+    expect(details.text()).toContain('60')
+    expect(details.text()).toContain('佩戴形式（form）')
+    expect(details.text()).toContain('头戴式（over-ear）')
+    wrapper.unmount()
+  })
+
   it('caps an out-of-range recommendation score at 100 percent', async () => {
     const wrapper = mount(App)
     await flushPromises()
@@ -383,6 +446,23 @@ describe('assistant reply audio coordination', () => {
     wrapper.unmount()
   })
 
+  it('does not leave the microphone startup waiting after a socket closes before opening', async () => {
+    FakeWebSocket.closeBeforeOpen = true
+    const wrapper = mount(App)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('文本连接已断开')
+
+    FakeWebSocket.closeBeforeOpen = false
+    const startButton = wrapper.get('[aria-label="开始录音"]')
+    await startButton.trigger('click')
+    await flushPromises()
+
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled()
+    expect(wrapper.get('[aria-label="停止录音"]')).toBeTruthy()
+    wrapper.unmount()
+  })
+
   it('waits for the server ASR model and submits only captured PCM audio', async () => {
     const wrapper = mount(App)
     await flushPromises()
@@ -425,6 +505,34 @@ describe('assistant reply audio coordination', () => {
     })
     expect(wrapper.text()).toContain('ASR 正在转写')
 
+    wrapper.unmount()
+  })
+
+  it('re-enables the microphone after the audio channel drops during a voice turn', async () => {
+    const wrapper = mount(App)
+    await flushPromises()
+
+    const audioSocket = FakeWebSocket.instances.find((socket) => socket.url.includes('/ws/audio/'))
+    const startButton = wrapper.get('[aria-label="开始录音"]')
+    await startButton.trigger('click')
+    await flushPromises()
+
+    const startMessage = JSON.parse(String(audioSocket?.send.mock.calls[0]?.[0])) as {
+      turnId: string
+    }
+    audioSocket?.emitJson({ type: 'asr.started', turnId: startMessage.turnId, payload: {} })
+    await flushPromises()
+    FakeAudioContext.processor?.onaudioprocess?.({
+      inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.1) },
+    })
+    await wrapper.get('[aria-label="停止录音"]').trigger('click')
+    expect((wrapper.get('[aria-label="开始录音"]').element as HTMLButtonElement).disabled).toBe(true)
+
+    audioSocket?.close()
+    await flushPromises()
+
+    expect((wrapper.get('[aria-label="开始录音"]').element as HTMLButtonElement).disabled).toBe(false)
+    expect(wrapper.text()).toContain('音频连接已断开，请重新录音')
     wrapper.unmount()
   })
 
