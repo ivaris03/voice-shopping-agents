@@ -563,10 +563,12 @@ async def emotional_response(
     }
 
 
+# The individual stage helpers remain import-compatible for callers outside
+# the graph; ``compliance_node`` below is the only registered terminal node.
 async def publish_response(
     state: ShoppingState, runtime: Runtime[ShoppingRuntimeDependencies]
 ) -> dict[str, Any]:
-    """Publish only the response that has passed the compliance branch."""
+    """Publish a response that has already passed the compliance branch."""
     context = runtime.context
     speech = state.get("speech_text") or state.get("final_reply", "")
     speech_streamed, speech_audio_streamed = await _publish_speech(speech, context)
@@ -589,16 +591,58 @@ async def violation_response(state: ShoppingState) -> dict[str, Any]:
     }
 
 
+def _first_violation_sentence(speech: str) -> str | None:
+    return next(
+        (sentence for sentence in split_sentences(speech) if not is_compliant(sentence)),
+        None,
+    )
+
+
 async def compliance_check(state: ShoppingState) -> dict[str, Any]:
     speech = state.get("speech_text", "")
-    for sentence in split_sentences(speech):
-        if not is_compliant(sentence):
-            return {
-                "compliance_blocked": True,
-                "violation_sentence": sentence,
-            }
+    violation_sentence = _first_violation_sentence(speech)
+    if violation_sentence is not None:
+        return {
+            "compliance_blocked": True,
+            "violation_sentence": violation_sentence,
+        }
     return {
         "compliance_blocked": False,
         "violation_sentence": None,
         "final_reply": speech,
     }
+
+
+async def compliance_node(
+    state: ShoppingState, runtime: Runtime[ShoppingRuntimeDependencies]
+) -> dict[str, Any]:
+    """Check, sanitize, and publish the final response as one graph node.
+
+    Keeping these operations together means a draft can never be published
+    between the compliance decision and its safe replacement.
+    """
+    draft = state.get("speech_text") or state.get("final_reply", "")
+    violation_sentence = _first_violation_sentence(draft)
+    if violation_sentence is not None:
+        response = {
+            "reasons": [],
+            "speech_text": COMPLIANCE_FALLBACK,
+            "final_reply": COMPLIANCE_FALLBACK,
+            "compliance_blocked": True,
+            "violation_sentence": violation_sentence,
+        }
+        speech = COMPLIANCE_FALLBACK
+    else:
+        response = {
+            "compliance_blocked": False,
+            "violation_sentence": None,
+            "final_reply": draft,
+        }
+        speech = draft
+
+    speech_streamed, speech_audio_streamed = await _publish_speech(speech, runtime.context)
+    response.update(
+        speech_streamed=speech_streamed,
+        speech_audio_streamed=speech_audio_streamed,
+    )
+    return response

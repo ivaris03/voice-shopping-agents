@@ -98,31 +98,26 @@ graph TD;
     recommendation_agent(recommendation_agent)
     order_node(order_node)
     emotional_agent(emotional_agent)
-    compliance_check(compliance_check)
-    violation_response(violation_response)
-    publish_response(publish_response)
+    compliance_node(compliance_node)
     __end__([<p>__end__</p>]):::last
     __start__ -. &nbsp;clarify&nbsp; .-> clarification_agent;
     __start__ -. &nbsp;intent&nbsp; .-> intent_agent;
     clarification_agent -. &nbsp;respond&nbsp; .-> emotional_agent;
     clarification_agent -. &nbsp;recommend&nbsp; .-> recommendation_agent;
-    compliance_check -. &nbsp;publish&nbsp; .-> publish_response;
-    compliance_check -. &nbsp;violation&nbsp; .-> violation_response;
-    emotional_agent --> compliance_check;
+    emotional_agent --> compliance_node;
     intent_agent -. &nbsp;clarify&nbsp; .-> clarification_agent;
     intent_agent -. &nbsp;respond&nbsp; .-> emotional_agent;
     intent_agent -. &nbsp;order&nbsp; .-> order_node;
     intent_agent -. &nbsp;recommend&nbsp; .-> recommendation_agent;
-    order_node --> compliance_check;
+    order_node --> compliance_node;
     recommendation_agent --> emotional_agent;
-    violation_response --> publish_response;
-    publish_response --> __end__;
+    compliance_node --> __end__;
     classDef default fill:#f2f0ff,line-height:1.2
     classDef first fill-opacity:0
     classDef last fill:#bfb6fc
 ```
 
-条件边的标签对应图中的路由键；各键与业务条件的对应关系在 `_route_start`、`_route_intent`、`_route_clarification` 和 `_route_compliance` 中定义。
+条件边的标签对应图中的路由键；各键与业务条件的对应关系在 `_route_start`、`_route_intent` 和 `_route_clarification` 中定义。
 
 节点职责如下：
 
@@ -133,9 +128,7 @@ graph TD;
 | `recommendation_agent` | 意图、品类、已填槽位、画像快照、注入的 catalog loader | Top 3 商品卡、匹配分、评分拆解、情绪风格 |
 | `order_node` | 意图 action、上一轮商品卡、待确认订单 | 订单服务返回的状态和播报文本 |
 | `emotional_agent` | 商品卡、原话、情绪风格 | 每卡理由、完整话术，不直接发布 |
-| `compliance_check` | 完整话术 | 按短句检查合规状态和违规短句 |
-| `violation_response` | 违规短句和合规状态 | 固定违规提示 |
-| `publish_response` | 已通过或已替换的安全话术 | 文本增量和 TTS 短句发布 |
+| `compliance_node` | 完整话术和发布器 | 按短句检查、违规兜底，并发布安全文本增量和 TTS 短句 |
 
 订单处理节点和推荐/回复节点都可以运行普通 Python 业务代码；Agent 不直接互相调用，而是通过共享 `ShoppingState` 和图路由协作。
 
@@ -330,5 +323,5 @@ Redis 只保存短期文本事件日志，不保存连接状态、商品、订�
 3. 向量重建接口同步执行，商品量增长后应改为后台任务并增加失败重试。
 4. Redis 重放窗口为 1 小时/300 条，不能替代长期消息审计；音频事件没有断点续播能力。
 5. LangSmith 追踪默认 fail-open，但启用生产追踪前必须补充敏感信息治理。
-6. `compliance_check` 按完整短句检查话术；命中后路由到 `violation_response`，原始违规话术不会进入文本或 TTS 发布节点。
+6. `compliance_node` 在同一节点内按完整短句检查话术，命中后替换固定安全回复再发布，原始违规话术不会进入文本或 TTS。
 7. 当前版本不包含支付、退款、物流、售后和真实电商平台对接。

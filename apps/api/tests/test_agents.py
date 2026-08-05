@@ -19,6 +19,7 @@ from voice_shopping_api.agents.nodes.intent import recognize_intent
 from voice_shopping_api.agents.nodes.recommendation import recommend_products
 from voice_shopping_api.agents.nodes.response import (
     compliance_check,
+    compliance_node,
     emotional_response,
     publish_response,
     violation_response,
@@ -1279,6 +1280,49 @@ async def test_publish_response_only_publishes_the_post_compliance_text() -> Non
     assert result["final_reply"] == COMPLIANCE_FALLBACK
     assert "百分百" not in "".join(deltas)
     assert "".join(sentences) == COMPLIANCE_FALLBACK
+
+
+@pytest.mark.asyncio
+async def test_compliance_node_checks_replaces_and_publishes_atomically() -> None:
+    deltas: list[str] = []
+    sentences: list[str] = []
+
+    async def load_catalog(
+        _: str, __: bool, ___: dict[str, object]
+    ) -> list[dict[str, object]]:
+        return []
+
+    async def publish_delta(value: str) -> None:
+        deltas.append(value)
+
+    async def publish_sentence(value: str) -> None:
+        sentences.append(value)
+
+    result = await compliance_node(
+        {"speech_text": "第一句安全。第二句百分百有效。"},
+        Runtime(
+            context=ShoppingRuntimeDependencies(
+                catalog_loader=load_catalog,
+                speech_delta_publisher=publish_delta,
+                speech_sentence_publisher=publish_sentence,
+            )
+        ),
+    )
+
+    assert result["compliance_blocked"] is True
+    assert result["violation_sentence"] == "第二句百分百有效。"
+    assert result["final_reply"] == COMPLIANCE_FALLBACK
+    assert "百分百" not in "".join(deltas)
+    assert "".join(sentences) == COMPLIANCE_FALLBACK
+
+
+def test_graph_has_one_terminal_compliance_node() -> None:
+    node_names = set(build_workflow().get_graph().nodes)
+
+    assert "compliance_node" in node_names
+    assert not node_names.intersection(
+        {"compliance_check", "violation_response", "publish_response"}
+    )
 
 
 @pytest.mark.asyncio
