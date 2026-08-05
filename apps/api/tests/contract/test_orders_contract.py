@@ -4,6 +4,7 @@ from uuid import UUID
 
 import pytest
 
+from voice_shopping_api.core.identity import Principal, create_access_token
 from voice_shopping_api.modules.orders import router as orders_router
 
 USER_ID = UUID("00000000-0000-4000-8000-000000000101")
@@ -11,6 +12,18 @@ PRODUCT_ID = UUID("20000000-0000-4000-8000-000000000001")
 MERCHANT_ID = UUID("10000000-0000-4000-8000-000000000001")
 CLIENT_SESSION_ID = UUID("30000000-0000-4000-8000-000000000101")
 CLIENT_TURN_ID = UUID("40000000-0000-4000-8000-000000000101")
+
+
+def _customer_headers() -> dict[str, str]:
+    token, _ = create_access_token(
+        Principal(
+            user_id=USER_ID,
+            email="lin@example.com",
+            display_name="小林",
+            role="customer",
+        )
+    )
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _order() -> dict[str, object]:
@@ -55,7 +68,7 @@ def test_create_order_contract(client, monkeypatch: pytest.MonkeyPatch) -> None:
 
     response = client.post(
         "/api/v1/orders",
-        headers={"X-User-ID": str(USER_ID)},
+        headers=_customer_headers(),
         json={
             "productId": str(PRODUCT_ID),
             "quantity": 2,
@@ -82,6 +95,7 @@ def test_create_order_contract(client, monkeypatch: pytest.MonkeyPatch) -> None:
 def test_create_order_rejects_invalid_body(client, contract_session) -> None:
     response = client.post(
         "/api/v1/orders",
+        headers=_customer_headers(),
         json={
             "productId": str(PRODUCT_ID),
             "quantity": 0,

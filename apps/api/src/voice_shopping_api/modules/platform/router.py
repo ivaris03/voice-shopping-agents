@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from voice_shopping_api.core.catalog_cache import CatalogCache, get_catalog_cache
 from voice_shopping_api.core.database import get_db_session
 from voice_shopping_api.core.embeddings import resolve_product_embedding
+from voice_shopping_api.core.identity import current_platform_principal
 from voice_shopping_api.core.product_embedding import embedding_text_for_product
 from voice_shopping_api.core.queries import (
     ORDER_COLUMNS,
@@ -39,7 +40,7 @@ from voice_shopping_api.schemas.domain import (
     ProductOut,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(current_platform_principal)])
 Db = Annotated[AsyncSession, Depends(get_db_session)]
 Cache = Annotated[CatalogCache, Depends(get_catalog_cache)]
 

@@ -1,5 +1,6 @@
 export { default as AppShell } from './AppShell.vue'
 export { default as FeatureCard } from './FeatureCard.vue'
+export { default as LoginGate } from './LoginGate.vue'
 export { default as ProductDetailModal } from './ProductDetailModal.vue'
 
 export interface NavItem {
@@ -214,8 +215,14 @@ export interface ApiEvent<T = unknown> {
 export {
   apiBaseUrl,
   audioWsBaseUrl,
+  clearAccessToken,
+  getAccessToken,
+  getCurrentUser,
+  login,
   merchantWebUrl,
   platformWebUrl,
   requestJson,
+  setAccessToken,
   textWsBaseUrl,
 } from './api'
+export type { AuthenticatedUser, UserRole } from './api'

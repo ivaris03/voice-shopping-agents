@@ -1,5 +1,8 @@
+from uuid import UUID
+
 import pytest
 
+from voice_shopping_api.core.identity import Principal, create_access_token
 from voice_shopping_api.modules.sessions import router as sessions_router
 
 
@@ -35,7 +38,17 @@ def test_close_session_contract(client, monkeypatch: pytest.MonkeyPatch) -> None
 
     response = client.post(
         "/api/v1/sessions/session-contract/close",
-        headers={"X-User-ID": "00000000-0000-4000-8000-000000000101"},
+        headers={
+            "Authorization": "Bearer "
+            + create_access_token(
+                Principal(
+                    user_id=UUID("00000000-0000-4000-8000-000000000101"),
+                    email="lin@example.com",
+                    display_name="小林",
+                    role="customer",
+                )
+            )[0]
+        },
         json={"reason": "page_closed", "profile": {"city": "上海"}},
     )
 

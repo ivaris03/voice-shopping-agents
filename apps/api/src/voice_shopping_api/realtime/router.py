@@ -10,7 +10,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
 from voice_shopping_api.core.config import get_settings
-from voice_shopping_api.core.identity import DEFAULT_CUSTOMER_ID
+from voice_shopping_api.core.identity import websocket_customer_principal
 from voice_shopping_api.realtime.asr import StreamingAsr
 from voice_shopping_api.realtime.hub import RealtimeHub, hub
 
@@ -18,14 +18,13 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-def _user_id(websocket: WebSocket) -> UUID:
-    value = websocket.query_params.get("userId")
-    if not value:
-        return DEFAULT_CUSTOMER_ID
+async def _customer_user_id(websocket: WebSocket) -> UUID | None:
+    token = websocket.query_params.get("token")
     try:
-        return UUID(value)
-    except ValueError:
-        return DEFAULT_CUSTOMER_ID
+        return websocket_customer_principal(token).user_id
+    except HTTPException as exc:
+        await websocket.close(code=4401 if exc.status_code == 401 else 4403)
+        return None
 
 
 def _audio_error_event(
@@ -59,7 +58,9 @@ def _audio_error_event(
 
 @router.websocket("/ws/text/{session_id}")
 async def text_socket(websocket: WebSocket, session_id: str) -> None:
-    user_id = _user_id(websocket)
+    user_id = await _customer_user_id(websocket)
+    if user_id is None:
+        return
     await websocket.accept()
     hub.register_text_connection(session_id, websocket, user_id)
     await websocket.send_json({"type": "session.connected", "sessionId": session_id})
@@ -170,7 +171,9 @@ async def text_socket(websocket: WebSocket, session_id: str) -> None:
 
 @router.websocket("/ws/audio/{session_id}")
 async def audio_socket(websocket: WebSocket, session_id: str) -> None:
-    user_id = _user_id(websocket)
+    user_id = await _customer_user_id(websocket)
+    if user_id is None:
+        return
     await websocket.accept()
     hub.register_audio_connection(session_id, websocket, user_id)
     await websocket.send_json({"type": "audio.ready", "sessionId": session_id})

@@ -1,7 +1,8 @@
 from functools import lru_cache
 from pathlib import Path
+from secrets import token_urlsafe
 
-from pydantic import AliasChoices, Field, computed_field
+from pydantic import AliasChoices, Field, PrivateAttr, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ENV_FILE = Path(__file__).resolve().parents[5] / ".env"
@@ -38,6 +39,10 @@ class Settings(BaseSettings):
         default="http://localhost:5173,http://localhost:5174,http://localhost:5175"
     )
     log_level: str = "INFO"
+    jwt_secret: str = ""
+    jwt_issuer: str = "voice-shopping-api"
+    jwt_audience: str = "voice-shopping-web"
+    jwt_access_token_ttl_minutes: int = Field(default=120, ge=5, le=1_440)
     dashscope_api_key: str = Field(
         default="",
         validation_alias=AliasChoices("DASHSCOPE_API_KEY", "VOICE_SHOPPING_DASHSCOPE_API_KEY"),
@@ -58,6 +63,15 @@ class Settings(BaseSettings):
         default="voice-shopping-agents",
         validation_alias=AliasChoices("LANGSMITH_PROJECT", "VOICE_SHOPPING_LANGSMITH_PROJECT"),
     )
+    _development_jwt_secret: str = PrivateAttr(default_factory=lambda: token_urlsafe(48))
+
+    @property
+    def jwt_signing_key(self) -> str:
+        if self.jwt_secret:
+            return self.jwt_secret
+        if self.environment.lower() in {"development", "test"}:
+            return self._development_jwt_secret
+        raise RuntimeError("VOICE_SHOPPING_JWT_SECRET must be configured outside development")
 
     @computed_field
     @property

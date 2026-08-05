@@ -1,5 +1,5 @@
 -- 语音导购平台演示数据
--- 可重复执行；仅用于本地开发/演示。演示账号的初始密码均为 Demo1234!。
+-- 可重复执行；仅用于本地开发/演示。演示账号的初始密码均为 12345678。
 -- 目录规模：5 个商家账号、20 家店铺、200 件商品（每店 10 件）。
 
 BEGIN;
@@ -43,17 +43,17 @@ WHERE id::text LIKE '10000000-0000-4000-8000-%';
 
 INSERT INTO users (id, email, password_hash, display_name, phone, role, status)
 VALUES
-    ('00000000-0000-4000-8000-000000000001', 'admin@example.com', crypt('Demo1234!', gen_salt('bf')), '平台管理员', '13800000001', 'platform', 'active'),
-    ('00000000-0000-4000-8000-000000000002', 'audio@example.com', crypt('Demo1234!', gen_salt('bf')), '声选音频商家', '13800000002', 'merchant', 'active'),
-    ('00000000-0000-4000-8000-000000000003', 'daily@example.com', crypt('Demo1234!', gen_salt('bf')), '声选家电商家', '13800000003', 'merchant', 'active'),
-    ('00000000-0000-4000-8000-000000000004', 'sports@example.com', crypt('Demo1234!', gen_salt('bf')), '声选运动商家', '13800000004', 'merchant', 'active'),
-    ('00000000-0000-4000-8000-000000000005', 'watch@example.com', crypt('Demo1234!', gen_salt('bf')), '声选腕表商家', '13800000005', 'merchant', 'active'),
-    ('00000000-0000-4000-8000-000000000006', 'beauty@example.com', crypt('Demo1234!', gen_salt('bf')), '声选美妆商家', '13800000006', 'merchant', 'active'),
-    ('00000000-0000-4000-8000-000000000101', 'lin@example.com', crypt('Demo1234!', gen_salt('bf')), '小林', '13900000101', 'customer', 'active'),
-    ('00000000-0000-4000-8000-000000000102', 'chen@example.com', crypt('Demo1234!', gen_salt('bf')), '陈晨', '13900000102', 'customer', 'active'),
-    ('00000000-0000-4000-8000-000000000103', 'alice@example.com', crypt('Demo1234!', gen_salt('bf')), '爱丽丝', '13900000103', 'customer', 'active'),
-    ('00000000-0000-4000-8000-000000000104', 'david@example.com', crypt('Demo1234!', gen_salt('bf')), '大卫', '13900000104', 'customer', 'active'),
-    ('00000000-0000-4000-8000-000000000105', 'eric@example.com', crypt('Demo1234!', gen_salt('bf')), '埃里克', '13900000105', 'customer', 'active')
+    ('00000000-0000-4000-8000-000000000001', 'admin@example.com', crypt('12345678', gen_salt('bf')), '平台管理员', '13800000001', 'platform', 'active'),
+    ('00000000-0000-4000-8000-000000000002', 'audio@example.com', crypt('12345678', gen_salt('bf')), '声选音频商家', '13800000002', 'merchant', 'active'),
+    ('00000000-0000-4000-8000-000000000003', 'daily@example.com', crypt('12345678', gen_salt('bf')), '声选家电商家', '13800000003', 'merchant', 'active'),
+    ('00000000-0000-4000-8000-000000000004', 'sports@example.com', crypt('12345678', gen_salt('bf')), '声选运动商家', '13800000004', 'merchant', 'active'),
+    ('00000000-0000-4000-8000-000000000005', 'watch@example.com', crypt('12345678', gen_salt('bf')), '声选腕表商家', '13800000005', 'merchant', 'active'),
+    ('00000000-0000-4000-8000-000000000006', 'beauty@example.com', crypt('12345678', gen_salt('bf')), '声选美妆商家', '13800000006', 'merchant', 'active'),
+    ('00000000-0000-4000-8000-000000000101', 'lin@example.com', crypt('12345678', gen_salt('bf')), '小林', '13900000101', 'customer', 'active'),
+    ('00000000-0000-4000-8000-000000000102', 'chen@example.com', crypt('12345678', gen_salt('bf')), '陈晨', '13900000102', 'customer', 'active'),
+    ('00000000-0000-4000-8000-000000000103', 'alice@example.com', crypt('12345678', gen_salt('bf')), '爱丽丝', '13900000103', 'customer', 'active'),
+    ('00000000-0000-4000-8000-000000000104', 'david@example.com', crypt('12345678', gen_salt('bf')), '大卫', '13900000104', 'customer', 'active'),
+    ('00000000-0000-4000-8000-000000000105', 'eric@example.com', crypt('12345678', gen_salt('bf')), '埃里克', '13900000105', 'customer', 'active')
 ON CONFLICT (id) DO UPDATE SET
     email = EXCLUDED.email,
     display_name = EXCLUDED.display_name,

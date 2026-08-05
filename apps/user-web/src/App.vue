@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import {
   AppShell,
+  LoginGate,
   ProductDetailModal,
-  apiBaseUrl,
   audioWsBaseUrl,
+  clearAccessToken,
   formatCategoryLabel,
+  getAccessToken,
   merchantWebUrl,
   platformWebUrl,
   requestJson,
@@ -15,7 +17,7 @@ import {
   type Order,
   type Product,
 } from '@voice-shopping/web-ui'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 interface RecommendationCard {
   productId: string
@@ -93,7 +95,8 @@ const workspaceLinks = [
     href: platformWebUrl,
   },
 ]
-const customerId = '00000000-0000-4000-8000-000000000101'
+const appReady = ref(false)
+let appStarted = false
 // A page close explicitly finalizes the session, so a new page instance must
 // never reuse that terminal session ID.
 const sessionId = crypto.randomUUID()
@@ -343,7 +346,7 @@ async function loadData() {
     const [merchantData, productData, orderData] = await Promise.all([
       requestJson<ItemsResponse<Merchant>>('/catalog/merchants'),
       requestJson<ItemsResponse<Product>>('/catalog/products'),
-      requestJson<ItemsResponse<Order>>('/orders/mine', { headers: { 'X-User-ID': customerId } }),
+      requestJson<ItemsResponse<Order>>('/orders/mine'),
     ])
     merchants.value = merchantData.items
     products.value = productData.items
@@ -628,7 +631,9 @@ function connectText(): Promise<void> {
   if (textSocket && textSocket.readyState !== WebSocket.CLOSED) {
     textSocket.close()
   }
-  const socket = new WebSocket(`${textWsBaseUrl}/${sessionId}?userId=${customerId}`)
+  const token = getAccessToken()
+  if (!token) return Promise.reject(new Error('登录状态已失效，请重新登录'))
+  const socket = new WebSocket(`${textWsBaseUrl}/${sessionId}?token=${encodeURIComponent(token)}`)
   textSocket = socket
   let settled = false
   let opened = false
@@ -695,7 +700,9 @@ function connectAudio(): Promise<void> {
   if (audioSocket && audioSocket.readyState !== WebSocket.CLOSED) {
     audioSocket.close()
   }
-  const socket = new WebSocket(`${audioWsBaseUrl}/${sessionId}?userId=${customerId}`)
+  const token = getAccessToken()
+  if (!token) return Promise.reject(new Error('登录状态已失效，请重新登录'))
+  const socket = new WebSocket(`${audioWsBaseUrl}/${sessionId}?token=${encodeURIComponent(token)}`)
   audioSocket = socket
   socket.binaryType = 'blob'
   let settled = false
@@ -1099,7 +1106,6 @@ function stopVoice() {
 async function reportClick(productId: string) {
   await requestJson('/catalog/behaviors', {
     method: 'POST',
-    headers: { 'X-User-ID': customerId },
     body: JSON.stringify({ productId, eventType: 'click' }),
   }).catch(() => undefined)
 }
@@ -1153,7 +1159,6 @@ async function buyProduct(productId: string) {
   try {
     await requestJson<Order>('/orders', {
       method: 'POST',
-      headers: { 'X-User-ID': customerId },
       body: JSON.stringify({
         productId,
         quantity: 1,
@@ -1175,7 +1180,6 @@ async function updateOrder(order: Order, action: 'confirm' | 'cancel') {
   try {
     await requestJson<Order>(`/orders/${order.id}/${action}`, {
       method: 'POST',
-      headers: { 'X-User-ID': customerId },
     })
     await loadData()
   } catch (reason) {
@@ -1184,21 +1188,21 @@ async function updateOrder(order: Order, action: 'confirm' | 'cancel') {
 }
 
 function notifySessionClosed() {
-  if (sessionCloseSent) return
+  if (!appReady.value || sessionCloseSent) return
   sessionCloseSent = true
   localStorage.removeItem('voice-shopping-session')
-  void fetch(`${apiBaseUrl}/sessions/${sessionId}/close`, {
+  void requestJson(`/sessions/${sessionId}/close`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-User-ID': customerId,
-    },
     body: JSON.stringify({ reason: 'page_closed' }),
     keepalive: true,
   }).catch(() => undefined)
 }
 
-onMounted(() => {
+async function startApp() {
+  if (appStarted) return
+  appStarted = true
+  appReady.value = true
+  await nextTick()
   syncRoute()
   void Promise.all([loadData(), connectText(), connectAudio(), refreshAudioInputs()]).catch((reason) => {
     if (error.value) return
@@ -1208,7 +1212,13 @@ onMounted(() => {
   window.addEventListener('pagehide', notifySessionClosed)
   window.addEventListener('hashchange', syncRoute)
   navigator.mediaDevices?.addEventListener?.('devicechange', handleAudioDeviceChange)
-})
+}
+
+function signOut() {
+  appReady.value = false
+  clearAccessToken()
+  window.location.reload()
+}
 onBeforeUnmount(() => {
   notifySessionClosed()
   window.removeEventListener('pagehide', notifySessionClosed)
@@ -1222,7 +1232,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <LoginGate v-if="!appReady" required-role="customer" workspace-name="用户工作台" @authenticated="startApp" />
   <AppShell
+    v-else
     :eyebrow="pageEyebrow"
     title="声选"
     :description="pageDescription"
@@ -1230,7 +1242,8 @@ onBeforeUnmount(() => {
     :active-nav-href="activeNavHref"
     :hero-compact="true"
     :workspace-links="workspaceLinks"
-    action-label="小林的账户"
+    action-label="退出登录"
+    @action="signOut"
   >
     <template #headline>{{ pageHeadline }}</template>
     <template #hero-panel>

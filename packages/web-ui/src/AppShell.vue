@@ -15,6 +15,8 @@ defineProps<{
     href: string
   }>
 }>()
+
+const emit = defineEmits<{ action: [] }>()
 </script>
 
 <template>
@@ -48,7 +50,7 @@ defineProps<{
           </a>
         </div>
       </details>
-      <button class="action-button" type="button">{{ actionLabel }}</button>
+      <button class="action-button" type="button" @click="emit('action')">{{ actionLabel }}</button>
     </header>
 
     <main>

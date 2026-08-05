@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import {
   AppShell,
+  LoginGate,
   ProductDetailModal,
+  clearAccessToken,
   formatCatalogAttributeLabel,
   formatCatalogAttributeValue,
   formatCategoryLabel,
@@ -12,7 +14,7 @@ import {
   type Order,
   type Product,
 } from '@voice-shopping/web-ui'
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 
 type StockFilter = 'all' | 'available' | 'low' | 'out'
 
@@ -20,6 +22,9 @@ const navItems = [
   { label: '商品与店铺', href: '#/catalog' },
   { label: '本店订单', href: '#/orders' },
 ]
+
+const appReady = ref(false)
+let appStarted = false
 
 const currentRoute = ref('/catalog')
 const stores = ref<Merchant[]>([])
@@ -317,24 +322,37 @@ function closeProductDetails() {
   selectedProduct.value = null
 }
 
-onMounted(() => {
+async function startApp() {
+  if (appStarted) return
+  appStarted = true
+  appReady.value = true
+  await nextTick()
   routeFromHash()
   window.addEventListener('hashchange', routeFromHash)
   void loadData()
-})
+}
+
+function signOut() {
+  appReady.value = false
+  clearAccessToken()
+  window.location.reload()
+}
 
 onBeforeUnmount(() => window.removeEventListener('hashchange', routeFromHash))
 </script>
 
 <template>
+  <LoginGate v-if="!appReady" required-role="merchant" workspace-name="商家工作台" @authenticated="startApp" />
   <AppShell
+    v-else
     eyebrow="声选导购 · 商家端"
     title="声选商家"
     :description="pageDescription"
     :nav-items="navItems"
     :active-nav-href="activeNavHref"
     :hero-compact="true"
-    action-label="声动数码店主"
+    action-label="退出登录"
+    @action="signOut"
   >
     <template #headline>{{ pageHeadline }}</template>
     <template #hero-action>

@@ -16,6 +16,7 @@ dependencies = [
   "langgraph-checkpoint-postgres>=3.1.0",
   "langsmith>=0.10.15",
   "pydantic-settings>=2.10.0",
+  "PyJWT>=2.10.1",
   "redis>=6.2.0",
   "sqlalchemy[asyncio]>=2.0.41",
   "uvicorn[standard]>=0.36.0",

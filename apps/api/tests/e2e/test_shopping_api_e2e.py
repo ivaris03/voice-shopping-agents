@@ -1,14 +1,21 @@
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
 
+from voice_shopping_api.core.identity import Principal, create_access_token
 from voice_shopping_api.core.taxonomy import list_categories, validate_attributes
 
-CUSTOMER_HEADERS = {
-    "X-User-ID": "00000000-0000-4000-8000-000000000101",
-}
+_customer_token, _ = create_access_token(
+    Principal(
+        user_id=UUID("00000000-0000-4000-8000-000000000101"),
+        email="lin@example.com",
+        display_name="小林",
+        role="customer",
+    )
+)
+CUSTOMER_HEADERS = {"Authorization": f"Bearer {_customer_token}"}
 
 
 @pytest.mark.e2e

@@ -4,7 +4,23 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 
+import { setAccessToken } from '@voice-shopping/web-ui'
+
 import App from './App.vue'
+
+const currentUser = {
+  id: '00000000-0000-4000-8000-000000000101',
+  email: 'lin@example.com',
+  displayName: '小林',
+  role: 'customer' as const,
+}
+
+function currentUserResponse() {
+  return new Response(JSON.stringify(currentUser), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
 
 class FakeWebSocket {
   static readonly CONNECTING = 0
@@ -116,6 +132,8 @@ describe('assistant reply audio coordination', () => {
     FakeWebSocket.instances = []
     FakeWebSocket.closeBeforeOpen = false
     localStorage.clear()
+    sessionStorage.clear()
+    setAccessToken('test-customer-token')
     window.location.hash = '#/voice'
     speak.mockClear()
     cancel.mockClear()
@@ -146,12 +164,13 @@ describe('assistant reply audio coordination', () => {
     })
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () =>
-        new Response(JSON.stringify({ items: [] }), {
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).endsWith('/auth/me')) return currentUserResponse()
+        return new Response(JSON.stringify({ items: [] }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
-        }),
-      ),
+        })
+      }),
     )
   })
 
@@ -668,6 +687,7 @@ describe('assistant reply audio coordination', () => {
     window.location.hash = '#/browse'
     const product = catalogProduct()
     const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      if (String(input).endsWith('/auth/me')) return currentUserResponse()
       if (String(input).endsWith('/catalog/products')) {
         return new Response(JSON.stringify({ items: [product] }), {
           status: 200,
@@ -710,6 +730,7 @@ describe('assistant reply audio coordination', () => {
     let resolveOrder: ((response: Response) => void) | undefined
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
+      if (url.endsWith('/auth/me')) return Promise.resolve(currentUserResponse())
       if (url.endsWith('/catalog/products')) {
         return Promise.resolve(
           new Response(JSON.stringify({ items: [product] }), {
@@ -767,6 +788,7 @@ describe('assistant reply audio coordination', () => {
     let orderAttempts = 0
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
+      if (url.endsWith('/auth/me')) return currentUserResponse()
       if (url.endsWith('/catalog/products')) {
         return new Response(JSON.stringify({ items: [product] }), {
           status: 200,

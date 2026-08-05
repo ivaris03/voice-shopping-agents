@@ -6,7 +6,7 @@
 - ReDoc：`http://localhost:8000/redoc`
 - OpenAPI JSON：`http://localhost:8000/openapi.json`
 
-本文档面向当前 POC，用于本地验证。若进入生产环境，仍需替换演示身份认证，并补充角色授权、限流和敏感数据治理。
+本文档面向当前 POC，用于本地验证。当前版本使用既有账号登录后签发短期 JWT；生产环境仍需补充 refresh token、服务端注销、限流和敏感数据治理。
 
 ## 1. 基础约定
 
@@ -22,16 +22,42 @@ HTTP API 的基础前缀是 `/api/v1`；健康检查位于前缀之外的 `/heal
 - 列表响应统一使用 `{ "items": [...] }`。
 - 删除成功返回 `204 No Content`，响应体为空。
 
-### 1.2 演示身份
+### 1.2 JWT 登录与角色
 
-当前 API 还没有真实登录系统，使用请求头传递演示身份。未传请求头时使用默认值：
+先调用 `POST /api/v1/auth/login`，使用既有 `users` 账号的手机号和密码获取 access token。除公开目录浏览和健康检查外，HTTP 请求都需要：
 
-| 身份 | 请求头 | 默认值 |
-| --- | --- | --- |
-| 用户 | `X-User-ID` | `00000000-0000-4000-8000-000000000101` |
-| 商家店主 | `X-Merchant-Owner-ID` | `00000000-0000-4000-8000-000000000002` |
+```http
+Authorization: Bearer <access-token>
+```
 
-用户订单、用户画像和会话只按 `X-User-ID` 读取；商家店铺、商品和本店订单按 `X-Merchant-Owner-ID` 过滤。平台接口当前未强制校验平台角色，只适用于本地演示。
+JWT 的 `sub` 是现有用户 UUID，角色来自登录时的 `users.role`：`customer` 只能访问自己的订单、画像和会话；`merchant` 只能访问其 `owner_user_id` 对应的店铺和商品；`platform` 才能访问平台接口。演示数据的初始密码均为 `12345678`。
+
+#### `POST /api/v1/auth/login`
+
+```json
+{
+  "phone": "13900000101",
+  "password": "12345678"
+}
+```
+
+成功响应：
+
+```json
+{
+  "accessToken": "<jwt>",
+  "tokenType": "bearer",
+  "expiresIn": 7200,
+  "user": {
+    "id": "00000000-0000-4000-8000-000000000101",
+    "email": "lin@example.com",
+    "displayName": "小林",
+    "role": "customer"
+  }
+}
+```
+
+`GET /api/v1/auth/me` 返回当前 JWT 的用户信息。
 
 ### 1.3 错误格式
 
@@ -66,6 +92,8 @@ HTTP API 的基础前缀是 `/api/v1`；健康检查位于前缀之外的 `/heal
 | `201` | 资源创建成功 |
 | `202` | 请求已接受，行为上报入口处理成功 |
 | `204` | 删除成功，无响应体 |
+| `401` | 未登录、JWT 无效或 JWT 已过期 |
+| `403` | 已登录但角色不匹配 |
 | `404` | 资源不存在，或当前身份无权看到该资源 |
 | `409` | 幂等键、SKU、slug、分类或槽位冲突 |
 | `422` | 请求参数、请求体或跨表业务校验失败 |
@@ -223,7 +251,7 @@ GET /api/v1/catalog/products?category=HEADPHONES&query=Sony
 
 #### `POST /api/v1/catalog/behaviors`
 
-请求头：`X-User-ID`。请求体：
+请求头：`Authorization: Bearer <access-token>`。请求体：
 
 ```json
 {
@@ -249,7 +277,7 @@ GET /api/v1/catalog/products?category=HEADPHONES&query=Sony
 
 #### `POST /api/v1/orders`
 
-请求头：`X-User-ID`。请求体：
+请求头：`Authorization: Bearer <access-token>`。请求体：
 
 ```json
 {
@@ -288,7 +316,7 @@ GET /api/v1/catalog/products?category=HEADPHONES&query=Sony
 
 ## 5. 商家端接口
 
-商家店铺、商品和订单接口使用 `X-Merchant-Owner-ID`。除分类列表外，查询和写入都会按店主过滤。
+商家店铺、商品和订单接口要求 JWT 中的角色为 `merchant`；查询和写入仍按该 JWT 用户对应的店主身份过滤。
 
 ### 5.1 分类和店铺
 
@@ -360,7 +388,7 @@ GET /api/v1/catalog/products?category=HEADPHONES&query=Sony
 
 ## 6. 平台端接口
 
-当前平台接口没有角色认证，只适合本地管理端演示。
+平台接口要求 JWT 中的角色为 `platform`；普通用户和商家账号会收到 `403`。
 
 ### 6.1 分类和槽位
 
@@ -435,7 +463,7 @@ embedding 重建返回：
 
 ### `POST /api/v1/sessions/{session_id}/close`
 
-请求头：`X-User-ID`。请求体可以省略：
+请求头：`Authorization: Bearer <access-token>`。请求体可以省略：
 
 ```json
 {
@@ -466,14 +494,14 @@ embedding 重建返回：
 
 ## 8. WebSocket 协议
 
-HTTP API 和实时语音使用同一个 `session_id`。WebSocket 当前使用 query 参数传递用户身份：`?userId={user_id}`；不传时使用默认用户。
+HTTP API 和实时语音使用同一个 `session_id`。WebSocket 使用登录后取得的 JWT：`?token={access_token}`。只有 `customer` JWT 能在握手完成前通过校验。
 
 ### 8.1 文本 WebSocket
 
 连接：
 
 ```text
-ws://localhost:8000/ws/text/{session_id}?userId={user_id}
+ws://localhost:8000/ws/text/{session_id}?token={access_token}
 ```
 
 连接成功后第一条消息：
@@ -562,7 +590,7 @@ ws://localhost:8000/ws/text/{session_id}?userId={user_id}
 连接：
 
 ```text
-ws://localhost:8000/ws/audio/{session_id}?userId={user_id}
+ws://localhost:8000/ws/audio/{session_id}?token={access_token}
 ```
 
 连接成功后服务端发送：

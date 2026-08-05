@@ -96,18 +96,17 @@ pnpm test:e2e
 文本 Agent 保持确定性可运行，TTS 使用浏览器语音降级；服务端 ASR、Embedding、Reranker
 和模型生成的文本/TTS 需要配置对应能力后才会启用。
 
-## 演示身份
+## POC 登录
 
-认证系统不在当前文档定义的 POC 接口中，POC 使用请求头传递演示身份，服务端仍在每条商家 SQL
-中校验数据归属：
-
-- 用户默认 `X-User-ID: 00000000-0000-4000-8000-000000000101`
-- 商家默认 `X-Merchant-Owner-ID: 00000000-0000-4000-8000-000000000002`
-- 平台端当前仅用于本地演示，接入生产环境前必须增加认证与角色授权。
+POC 复用现有 `users` 表的手机号和密码哈希验证登录，并签发短期 JWT。用户、商家和平台端先通过
+`POST /api/v1/auth/login` 登录，再以 `Authorization: Bearer <access-token>` 调用受保护接口。
+现有演示数据的密码均为 `12345678`。三端登录页会分别预填用户端 `13900000101`、商家端
+`13800000002` 和平台端 `13800000001`；手机号、账号和角色见 `sql/data.sql`。该实现不新增用户或权限表，
+适合本地 POC，不包含 refresh token、服务端注销或多设备会话管理。
 
 ## WebSocket 协议
 
-文本连接：`/ws/text/{session_id}?userId={user_id}`。客户端提交：
+文本连接：`/ws/text/{session_id}?token={access_token}`。客户端提交：
 
 ```json
 {
@@ -123,7 +122,7 @@ pnpm test:e2e
 `clarification_agent` / `需求澄清 Agent 运行中`），前端可据此同步当前 Agent。
 断线后发送 `session.resume + turnId + afterSeq` 可从 Redis 重放遗漏事件。
 
-音频连接：`/ws/audio/{session_id}?userId={user_id}`。上行顺序为 `audio.start`、PCM16
+音频连接：`/ws/audio/{session_id}?token={access_token}`。上行顺序为 `audio.start`、PCM16
 二进制分片、`audio.commit`；ASR 会持续发送携带完整当前转录的 `asr.partial`，并在句子
 结束时发送 `asr.sentence`，录音提交时再发送 `asr.completed`。TTS 下行按情感应答生成的短句即时重复发送
 `audio.start`、该句的 WAV 二进制分片、`audio.end`，全部短句完成后发送 `audio.done`；

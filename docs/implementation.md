@@ -302,7 +302,7 @@ LangGraph Checkpointer 开启时，`process_turn()` 以稳定 session UUID 作�
 
 ### 10.1 文本协议
 
-文本端点：`/ws/text/{session_id}?userId={user_id}`。
+文本端点：`/ws/text/{session_id}?token={access_token}`；服务端在接受连接前校验 customer JWT。
 
 客户端发送：
 

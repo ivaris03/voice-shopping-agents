@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from voice_shopping_api.core.catalog_cache import CatalogCache, get_catalog_cache
 from voice_shopping_api.core.database import get_db_session
 from voice_shopping_api.core.embeddings import embed_product_text
-from voice_shopping_api.core.identity import current_merchant_owner_id
+from voice_shopping_api.core.identity import current_merchant_owner_id, current_merchant_principal
 from voice_shopping_api.core.product_embedding import embedding_text_for_product
 from voice_shopping_api.core.queries import (
     MERCHANT_COLUMNS,
@@ -33,7 +33,7 @@ from voice_shopping_api.schemas.domain import (
     ProductUpdate,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(current_merchant_principal)])
 Db = Annotated[AsyncSession, Depends(get_db_session)]
 OwnerId = Annotated[UUID, Depends(current_merchant_owner_id)]
 Cache = Annotated[CatalogCache, Depends(get_catalog_cache)]
