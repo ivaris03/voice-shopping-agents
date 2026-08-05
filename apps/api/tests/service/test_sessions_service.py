@@ -128,7 +128,7 @@ async def test_repeated_close_does_not_reopen_a_closed_session(
 
     async def fake_update_static_profile(session, user_id, patch):
         profile_calls.append(patch)
-        return ["city"]
+        return ["city", "height_cm", "budget_band"]
 
     monkeypatch.setattr(sessions_service, "update_static_profile", fake_update_static_profile)
     session = FakeSession([FakeResult([_session_row(status="closed")])])
@@ -144,7 +144,39 @@ async def test_repeated_close_does_not_reopen_a_closed_session(
     assert result == {
         "sessionId": str(SESSION_ID),
         "status": "closed",
-        "updatedFields": ["city"],
+        "updatedFields": ["city", "heightCm", "budgetBand"],
     }
     assert profile_calls == [{"city": "上海"}]
     assert len(session.statements) == 1
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_active_close_returns_camel_case_updated_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_update_static_profile(session, user_id, patch):
+        return ["height_cm", "weight_kg", "skin_type", "tech_savvy", "budget_band"]
+
+    monkeypatch.setattr(sessions_service, "update_static_profile", fake_update_static_profile)
+    session = FakeSession(
+        [
+            FakeResult([_session_row()]),
+            FakeResult(scalar={}, has_scalar=True),
+            FakeResult(),
+        ]
+    )
+
+    result = await sessions_service.finalize_session_profile(
+        session,
+        SESSION_ID,
+        USER_ID,
+        {"heightCm": 170},
+        close_session=True,
+    )
+
+    assert result == {
+        "sessionId": str(SESSION_ID),
+        "status": "closed",
+        "updatedFields": ["heightCm", "weightKg", "skinType", "techSavvy", "budgetBand"],
+    }
