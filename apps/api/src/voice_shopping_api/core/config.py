@@ -21,6 +21,7 @@ class Settings(BaseSettings):
         "postgresql+asyncpg://postgres:postgres@localhost:5432/voice-shopping-agents"
     )
     redis_url: str = "redis://localhost:6379/0"
+    product_embedding_cache_ttl_seconds: int = 30 * 24 * 60 * 60
     langgraph_checkpoint_enabled: bool = True
     langgraph_checkpoint_database_url: str = Field(
         default="",

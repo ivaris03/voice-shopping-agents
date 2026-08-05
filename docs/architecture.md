@@ -67,7 +67,7 @@ flowchart LR
 | ASR | `qwen-audio-3.0-asr-flash-streaming` |
 | TTS | `qwen-audio-3.0-tts-plus` |
 | 数据库 | PostgreSQL + PGVector、JSONB、数组、部分索引 |
-| 缓存/重放 | Redis 事件列表；进程内 deque 作为热缓存 |
+| 缓存/重放 | Redis 商品向量缓存与文本事件列表；进程内 deque 作为事件热缓存 |
 | 前端 | 三个独立 Vue 应用 + `packages/web-ui` 共享包 |
 | 可观测性 | LangSmith，可选启用，失败不阻断业务请求 |
 
@@ -314,7 +314,7 @@ LangSmith 追踪由环境变量可选开启。代码会记录工作流的 sessio
 | `user_profile_static` | 静态用户资料 |
 | `user_profile_dynamic` | 品类/品牌偏好、最近行为和客单价 |
 
-Redis 只保存短期文本事件日志，不保存连接状态、商品、订单、画像或会话业务事实。
+Redis 保存短期文本事件日志和按模型/商品卡片指纹索引的商品向量缓存；两者都不是连接状态、商品、订单、画像或会话业务事实的来源。
 
 ## 12. 当前架构边界
 

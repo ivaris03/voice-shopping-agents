@@ -204,7 +204,7 @@ product.id in recentPurchased          -0.30
 
 英文代码通过 `CATEGORY_*_LABELS`、`ATTRIBUTE_KEY_LABELS` 和 `ATTRIBUTE_VALUE_LABELS` 映射为中文，数值属性追加单位，价格只写入价格带而不写入精确价格。这样用户的口语需求和商品文本共享更接近的语义空间。
 
-`core/embeddings.py` 调用 Embedding API 后执行单位归一化。商品向量失败时写 NULL 并记录 warning；查询向量失败时走 `created_at` 召回降级。平台重建接口当前同步遍历未删除商品，返回 `total/updated/failed`。
+`core/embeddings.py` 调用 Embedding API 后执行单位归一化。商品向量按 `embedding_model + 商品卡片文本 SHA-256` 写入 Redis，创建、更新和批量重建共用同一缓存；模型或商品卡片变化会自动使用新键。Redis 故障或坏值会回退到模型调用，商品向量失败时写 NULL 并记录 warning；查询向量失败时走 `created_at` 召回降级。平台重建接口当前同步遍历未删除商品，返回 `total/updated/cacheHits/generated/failed`。
 
 ## 7. 理由、话术和合规
 

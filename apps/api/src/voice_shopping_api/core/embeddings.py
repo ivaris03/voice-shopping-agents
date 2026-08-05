@@ -1,7 +1,9 @@
 """DashScope embedding gateway used by queries and product indexing."""
+
 import asyncio
 import json
 import logging
+from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
 
@@ -15,6 +17,7 @@ from voice_shopping_api.core.observability import (
     response_usage,
     start_trace,
 )
+from voice_shopping_api.core.product_embedding_cache import product_embedding_cache
 
 logger = logging.getLogger(__name__)
 
@@ -101,15 +104,37 @@ def normalize_embedding(vector: list[float]) -> list[float]:
     return [value / norm for value in vector]
 
 
-async def embed_product_text(text: str) -> str | None:
-    """生成并归一化商品向量，返回可直接 CAST 为 vector 的 JSON 字符串。
+@dataclass(frozen=True)
+class ProductEmbeddingResult:
+    wire: str
+    cache_hit: bool
 
-    embedding 服务不可用时降级为 None（调用方写入 NULL），不阻断业务操作；
-    召回侧对 NULL embedding 已有词法降级链路。
+
+async def resolve_product_embedding(text: str) -> ProductEmbeddingResult | None:
+    """Resolve a normalized product vector from cache or the embedding provider.
+
+    The cache is keyed by the model and canonical product card text, so a
+    meaningful product change or model switch cannot reuse a stale vector.
     """
+    settings = get_settings()
+    cached = await product_embedding_cache.get(text, settings.embedding_model)
+    if cached is not None:
+        return ProductEmbeddingResult(wire=cached, cache_hit=True)
     try:
         vector, _ = await embed_text(text)
     except Exception as exc:
         logger.warning("商品向量生成失败，embedding 降级为空: %s", exc)
         return None
-    return json.dumps(normalize_embedding(vector))
+    wire = json.dumps(normalize_embedding(vector), separators=(",", ":"))
+    await product_embedding_cache.set(text, settings.embedding_model, wire)
+    return ProductEmbeddingResult(wire=wire, cache_hit=False)
+
+
+async def embed_product_text(text: str) -> str | None:
+    """Return a cached or newly generated product vector for existing callers."""
+    result = await resolve_product_embedding(text)
+    return result.wire if result is not None else None
+
+
+async def close_product_embedding_cache() -> None:
+    await product_embedding_cache.close()
