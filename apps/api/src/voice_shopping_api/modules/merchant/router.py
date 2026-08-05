@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from voice_shopping_api.core.catalog_cache import CatalogCache, get_catalog_cache
 from voice_shopping_api.core.database import get_db_session
 from voice_shopping_api.core.embeddings import embed_product_text
 from voice_shopping_api.core.identity import current_merchant_owner_id
@@ -35,6 +36,7 @@ from voice_shopping_api.schemas.domain import (
 router = APIRouter()
 Db = Annotated[AsyncSession, Depends(get_db_session)]
 OwnerId = Annotated[UUID, Depends(current_merchant_owner_id)]
+Cache = Annotated[CatalogCache, Depends(get_catalog_cache)]
 
 # 仅这些字段参与向量拼装；改 sku/stock/status/image_urls 不需要重算向量。
 EMBEDDING_FIELDS = frozenset(
@@ -57,24 +59,28 @@ async def list_available_categories(session: Db) -> dict[str, object]:
 
 
 @router.get("/stores", response_model=ItemsResponse[MerchantOut])
-async def list_owned_stores(session: Db, owner_id: OwnerId) -> dict[str, object]:
-    result = await session.execute(
-        text(
-            f"""
-            SELECT {MERCHANT_COLUMNS}
-            FROM merchants m LEFT JOIN products p ON p.merchant_id = m.id AND p.deleted_at IS NULL
-            WHERE m.owner_user_id = :owner_id AND m.deleted_at IS NULL
-            GROUP BY m.id ORDER BY m.created_at
-            """
-        ),
-        {"owner_id": owner_id},
-    )
-    return {"items": rows(result)}
+async def list_owned_stores(session: Db, owner_id: OwnerId, cache: Cache) -> dict[str, object]:
+    async def load() -> dict[str, object]:
+        result = await session.execute(
+            text(
+                f"""
+                SELECT {MERCHANT_COLUMNS}
+                FROM merchants m
+                LEFT JOIN products p ON p.merchant_id = m.id AND p.deleted_at IS NULL
+                WHERE m.owner_user_id = :owner_id AND m.deleted_at IS NULL
+                GROUP BY m.id ORDER BY m.created_at
+                """
+            ),
+            {"owner_id": owner_id},
+        )
+        return {"items": rows(result)}
+
+    return await cache.get_or_load("owned-stores", {"owner_id": owner_id}, load)
 
 
 @router.post("/stores", response_model=MerchantOut, status_code=201)
 async def create_store(
-    payload: MerchantCreate, session: Db, owner_id: OwnerId
+    payload: MerchantCreate, session: Db, owner_id: OwnerId, cache: Cache
 ) -> dict[str, object]:
     result = await session.execute(
         text(
@@ -88,6 +94,7 @@ async def create_store(
     )
     merchant_id = result.scalar_one()
     await commit_or_conflict(session, "店铺标识已存在")
+    await cache.invalidate()
     created = await session.execute(
         text(
             f"""
@@ -102,7 +109,7 @@ async def create_store(
 
 @router.patch("/stores/{store_id}", response_model=MerchantOut)
 async def update_store(
-    store_id: UUID, payload: MerchantUpdate, session: Db, owner_id: OwnerId
+    store_id: UUID, payload: MerchantUpdate, session: Db, owner_id: OwnerId, cache: Cache
 ) -> dict[str, object]:
     values = payload.model_dump(exclude_unset=True)
     if values:
@@ -120,6 +127,7 @@ async def update_store(
         if result.scalar_one_or_none() is None:
             raise HTTPException(status_code=404, detail="店铺不存在")
         await commit_or_conflict(session, "店铺标识已存在")
+        await cache.invalidate()
     current = await session.execute(
         text(
             f"""
@@ -135,7 +143,7 @@ async def update_store(
 
 
 @router.delete("/stores/{store_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_store(store_id: UUID, session: Db, owner_id: OwnerId) -> Response:
+async def delete_store(store_id: UUID, session: Db, owner_id: OwnerId, cache: Cache) -> Response:
     result = await session.execute(
         text(
             """
@@ -158,22 +166,26 @@ async def delete_store(store_id: UUID, session: Db, owner_id: OwnerId) -> Respon
         {"id": store_id},
     )
     await session.commit()
+    await cache.invalidate()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/products", response_model=ItemsResponse[ProductOut])
-async def list_owned_products(session: Db, owner_id: OwnerId) -> dict[str, object]:
-    result = await session.execute(
-        text(
-            f"""
-            SELECT {PRODUCT_COLUMNS} FROM products p JOIN merchants m ON m.id = p.merchant_id
-            WHERE m.owner_user_id = :owner_id AND p.deleted_at IS NULL AND m.deleted_at IS NULL
-            ORDER BY p.created_at DESC
-            """
-        ),
-        {"owner_id": owner_id},
-    )
-    return {"items": rows(result)}
+async def list_owned_products(session: Db, owner_id: OwnerId, cache: Cache) -> dict[str, object]:
+    async def load() -> dict[str, object]:
+        result = await session.execute(
+            text(
+                f"""
+                SELECT {PRODUCT_COLUMNS} FROM products p JOIN merchants m ON m.id = p.merchant_id
+                WHERE m.owner_user_id = :owner_id AND p.deleted_at IS NULL AND m.deleted_at IS NULL
+                ORDER BY p.created_at DESC
+                """
+            ),
+            {"owner_id": owner_id},
+        )
+        return {"items": rows(result)}
+
+    return await cache.get_or_load("owned-products", {"owner_id": owner_id}, load)
 
 
 def _product_params(payload: ProductCreate | ProductUpdate) -> dict[str, Any]:
@@ -186,7 +198,7 @@ def _product_params(payload: ProductCreate | ProductUpdate) -> dict[str, Any]:
 
 @router.post("/products", response_model=ProductOut, status_code=201)
 async def create_product(
-    payload: ProductCreate, session: Db, owner_id: OwnerId
+    payload: ProductCreate, session: Db, owner_id: OwnerId, cache: Cache
 ) -> dict[str, object]:
     if not await owned_merchant_exists(session, payload.merchant_id, owner_id):
         raise HTTPException(status_code=404, detail="店铺不存在")
@@ -216,6 +228,7 @@ async def create_product(
     )
     product_id = result.scalar_one()
     await commit_or_conflict(session, "同一店铺内 SKU 已存在")
+    await cache.invalidate()
     created = await session.execute(
         text(
             f"""
@@ -230,7 +243,7 @@ async def create_product(
 
 @router.patch("/products/{product_id}", response_model=ProductOut)
 async def update_product(
-    product_id: UUID, payload: ProductUpdate, session: Db, owner_id: OwnerId
+    product_id: UUID, payload: ProductUpdate, session: Db, owner_id: OwnerId, cache: Cache
 ) -> dict[str, object]:
     values = _product_params(payload)
     if values:
@@ -308,6 +321,7 @@ async def update_product(
         if result.scalar_one_or_none() is None:
             raise HTTPException(status_code=404, detail="商品不存在")
         await commit_or_conflict(session, "同一店铺内 SKU 已存在")
+        await cache.invalidate()
     current = await session.execute(
         text(
             f"""
@@ -321,7 +335,9 @@ async def update_product(
 
 
 @router.delete("/products/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_product(product_id: UUID, session: Db, owner_id: OwnerId) -> Response:
+async def delete_product(
+    product_id: UUID, session: Db, owner_id: OwnerId, cache: Cache
+) -> Response:
     result = await session.execute(
         text(
             """
@@ -337,6 +353,7 @@ async def delete_product(product_id: UUID, session: Db, owner_id: OwnerId) -> Re
     if result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="商品不存在")
     await session.commit()
+    await cache.invalidate()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

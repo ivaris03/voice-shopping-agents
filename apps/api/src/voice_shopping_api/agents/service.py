@@ -26,6 +26,7 @@ from voice_shopping_api.agents.state import (
     state_for_output,
     state_for_persistence,
 )
+from voice_shopping_api.core.catalog_cache import catalog_cache
 from voice_shopping_api.core.config import get_settings
 from voice_shopping_api.core.queries import PRODUCT_COLUMNS, rows
 from voice_shopping_api.core.session import stable_uuid
@@ -726,6 +727,8 @@ async def process_turn(
         )
         result["user_profile_snapshot"] = await profile_snapshot(session, user_id)
     await session.commit()
+    if (result.get("pending_order") or {}).get("status") == "success":
+        await catalog_cache.invalidate()
     events = state_events(
         result,
         session_key,

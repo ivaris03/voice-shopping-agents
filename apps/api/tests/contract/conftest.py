@@ -4,6 +4,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from voice_shopping_api.core.catalog_cache import CatalogCache, get_catalog_cache
 from voice_shopping_api.core.database import get_db_session
 from voice_shopping_api.main import app
 
@@ -77,6 +78,7 @@ def client(contract_session: ScriptedSession) -> Any:
         yield contract_session
 
     app.dependency_overrides[get_db_session] = override_db_session
+    app.dependency_overrides[get_catalog_cache] = lambda: CatalogCache(enabled=False)
     try:
         with TestClient(app) as test_client:
             yield test_client

@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     )
     redis_url: str = "redis://localhost:6379/0"
     taxonomy_cache_ttl_seconds: int = Field(default=900, ge=1)
+    catalog_cache_enabled: bool = True
+    catalog_cache_ttl_seconds: int = Field(default=60, ge=1, le=3600)
+    catalog_cache_redis_url: str = ""
     langgraph_checkpoint_enabled: bool = True
     langgraph_checkpoint_database_url: str = Field(
         default="",
