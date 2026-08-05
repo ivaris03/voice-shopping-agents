@@ -30,6 +30,8 @@
 - 订单：十五分钟待确认、价格/商家/商品/库存二次校验、事务扣库存、幂等键和成交快照。
 - 会话：`sessionId + turnId + seq` 事件排序、LangGraph Checkpointer 工作流恢复、
   `session_states` 业务状态投影、Redis 一小时事件日志重放，以及可选 LangSmith Trace。
+- 品类：一级/二级品类及槽位快照缓存到 Redis；平台 taxonomy 写入成功后立即失效，
+  Redis 不可用时自动回退 PostgreSQL。
 
 ## 当前状态
 

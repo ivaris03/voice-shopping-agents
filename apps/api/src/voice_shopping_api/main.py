@@ -10,6 +10,7 @@ from voice_shopping_api.agents.checkpointer import close_checkpointer
 from voice_shopping_api.api.router import api_router
 from voice_shopping_api.core.config import get_settings
 from voice_shopping_api.core.database import engine
+from voice_shopping_api.core.taxonomy import close_taxonomy_cache, start_taxonomy_cache
 from voice_shopping_api.realtime.hub import hub as realtime_hub
 from voice_shopping_api.realtime.router import router as realtime_router
 from voice_shopping_api.schemas.common import HealthResponse
@@ -23,7 +24,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         os.environ.setdefault("LANGSMITH_API_KEY", settings.langsmith_api_key)
         os.environ.setdefault("LANGSMITH_PROJECT", settings.langsmith_project)
         os.environ.setdefault("LANGSMITH_TRACING", "true")
+    await start_taxonomy_cache()
     yield
+    await close_taxonomy_cache()
     await close_checkpointer()
     await realtime_hub.close()
     await engine.dispose()
