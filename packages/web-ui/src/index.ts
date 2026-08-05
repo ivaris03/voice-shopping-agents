@@ -71,7 +71,7 @@ export interface Product {
   categoryL2: string
   brand?: string
   description: string
-  price: number
+  price: string
   stock: number
   attributes: Record<string, unknown>
   sellingPoints: string[]
@@ -88,8 +88,8 @@ export interface Order {
   productId: string
   status: OrderStatus
   quantity: number
-  unitPrice: number
-  totalAmount: number
+  unitPrice: string
+  totalAmount: string
   merchantSnapshot: { merchantId: string; name: string }
   productSnapshot: { productId: string; name: string; imageUrl?: string }
   failureReason?: string

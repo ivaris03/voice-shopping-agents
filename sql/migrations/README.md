@@ -7,8 +7,10 @@
 事务中，因此不能自行包含顶层 `BEGIN;` 或 `COMMIT;`。一旦任何环境已应用某个版本，绝不能
 修改该文件；修复必须新增一个迁移。
 
-`00000000_initial_schema.sql` 是不可变的初始 schema。`sql/schema.sql` 保留为可阅读的当前快照，
-本地演示数据由 `pnpm db:migrate --seed-demo` 单独加载，不会在生产迁移中自动写入演示数据。
+项目运行目标为 PostgreSQL 16 + pgvector。`00000000_initial_schema.sql` 是不可变的历史初始
+schema，其文件头保留了创建时的 PostgreSQL 15 注释，不能改写，否则已部署数据库的迁移校验和会
+失效。`sql/schema.sql` 保留为可阅读的当前 PostgreSQL 16 快照；本地演示数据由
+`pnpm db:migrate --seed-demo` 单独加载，不会在生产迁移中自动写入演示数据。
 
 历史 profile 迁移会把可映射的分类、品牌和最近浏览数据写入当前 profile 表；旧的属性偏好和
 会话兴趣没有无损目标，因此旧表改名为 `legacy_user_static_profiles`、

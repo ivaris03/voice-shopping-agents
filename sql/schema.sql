@@ -1,5 +1,5 @@
 -- 语音导购平台数据库结构
--- PostgreSQL 15 + pgvector
+-- PostgreSQL 16 + pgvector
 -- Database: "voice-shopping-agents"
 -- 创建数据库：CREATE DATABASE "voice-shopping-agents";
 -- 执行建表：psql -d "voice-shopping-agents" -f sql/schema.sql
