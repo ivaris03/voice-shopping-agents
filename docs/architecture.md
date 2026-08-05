@@ -276,7 +276,7 @@ LangGraph Checkpointer 和业务状态投影各自承担不同职责：
 
 - 输入：客户端将浏览器采集的音频重采样为 16 kHz PCM16，通过 `audio.start`、二进制帧和 `audio.commit` 发送；ASR 回调按标点拆出 `asr.sentence`，提交时发送 `asr.completed`。
 - 输出：情感节点把完整话术按标点切成短句，Hub 为每句调用 TTS，发送 `audio.start`、WAV 分片、`audio.end`，最后发送 `audio.done`。
-- TTS 没有返回有效音频时，Hub 发送带 `fallback=true` 的 16 kHz 静音 WAV 控制流程，用户端改用浏览器 `SpeechSynthesis`；ASR 无模型时返回 `audio.error`，不会伪造服务端转写结果。
+- TTS 没有返回有效音频时，Hub 发送带 `fallback=true` 的 16 kHz 静音 WAV 控制流程，用户端改用浏览器 `SpeechSynthesis`；ASR 无模型时返回 `audio.error`，不会生成伪造的服务端转写结果。客户端可在后续 `audio.commit` 中显式提供 `transcript` 作为文本回退；服务端 ASR 的非空结果始终优先。
 
 音频事件不写入 Redis，音频断线只清理连接和当前 ASR 资源；需要重新录音或重新播放时由客户端重新发起。
 

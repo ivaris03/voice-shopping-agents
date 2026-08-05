@@ -344,10 +344,10 @@ LangGraph 使用 `stream_mode=["updates", "tasks"]`：`tasks` 的节点开始事
 ```text
 audio.start(turnId)
 PCM16 binary frames, 16 kHz
-audio.commit(turnId, clientMetrics)
+audio.commit(turnId, clientMetrics, transcript?)
 ```
 
-服务端 ASR 按标点通过 `asr.sentence` 推送中间完整句，提交后发送 `asr.completed`。`audio.cancel` 会停止当前识别并清理缓冲。
+服务端 ASR 按标点通过 `asr.sentence` 推送中间完整句，提交后发送 `asr.completed`。`audio.commit` 可以携带显式 `transcript` 文本回退，但仅当服务端未得到非空转写时使用；服务端转写结果始终优先。`audio.cancel` 会停止当前识别并清理缓冲。
 
 输出顺序：每个话术短句发送 `audio.start`、一个或多个 WAV 二进制分片、`audio.end`；全部短句完成后发送 `audio.done`。DashScope TTS 使用 24 kHz WAV；TTS 没有产出时使用 16 kHz 静音 WAV 触发客户端浏览器语音 fallback。音频消息不写入 Redis，不能通过 `session.resume` 恢复二进制。
 
