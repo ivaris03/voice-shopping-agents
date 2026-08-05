@@ -16,6 +16,9 @@ node_modules/
 *.tsbuildinfo
 coverage/
 
+# Local development server logs
+.dev-*.log
+
 # Editors and operating systems
 .idea/
 .vscode/
