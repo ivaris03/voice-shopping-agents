@@ -321,6 +321,18 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
                                 client_metrics=client_metrics,
                             )
                         )
+                    except Exception:
+                        logger.exception("Audio workflow failed for session %s", session_id)
+                        await send_json(
+                            _audio_error_event(
+                                session_id,
+                                turn_id,
+                                "导购工作流处理失败，请稍后重试",
+                                stage="workflow",
+                                received_bytes=received_bytes,
+                                client_metrics=client_metrics,
+                            )
+                        )
                 else:
                     logger.warning(
                         "ASR returned no transcript for session %s: bytes=%s client=%s",

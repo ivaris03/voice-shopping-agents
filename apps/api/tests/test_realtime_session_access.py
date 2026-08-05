@@ -1,10 +1,13 @@
+import json
 from collections import defaultdict, deque
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
 
 from voice_shopping_api.realtime import hub as realtime_module
+from voice_shopping_api.realtime import router as realtime_router
 from voice_shopping_api.realtime.router import _audio_error_event
 
 USER_ID = UUID("00000000-0000-4000-8000-000000000101")
@@ -29,6 +32,55 @@ class Connection:
 
     async def send_bytes(self, chunk: bytes) -> None:
         self.chunks.append(chunk)
+
+
+class AudioSocket:
+    def __init__(self, messages: list[dict[str, object]]) -> None:
+        self._messages = iter(messages)
+        self.events: list[dict[str, object]] = []
+        self.accepted = False
+
+    async def accept(self) -> None:
+        self.accepted = True
+
+    async def receive(self) -> dict[str, object]:
+        return next(self._messages)
+
+    async def send_json(self, event: dict[str, object]) -> None:
+        self.events.append(event)
+
+
+class CompletedAsr:
+    def __init__(self, **_kwargs) -> None:
+        return
+
+    async def start(self) -> None:
+        return
+
+    async def stop(self) -> str:
+        return "服务端转写"
+
+    async def next_transcript_update(self) -> None:
+        return None
+
+
+class FailingWorkflowHub:
+    def __init__(self) -> None:
+        self.run_turn_args: tuple[object, ...] | None = None
+        self.finalized: tuple[str, UUID] | None = None
+
+    def register_audio_connection(self, *_args) -> None:
+        return
+
+    def unregister_audio_connection(self, *_args) -> None:
+        return
+
+    async def finalize_disconnected_session(self, session_id: str, user_id: UUID) -> None:
+        self.finalized = (session_id, user_id)
+
+    async def run_turn(self, *args) -> None:
+        self.run_turn_args = args
+        raise RuntimeError("database unavailable")
 
 
 class RedisPipeline:
@@ -133,6 +185,58 @@ def test_audio_error_event_preserves_workflow_stage_and_capture_metrics() -> Non
             "stage": "workflow",
             "receivedBytes": 4096,
             "clientMetrics": {"peak": 0.12, "durationMs": 1200},
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_audio_workflow_exception_sends_audio_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    realtime_hub = FailingWorkflowHub()
+    websocket = AudioSocket(
+        [
+            {
+                "type": "websocket.receive",
+                "text": json.dumps({"type": "audio.start", "turnId": "voice-turn"}),
+            },
+            {
+                "type": "websocket.receive",
+                "text": json.dumps(
+                    {
+                        "type": "audio.commit",
+                        "turnId": "voice-turn",
+                        "clientMetrics": {"durationMs": 1200},
+                    }
+                ),
+            },
+            {"type": "websocket.disconnect"},
+        ]
+    )
+
+    async def customer_user_id(_websocket) -> UUID:
+        return USER_ID
+
+    monkeypatch.setattr(realtime_router, "_customer_user_id", customer_user_id)
+    monkeypatch.setattr(realtime_router, "StreamingAsr", CompletedAsr)
+    monkeypatch.setattr(
+        realtime_router,
+        "get_settings",
+        lambda: SimpleNamespace(dashscope_api_key="test-key", asr_model="test-asr"),
+    )
+    monkeypatch.setattr(realtime_router, "hub", realtime_hub)
+
+    await realtime_router.audio_socket(websocket, "session-key")
+
+    assert websocket.accepted is True
+    assert realtime_hub.run_turn_args == ("session-key", "voice-turn", "服务端转写", USER_ID)
+    assert websocket.events[-1] == {
+        "type": "audio.error",
+        "sessionId": "session-key",
+        "turnId": "voice-turn",
+        "payload": {
+            "message": "导购工作流处理失败，请稍后重试",
+            "stage": "workflow",
+            "receivedBytes": 0,
+            "clientMetrics": {"durationMs": 1200},
         },
     }
 
