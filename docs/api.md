@@ -496,6 +496,20 @@ embedding 重建返回：
 
 HTTP API 和实时语音使用同一个 `session_id`。WebSocket 使用登录后取得的 JWT：`?token={access_token}`。只有 `customer` JWT 能在握手完成前通过校验。
 
+所有服务端下行 JSON 控制事件均使用同一 envelope：
+
+```json
+{
+  "type": "事件类型",
+  "sessionId": "demo-session",
+  "turnId": "turn-001",
+  "seq": 1,
+  "payload": {}
+}
+```
+
+`session.connected`、`session.closed` 和 `audio.ready` 是会话级事件，固定使用 `turnId="session"`、`seq=0`。其余 JSON 事件使用对应业务轮次的 `turnId`；PCM/WAV 二进制分片不属于 JSON envelope。
+
 ### 8.1 文本 WebSocket
 
 连接：
@@ -509,7 +523,10 @@ ws://localhost:8000/ws/text/{session_id}?token={access_token}
 ```json
 {
   "type": "session.connected",
-  "sessionId": "demo-session"
+  "sessionId": "demo-session",
+  "turnId": "session",
+  "seq": 0,
+  "payload": {}
 }
 ```
 
@@ -543,7 +560,7 @@ ws://localhost:8000/ws/text/{session_id}?token={access_token}
 }
 ```
 
-正常业务事件使用以下 envelope：
+业务事件同样使用该 envelope，例如：
 
 ```json
 {
@@ -577,6 +594,8 @@ ws://localhost:8000/ws/text/{session_id}?token={access_token}
 {
   "type": "session.closed",
   "sessionId": "demo-session",
+  "turnId": "session",
+  "seq": 0,
   "payload": {
     "sessionId": "...",
     "status": "closed",
@@ -598,7 +617,10 @@ ws://localhost:8000/ws/audio/{session_id}?token={access_token}
 ```json
 {
   "type": "audio.ready",
-  "sessionId": "demo-session"
+  "sessionId": "demo-session",
+  "turnId": "session",
+  "seq": 0,
+  "payload": {}
 }
 ```
 
@@ -616,7 +638,7 @@ ws://localhost:8000/ws/audio/{session_id}?token={access_token}
 {"type": "audio.cancel", "turnId": "voice-turn-001"}
 ```
 
-ASR 相关事件：
+ASR 相关事件同样使用上述 envelope：
 
 - `audio.start` 成功后发送 `asr.started`，payload 包含 `model` 和 `sampleRate=16000`。
 - 每次收到模型中间假设时发送 `asr.partial`，payload 为 `{ "transcript": "..." }`，其中 `transcript` 为截至当前的完整转录。

@@ -46,6 +46,7 @@ from voice_shopping_api.modules.sessions.service import (
     ensure_active_session,
     finalize_session_profile,
 )
+from voice_shopping_api.realtime.events import event_envelope
 from voice_shopping_api.schemas.domain import OrderCreate
 
 _checkpointed_workflow: tuple[object, Any] | None = None
@@ -483,15 +484,7 @@ def state_events(
 
     def add(event_type: str, payload: dict[str, Any]) -> None:
         nonlocal sequence
-        events.append(
-            {
-                "type": event_type,
-                "sessionId": session_key,
-                "turnId": turn_key,
-                "seq": sequence,
-                "payload": payload,
-            }
-        )
+        events.append(event_envelope(event_type, session_key, turn_key, sequence, payload))
         sequence += 1
 
     if include_processing:
@@ -624,13 +617,13 @@ async def process_turn(
         if not on_events:
             return
         async with event_lock:
-            event = {
-                "type": event_type,
-                "sessionId": session_key,
-                "turnId": turn_key,
-                "seq": next_sequence,
-                "payload": payload,
-            }
+            event = event_envelope(
+                event_type,
+                session_key,
+                turn_key,
+                next_sequence,
+                payload,
+            )
             next_sequence += 1
             await on_events([event])
 

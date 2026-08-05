@@ -12,6 +12,11 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from voice_shopping_api.core.config import get_settings
 from voice_shopping_api.core.identity import websocket_customer_principal
 from voice_shopping_api.realtime.asr import StreamingAsr
+from voice_shopping_api.realtime.events import (
+    SESSION_EVENT_SEQ,
+    SESSION_TURN_ID,
+    event_envelope,
+)
 from voice_shopping_api.realtime.hub import RealtimeHub, hub
 
 router = APIRouter()
@@ -27,16 +32,24 @@ async def _customer_user_id(websocket: WebSocket) -> UUID | None:
         return None
 
 
-def _audio_error_event(
-    session_id: str,
-    turn_id: str,
+def _flow_error_event(session_id: str, turn_id: str, message: str) -> dict[str, Any]:
+    return event_envelope(
+        "flow.error",
+        session_id,
+        turn_id,
+        0,
+        {"message": message},
+    )
+
+
+def _audio_error_payload(
     message: str,
     *,
     stage: str,
     received_bytes: int | None = None,
     client_metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build an audio error without losing where the failure occurred.
+    """Build an audio error payload without losing where the failure occurred.
 
     ASR failures and downstream workflow failures share the audio transport,
     but only the former should be interpreted as microphone diagnostics by the
@@ -48,12 +61,7 @@ def _audio_error_event(
         payload["receivedBytes"] = received_bytes
     if client_metrics is not None:
         payload["clientMetrics"] = client_metrics
-    return {
-        "type": "audio.error",
-        "sessionId": session_id,
-        "turnId": turn_id,
-        "payload": payload,
-    }
+    return payload
 
 
 @router.websocket("/ws/text/{session_id}")
@@ -63,7 +71,14 @@ async def text_socket(websocket: WebSocket, session_id: str) -> None:
         return
     await websocket.accept()
     hub.register_text_connection(session_id, websocket, user_id)
-    await websocket.send_json({"type": "session.connected", "sessionId": session_id})
+    await websocket.send_json(
+        event_envelope(
+            "session.connected",
+            session_id,
+            SESSION_TURN_ID,
+            SESSION_EVENT_SEQ,
+        )
+    )
     try:
         while True:
             message = await websocket.receive_json()
@@ -77,13 +92,11 @@ async def text_socket(websocket: WebSocket, session_id: str) -> None:
                     )
                 except HTTPException as exc:
                     await websocket.send_json(
-                        {
-                            "type": "flow.error",
-                            "sessionId": session_id,
-                            "turnId": str(turn_id or "resume"),
-                            "seq": 0,
-                            "payload": {"message": str(exc.detail)},
-                        }
+                        _flow_error_event(
+                            session_id,
+                            str(turn_id or "resume"),
+                            str(exc.detail),
+                        )
                     )
                     continue
                 for event in replay:
@@ -100,34 +113,24 @@ async def text_socket(websocket: WebSocket, session_id: str) -> None:
                     )
                 except HTTPException as exc:
                     await websocket.send_json(
-                        {
-                            "type": "flow.error",
-                            "sessionId": session_id,
-                            "turnId": "close",
-                            "seq": 0,
-                            "payload": {"message": str(exc.detail)},
-                        }
+                        _flow_error_event(session_id, "close", str(exc.detail))
                     )
                     continue
                 await websocket.send_json(
-                    {
-                        "type": "session.closed",
-                        "sessionId": session_id,
-                        "payload": result,
-                    }
+                    event_envelope(
+                        "session.closed",
+                        session_id,
+                        SESSION_TURN_ID,
+                        SESSION_EVENT_SEQ,
+                        result,
+                    )
                 )
                 break
             turn_id = str(message.get("turnId") or "turn-1")
             utterance = str(message.get("utterance") or "").strip()
             if not utterance:
                 await websocket.send_json(
-                    {
-                        "type": "flow.error",
-                        "sessionId": session_id,
-                        "turnId": turn_id,
-                        "seq": 0,
-                        "payload": {"message": "utterance 不能为空"},
-                    }
+                    _flow_error_event(session_id, turn_id, "utterance 不能为空")
                 )
                 continue
             try:
@@ -142,28 +145,14 @@ async def text_socket(websocket: WebSocket, session_id: str) -> None:
                 )
             except HTTPException as exc:
                 await websocket.send_json(
-                    {
-                        "type": "flow.error",
-                        "sessionId": session_id,
-                        "turnId": turn_id,
-                        "seq": 0,
-                        "payload": {"message": str(exc.detail)},
-                    }
+                    _flow_error_event(session_id, turn_id, str(exc.detail))
                 )
     except WebSocketDisconnect:
         hub.unregister_text_connection(session_id, websocket)
     except Exception as exc:
         hub.unregister_text_connection(session_id, websocket)
         with suppress(RuntimeError):
-            await websocket.send_json(
-                {
-                    "type": "flow.error",
-                    "sessionId": session_id,
-                    "turnId": "unknown",
-                    "seq": 0,
-                    "payload": {"message": str(exc)},
-                }
-            )
+            await websocket.send_json(_flow_error_event(session_id, "unknown", str(exc)))
     finally:
         hub.unregister_text_connection(session_id, websocket)
         await hub.finalize_disconnected_session(session_id, user_id)
@@ -176,39 +165,49 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
         return
     await websocket.accept()
     hub.register_audio_connection(session_id, websocket, user_id)
-    await websocket.send_json({"type": "audio.ready", "sessionId": session_id})
+    await websocket.send_json(
+        event_envelope(
+            "audio.ready",
+            session_id,
+            SESSION_TURN_ID,
+            SESSION_EVENT_SEQ,
+        )
+    )
     received_bytes = 0
     asr: StreamingAsr | None = None
     transcript_task: asyncio.Task[None] | None = None
     send_lock = asyncio.Lock()
+    event_sequences: dict[str, int] = {}
 
-    async def send_json(event: dict[str, Any]) -> None:
+    async def reset_event_sequence(turn_id: str) -> None:
         async with send_lock:
-            await websocket.send_json(event)
+            event_sequences[turn_id] = 0
+
+    async def send_event(
+        event_type: str,
+        turn_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        async with send_lock:
+            sequence = event_sequences.get(turn_id, 0) + 1
+            event_sequences[turn_id] = sequence
+            await websocket.send_json(
+                event_envelope(event_type, session_id, turn_id, sequence, payload)
+            )
 
     async def publish_transcript_updates(current_asr: StreamingAsr, turn_id: str) -> None:
         while (update := await current_asr.next_transcript_update()) is not None:
             kind, transcript, full_transcript = update
             if kind == "partial":
-                await send_json(
-                    {
-                        "type": "asr.partial",
-                        "sessionId": session_id,
-                        "turnId": turn_id,
-                        "payload": {"transcript": transcript},
-                    }
-                )
+                await send_event("asr.partial", turn_id, {"transcript": transcript})
                 continue
-            await send_json(
+            await send_event(
+                "asr.sentence",
+                turn_id,
                 {
-                    "type": "asr.sentence",
-                    "sessionId": session_id,
-                    "turnId": turn_id,
-                    "payload": {
-                        "transcript": transcript,
-                        "fullTranscript": full_transcript,
-                    },
-                }
+                    "transcript": transcript,
+                    "fullTranscript": full_transcript,
+                },
             )
 
     async def wait_for_transcript_task() -> None:
@@ -236,14 +235,15 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
             if control.get("type") == "audio.start":
                 received_bytes = 0
                 turn_id = str(control.get("turnId") or "voice-turn")
+                await reset_event_sequence(turn_id)
                 if not get_settings().dashscope_api_key:
-                    await send_json(
-                        _audio_error_event(
-                            session_id,
-                            turn_id,
+                    await send_event(
+                        "audio.error",
+                        turn_id,
+                        _audio_error_payload(
                             "服务端未配置 ASR 模型",
                             stage="asr_start",
-                        )
+                        ),
                     )
                     continue
                 try:
@@ -256,27 +256,24 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
                 except Exception as exc:
                     logger.exception("ASR failed to start for session %s", session_id)
                     asr = None
-                    await send_json(
-                        _audio_error_event(
-                            session_id,
-                            turn_id,
+                    await send_event(
+                        "audio.error",
+                        turn_id,
+                        _audio_error_payload(
                             f"ASR 模型启动失败：{exc}",
                             stage="asr_start",
-                        )
+                        ),
                     )
                     continue
-                transcript_task = asyncio.create_task(publish_transcript_updates(asr, turn_id))
-                await send_json(
+                await send_event(
+                    "asr.started",
+                    turn_id,
                     {
-                        "type": "asr.started",
-                        "sessionId": session_id,
-                        "turnId": turn_id,
-                        "payload": {
-                            "model": get_settings().asr_model,
-                            "sampleRate": 16_000,
-                        },
-                    }
+                        "model": get_settings().asr_model,
+                        "sampleRate": 16_000,
+                    },
                 )
+                transcript_task = asyncio.create_task(publish_transcript_updates(asr, turn_id))
             elif control.get("type") == "audio.commit":
                 turn_id = str(control.get("turnId") or "voice-turn")
                 client_metrics = control.get("clientMetrics") or {}
@@ -286,40 +283,37 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
                 except Exception as exc:
                     logger.exception("ASR failed to finish for session %s", session_id)
                     asr = None
-                    await send_json(
-                        _audio_error_event(
-                            session_id,
-                            turn_id,
+                    await send_event(
+                        "audio.error",
+                        turn_id,
+                        _audio_error_payload(
                             f"ASR 转写失败：{exc}",
                             stage="asr_finish",
                             received_bytes=received_bytes,
                             client_metrics=client_metrics,
-                        )
+                        ),
                     )
                     continue
                 asr = None
                 transcript = server_transcript or str(control.get("transcript") or "").strip()
                 if transcript:
-                    await send_json(
-                        {
-                            "type": "asr.completed",
-                            "sessionId": session_id,
-                            "turnId": turn_id,
-                            "payload": {"transcript": transcript},
-                        }
+                    await send_event(
+                        "asr.completed",
+                        turn_id,
+                        {"transcript": transcript},
                     )
                     try:
                         await hub.run_turn(session_id, turn_id, transcript, user_id)
                     except HTTPException as exc:
-                        await send_json(
-                            _audio_error_event(
-                                session_id,
-                                turn_id,
+                        await send_event(
+                            "audio.error",
+                            turn_id,
+                            _audio_error_payload(
                                 str(exc.detail),
                                 stage="workflow",
                                 received_bytes=received_bytes,
                                 client_metrics=client_metrics,
-                            )
+                            ),
                         )
                 else:
                     logger.warning(
@@ -328,15 +322,15 @@ async def audio_socket(websocket: WebSocket, session_id: str) -> None:
                         received_bytes,
                         client_metrics,
                     )
-                    await send_json(
-                        _audio_error_event(
-                            session_id,
-                            turn_id,
+                    await send_event(
+                        "audio.error",
+                        turn_id,
+                        _audio_error_payload(
                             "ASR 未识别到有效语音，请靠近麦克风后重试",
                             stage="asr",
                             received_bytes=received_bytes,
                             client_metrics=client_metrics,
-                        )
+                        ),
                     )
             elif control.get("type") == "audio.cancel":
                 if asr is not None:

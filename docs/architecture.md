@@ -259,7 +259,7 @@ LangGraph Checkpointer 和业务状态投影各自承担不同职责：
 
 ### 9.1 文本通道
 
-`/ws/text/{session_id}` 负责结构化事件。服务端先发送 `session.connected`，处理轮次时发送初始 `flow.status`，然后从 LangGraph `tasks` 流监听节点开始事件，因此前端显示的是实际运行中的节点。文本事件包括：
+`/ws/text/{session_id}` 负责结构化事件。所有服务端 JSON 控制事件都有 `type`、`sessionId`、`turnId`、`seq` 和 `payload`；连接/会话级事件固定使用 `turnId="session"`、`seq=0`。服务端先发送 `session.connected`，处理轮次时发送初始 `flow.status`，然后从 LangGraph `tasks` 流监听节点开始事件，因此前端显示的是实际运行中的节点。文本事件包括：
 
 - `flow.status`：processing/completed，processing 时可带 node 和用户提示 label。
 - `recommendation.cards`：商品卡和情绪风格。

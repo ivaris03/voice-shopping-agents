@@ -5,7 +5,8 @@ import pytest
 from fastapi import HTTPException
 
 from voice_shopping_api.realtime import hub as realtime_module
-from voice_shopping_api.realtime.router import _audio_error_event
+from voice_shopping_api.realtime.events import event_envelope
+from voice_shopping_api.realtime.router import _audio_error_payload
 
 USER_ID = UUID("00000000-0000-4000-8000-000000000101")
 OTHER_USER_ID = UUID("00000000-0000-4000-8000-000000000102")
@@ -54,12 +55,7 @@ def _hub_with_journal() -> realtime_module.RealtimeHub:
     instance = realtime_module.RealtimeHub.__new__(realtime_module.RealtimeHub)
     instance.journals = defaultdict(lambda: deque(maxlen=300))
     instance.journals["session-key"].append(
-        {
-            "type": "text.completed",
-            "sessionId": "session-key",
-            "turnId": "turn-1",
-            "seq": 1,
-        }
+        event_envelope("text.completed", "session-key", "turn-1", 1)
     )
     return instance
 
@@ -75,7 +71,7 @@ async def test_live_events_only_reach_connections_bound_to_the_session_owner() -
     hub.register_text_connection("session-key", owner_connection, USER_ID)
     hub.register_text_connection("session-key", foreign_connection, OTHER_USER_ID)
 
-    event = {"type": "text.completed", "turnId": "turn-1", "seq": 2}
+    event = event_envelope("text.completed", "session-key", "turn-1", 2)
     await hub.publish_text("session-key", [event], USER_ID)
 
     assert owner_connection.events == [event]
@@ -92,7 +88,7 @@ async def test_live_audio_only_reaches_connections_bound_to_the_session_owner() 
     hub.register_audio_connection("session-key", owner_connection, USER_ID)
     hub.register_audio_connection("session-key", foreign_connection, OTHER_USER_ID)
 
-    event = {"type": "audio.start", "turnId": "turn-1", "seq": 1}
+    event = event_envelope("audio.start", "session-key", "turn-1", 1)
     await hub._send_audio_event("session-key", event, USER_ID)
     await hub._send_audio_chunk("session-key", b"audio", USER_ID)
 
@@ -114,20 +110,25 @@ def test_foreign_connections_do_not_keep_the_owners_session_open() -> None:
     assert hub._has_connections_for_user("session-key", OTHER_USER_ID) is True
 
 
-def test_audio_error_event_preserves_workflow_stage_and_capture_metrics() -> None:
-    event = _audio_error_event(
+def test_audio_error_event_uses_the_envelope_and_preserves_capture_metrics() -> None:
+    event = event_envelope(
+        "audio.error",
         "session-key",
         "turn-1",
-        "会话已关闭，无法继续操作",
-        stage="workflow",
-        received_bytes=4096,
-        client_metrics={"peak": 0.12, "durationMs": 1200},
+        3,
+        _audio_error_payload(
+            "会话已关闭，无法继续操作",
+            stage="workflow",
+            received_bytes=4096,
+            client_metrics={"peak": 0.12, "durationMs": 1200},
+        ),
     )
 
     assert event == {
         "type": "audio.error",
         "sessionId": "session-key",
         "turnId": "turn-1",
+        "seq": 3,
         "payload": {
             "message": "会话已关闭，无法继续操作",
             "stage": "workflow",
