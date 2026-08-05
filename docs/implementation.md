@@ -140,7 +140,7 @@ START
 }
 ```
 
-当缺失槽位为空时返回 `READY`，并将 `pending_question` 置为 `null`。`budgetMax` 只参与商品过滤，不进入品类必填列表。
+当缺失槽位为空时返回 `READY`，并将 `pending_question` 置为 `null`。`budgetMax` 只参与当前会话的商品过滤，不进入品类必填列表或静态画像。
 
 ## 5. 商品召回、排序和商品卡
 
@@ -168,7 +168,7 @@ m.is_enabled
 | `size` | 优先商品 `size`；双元素数组按范围，其他数组按包含，标量按等值；无 `size` 时回退 `sizeRange` 范围 |
 | `batteryHours`、`pressureBar`、`waterTankMl`、`capacityL` | 商品值 `>=` 用户要求 |
 | `waterResistance` | 从商品值中提取数字后比较 `>=` |
-| `budgetMax` | 商品价格 `<=` 预算 |
+| `budgetMax` | 当前会话内商品价格 `<=` 预算 |
 
 向量可用时追加 `p.embedding IS NOT NULL`，按 `p.embedding <=> CAST(:embedding AS vector)` 排序并 `LIMIT 20`。查询向量生成失败或模型关闭时不加 embedding 条件，按 `created_at DESC` 排序，含 NULL embedding 商品。
 
@@ -268,7 +268,7 @@ product.id in recentPurchased          -0.30
 
 ### 9.2 静态画像候选
 
-`extract_static_profile_candidates()` 从话语提取年龄、身高、体重、城市、明确性别和技术熟练度，并从已确认槽位提取肤质和预算。`merge_static_profile_patches()` 按“旧会话候选 -> 当前话语 -> 显式 profile”顺序合并，`normalize_static_profile_patch()` 丢弃超出数据库约束的值。
+`extract_static_profile_candidates()` 从话语提取年龄、身高、体重、城市、明确性别和技术熟练度，并从已确认槽位提取肤质。`budgetMax` 始终保留为当前会话的商品筛选槽位，不会并入静态画像。`merge_static_profile_patches()` 按“旧会话候选 -> 当前话语 -> 显式 profile”顺序合并，`normalize_static_profile_patch()` 丢弃超出数据库约束的值。
 
 `finalize_session_profile()` 在以下时机运行：
 

@@ -46,6 +46,58 @@ async def test_intent_selects_the_first_expressed_request() -> None:
 
 
 @pytest.mark.asyncio
+async def test_budget_phrase_becomes_a_current_request_catalog_filter() -> None:
+    product = {
+        "id": "headphone-1",
+        "merchant_id": "merchant-1",
+        "merchant_name": "测试数码店",
+        "name": "测试头戴式蓝牙耳机",
+        "category_l2": "HEADPHONES",
+        "brand": "Test",
+        "description": "头戴式蓝牙耳机",
+        "price": 1999,
+        "stock": 10,
+        "attributes": {"form": "over-ear", "connectivity": "bluetooth"},
+        "selling_points": ["头戴式蓝牙连接"],
+        "image_urls": [],
+    }
+    retrievals: list[dict[str, object]] = []
+
+    async def load_catalog(
+        _: str, __: bool, filters: dict[str, object]
+    ) -> list[dict[str, object]]:
+        retrievals.append(filters)
+        return [product]
+
+    result = await shopping_workflow.ainvoke(
+        {
+            "utterance": "我要个 2000 块钱以下的头戴式蓝牙耳机",
+            "model_enabled": False,
+            "user_profile_snapshot": {},
+            "required_slots_by_category": {"HEADPHONES": ["form", "connectivity"]},
+            "allowed_slots_by_category": {
+                "HEADPHONES": ["form", "connectivity", "noiseCancellation", "batteryHours"]
+            },
+            "taxonomy_slot_definitions_by_category": {
+                "HEADPHONES": {
+                    "form": {"type": "enum", "values": ["in-ear", "over-ear"]},
+                    "connectivity": {"type": "enum", "values": ["bluetooth", "wired"]},
+                }
+            },
+        },
+        context=ShoppingRuntimeDependencies(catalog_loader=load_catalog),
+    )
+
+    assert result["slots"] == {
+        "budgetMax": 2000,
+        "form": "over-ear",
+        "connectivity": "bluetooth",
+    }
+    assert retrievals[0]["slots"] == result["slots"]
+    assert result["product_cards"][0]["productId"] == product["id"]
+
+
+@pytest.mark.asyncio
 async def test_selected_recommendation_routes_to_create_order_before_category_matching() -> None:
     utterance = "买这个第二款耳机吧，你来帮我下单吧。"
     result = await recognize_intent(
