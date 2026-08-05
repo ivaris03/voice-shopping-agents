@@ -179,7 +179,7 @@ flowchart TD
 
 音频 WebSocket `/ws/audio/{session_id}`：
 
-- 上行 `audio.start`，随后发送 16 kHz PCM16 二进制分片，停止时发送 `audio.commit`；取消时发送 `audio.cancel`。
+- 上行 `audio.start`，随后发送 16 kHz PCM16 二进制分片，停止时发送 `audio.commit`；取消时发送 `audio.cancel`。`audio.commit` 可选携带客户端显式 `transcript` 作为文本回退；服务端有非空 ASR 结果时必须优先使用该结果，仅在没有有效结果时才使用该字段。
 - 下行 `asr.started`、按标点产生的 `asr.sentence`、最终 `asr.completed` 和 `audio.error`。
 - TTS 按短句发送 `audio.start`、WAV 二进制分片、`audio.end`，全部短句完成后发送 `audio.done`；消息中带 `sentenceIndex` 和 `sentenceCount`。
 - 文本和音频通过相同的 `sessionId + turnId` 关联；会话和轮次的字符串标识映射为稳定 UUID，便于订单、消息和 LangGraph 关联。

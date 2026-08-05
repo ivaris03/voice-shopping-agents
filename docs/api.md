@@ -607,7 +607,7 @@ ws://localhost:8000/ws/audio/{session_id}?token={access_token}
 ```text
 1. JSON: {"type":"audio.start","turnId":"voice-turn-001"}
 2. 多个 PCM16 binary frame，采样率 16 kHz
-3. JSON: {"type":"audio.commit","turnId":"voice-turn-001","clientMetrics":{...}}
+3. JSON: {"type":"audio.commit","turnId":"voice-turn-001","clientMetrics":{...},"transcript":"可选的客户端文本回退"}
 ```
 
 可随时发送：
@@ -621,7 +621,7 @@ ASR 相关事件：
 - `audio.start` 成功后发送 `asr.started`，payload 包含 `model` 和 `sampleRate=16000`。
 - 每次收到模型中间假设时发送 `asr.partial`，payload 为 `{ "transcript": "..." }`，其中 `transcript` 为截至当前的完整转录。
 - 识别到完整句子时发送 `asr.sentence`，payload 为 `{ "transcript": "...", "fullTranscript": "..." }`；前者是该句，后者是截至当前的完整转录。
-- 提交录音后发送 `asr.completed`，随后使用服务端 transcript 进入文本 Agent。
+- 提交录音后发送 `asr.completed`，随后优先使用服务端 transcript 进入文本 Agent。`audio.commit` 可选携带 `transcript`；只有服务端没有非空识别结果时才会使用该客户端显式文本回退，并以此内容发送 `asr.completed` 和进入文本 Agent。
 - 未配置 ASR、识别失败或转写后的工作流失败时发送 `audio.error`。payload 包含
   `stage`（`asr_start`、`asr`、`asr_finish` 或 `workflow`）；采集阶段还会带上
   `receivedBytes`、`clientMetrics`。客户端只有在 `stage=asr` 且明确收到采集指标时，
