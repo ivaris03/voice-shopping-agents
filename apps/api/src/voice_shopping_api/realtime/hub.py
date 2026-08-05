@@ -22,6 +22,7 @@ from voice_shopping_api.modules.sessions.service import (
     finalize_session_profile,
     get_session_for_user,
 )
+from voice_shopping_api.realtime.events import event_envelope
 from voice_shopping_api.realtime.tts import synthesize_chunks
 
 logger = logging.getLogger(__name__)
@@ -260,13 +261,13 @@ class RealtimeHub:
             )
         await self._send_audio_event(
             session_id,
-            {
-                "type": "audio.start",
-                "sessionId": session_id,
-                "turnId": turn_id,
-                "seq": sentence_index * 2 - 1,
-                "payload": start_payload,
-            },
+            event_envelope(
+                "audio.start",
+                session_id,
+                turn_id,
+                sentence_index * 2 - 1,
+                start_payload,
+            ),
             user_id,
         )
         await self._send_audio_chunk(
@@ -277,13 +278,13 @@ class RealtimeHub:
                 await self._send_audio_chunk(session_id, chunk, user_id)
         await self._send_audio_event(
             session_id,
-            {
-                "type": "audio.end",
-                "sessionId": session_id,
-                "turnId": turn_id,
-                "seq": sentence_index * 2,
-                "payload": end_payload,
-            },
+            event_envelope(
+                "audio.end",
+                session_id,
+                turn_id,
+                sentence_index * 2,
+                end_payload,
+            ),
             user_id,
         )
 
@@ -298,13 +299,13 @@ class RealtimeHub:
             return
         await self._send_audio_event(
             session_id,
-            {
-                "type": "audio.done",
-                "sessionId": session_id,
-                "turnId": turn_id,
-                "seq": sentence_count * 2 + 1,
-                "payload": {"sentenceCount": sentence_count},
-            },
+            event_envelope(
+                "audio.done",
+                session_id,
+                turn_id,
+                sentence_count * 2 + 1,
+                {"sentenceCount": sentence_count},
+            ),
             user_id,
         )
 

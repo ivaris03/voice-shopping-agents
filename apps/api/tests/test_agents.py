@@ -1900,3 +1900,18 @@ def test_state_events_does_not_duplicate_streamed_reasons() -> None:
     )
 
     assert not any(event["payload"].get("scope") == "reason" for event in events)
+
+
+def test_state_events_use_the_shared_realtime_envelope() -> None:
+    events = state_events(
+        {"final_reply": "已为你筛选。"},
+        "session-1",
+        "turn-1",
+    )
+
+    assert events
+    assert all(
+        set(event) == {"type", "sessionId", "turnId", "seq", "payload"}
+        for event in events
+    )
+    assert [event["seq"] for event in events] == list(range(1, len(events) + 1))

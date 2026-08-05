@@ -169,6 +169,8 @@ flowchart TD
 }
 ```
 
+连接和会话级 JSON 事件没有业务轮次时，固定使用 `turnId="session"`、`seq=0`；PCM/WAV 二进制分片不是 JSON 事件，不使用该 envelope。
+
 文本 WebSocket `/ws/text/{session_id}`：
 
 - 上行 `turn.submit`：提交 `turnId` 和 `utterance`；也可带可信资料 `profile`。

@@ -781,11 +781,7 @@ function connectAudio(): Promise<void> {
       }
       return
     }
-    const event = JSON.parse(String(message.data)) as {
-      type: string
-      turnId?: string
-      payload?: Record<string, unknown>
-    }
+    const event = JSON.parse(String(message.data)) as ApiEvent<Record<string, unknown>>
     if (event.type === 'asr.completed') {
       const transcript = String(event.payload?.transcript ?? '')
       if (transcript && event.turnId) {

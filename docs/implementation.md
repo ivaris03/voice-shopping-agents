@@ -319,7 +319,7 @@ LangGraph Checkpointer 开启时，`process_turn()` 以稳定 session UUID 作�
 - `session.resume`：`turnId + afterSeq`，从 Hub 内存 journal 或 Redis 事件列表补发文本事件。
 - `session.close`：可带显式 profile patch，返回 `session.closed`。
 
-服务端事件：
+所有服务端 JSON 控制事件使用 `type`、`sessionId`、`turnId`、`seq`、`payload` 五字段；连接/会话级事件使用 `turnId="session"`、`seq=0`。服务端事件：
 
 ```text
 session.connected
