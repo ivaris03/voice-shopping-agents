@@ -6,7 +6,7 @@
 - ReDoc：`http://localhost:8000/redoc`
 - OpenAPI JSON：`http://localhost:8000/openapi.json`
 
-本文档面向当前 MVP。生产环境仍需替换演示身份认证，并补充角色授权、限流和敏感数据治理。
+本文档面向当前 POC，用于本地验证。若进入生产环境，仍需替换演示身份认证，并补充角色授权、限流和敏感数据治理。
 
 ## 1. 基础约定
 
