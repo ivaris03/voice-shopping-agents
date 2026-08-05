@@ -38,7 +38,11 @@ def test_close_session_contract(client, monkeypatch: pytest.MonkeyPatch) -> None
             profile=profile,
             close_session=close_session,
         )
-        return {"status": "closed", "sessionId": "session-contract"}
+        return {
+            "status": "closed",
+            "sessionId": "session-contract",
+            "updatedFields": ["heightCm", "budgetBand"],
+        }
 
     async def fake_commit_or_conflict(session, detail):
         captured["committed"] = True
@@ -57,7 +61,11 @@ def test_close_session_contract(client, monkeypatch: pytest.MonkeyPatch) -> None
     )
 
     assert response.status_code == 200
-    assert response.json() == {"status": "closed", "sessionId": "session-contract"}
+    assert response.json() == {
+        "status": "closed",
+        "sessionId": "session-contract",
+        "updatedFields": ["heightCm", "budgetBand"],
+    }
     assert captured["profile"] == {"city": "上海"}
     assert captured["close_session"] is True
     assert captured["committed"] is True

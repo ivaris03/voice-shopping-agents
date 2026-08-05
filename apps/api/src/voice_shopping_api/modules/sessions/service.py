@@ -10,9 +10,15 @@ from voice_shopping_api.modules.catalog.profile import (
     merge_static_profile_patches,
     update_static_profile,
 )
+from voice_shopping_api.schemas.domain import to_camel
 
 SESSION_NOT_FOUND_DETAIL = "会话不存在或无权访问"
 SESSION_CLOSED_DETAIL = "会话已关闭，无法继续操作"
+
+
+def _public_updated_fields(fields: list[str]) -> list[str]:
+    """Expose profile field names using the API's camelCase convention."""
+    return [to_camel(field) for field in fields]
 
 
 async def _load_session_row(
@@ -134,7 +140,9 @@ async def finalize_session_profile(
     # intentionally a no-op once the session is terminal.
     if session_row["status"] == "closed":
         updated_fields = (
-            await update_static_profile(session, user_id, profile_updates)
+            _public_updated_fields(
+                await update_static_profile(session, user_id, profile_updates)
+            )
             if close_session and profile_updates
             else []
         )
@@ -164,7 +172,9 @@ async def finalize_session_profile(
         else {}
     )
     merged_updates = merge_static_profile_patches(stored_updates, profile_updates)
-    updated_fields = await update_static_profile(session, user_id, merged_updates)
+    updated_fields = _public_updated_fields(
+        await update_static_profile(session, user_id, merged_updates)
+    )
 
     if close_session:
         await session.execute(
