@@ -61,10 +61,7 @@ START
      -> order_node                (PRODUCT_ORDER)
      -> emotional_agent            (CHAT / UNSUPPORTED_REQUEST)
    -> emotional_agent
-   -> compliance_check
-      -> publish_response       (全部短句通过)
-      -> violation_response     (任一短句违规)
-         -> publish_response     (只发布固定违规提示)
+   -> compliance_node           (检查、兜底并发布安全回复)
    -> END
 ```
 
@@ -222,9 +219,9 @@ product.id in recentPurchased          -0.30
    共同条件不会分别推荐多件商品，资料不足时会明确说明。模型失败、钩子不合规或未按已验证差异
    引用商品时，使用同一比较计划的确定性 fallback。
 6. `_build_speech()` 将逐商品理由和选择钩子组装为完整话术；当前不是让模型一次性生成完整业务话术。
-7. `_build_speech()` 只负责生成完整话术；话术在 `compliance_check()` 中通过 `split_sentences()` 拆成短句逐一检查。
-8. 全部短句通过后进入 `publish_response`，通过 `speech_delta_publisher` 每 12 个字符切片，并通过 `speech_sentence_publisher` 按标点发送 TTS。
-9. 任一短句命中正则后路由到 `violation_response`，清空理由并替换 `speech_text`、`final_reply` 为 `COMPLIANCE_FALLBACK`，然后只发布固定违规提示。
+7. `_build_speech()` 只负责生成完整话术；`compliance_node()` 在同一节点内通过 `split_sentences()` 拆成短句逐一检查。
+8. 全部短句通过时，`compliance_node` 通过 `speech_delta_publisher` 每 12 个字符切片，并通过 `speech_sentence_publisher` 按标点发送 TTS。
+9. 任一短句命中正则后，`compliance_node` 清空理由并替换 `speech_text`、`final_reply` 为 `COMPLIANCE_FALLBACK`，然后只发布固定违规提示，原始话术不会在检查和发布之间泄露。
 
 `state_events()` 会根据 `reasons_streamed` 和 `speech_streamed` 避免在流式已发送后重复生成历史增量；最终始终发送 `text.completed`。
 

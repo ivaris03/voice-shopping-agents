@@ -538,9 +538,7 @@ WORKFLOW_NODE_LABELS: dict[str, str] = {
     "recommendation_agent": "商品召回与推荐 Agent 运行中",
     "order_node": "订单处理节点运行中",
     "emotional_agent": "回复 Agent 运行中",
-    "compliance_check": "合规检查节点运行中",
-    "violation_response": "违规回复节点运行中",
-    "publish_response": "安全回复发布中",
+    "compliance_node": "合规检查与安全发布中",
 }
 
 

@@ -70,14 +70,14 @@ pnpm lint:api
 - 状态：`DONE`
 - 目标：确保任何发送给 TTS 的文本都已经通过短句级合规检查。
 - 影响范围：`agents/graph.py`、`agents/nodes/response.py`、`agents/service.py`、`realtime/tts.py` 及相关测试。
-- 依赖：无。违规时统一进入 `violation_response`，播报固定违规提示。
+- 依赖：无。合规节点在违规时替换为固定安全提示并负责播报。
 - 实施要点：
   - 保留逐卡理由和文本增量过滤，作为流式展示的第一道保护。
-  - 完整话术生成后由 `compliance_check` 按短句逐一检查，通过后才调度 `speech_sentence_publisher`。
-  - 任一短句违规时跳转 `violation_response`，不得继续使用原始话术进行文本或 TTS 发布。
+  - 完整话术生成后由 `compliance_node` 按短句逐一检查，通过后才调度 `speech_sentence_publisher`。
+  - 任一短句违规时在同一节点替换为固定安全提示，不得继续使用原始话术进行文本或 TTS 发布。
   - 文本、持久化回复和音频统一使用固定违规提示。
   - 维持 `audio.start/audio.end/audio.done` 的顺序和断线行为。
-- 验收标准：包含禁用表达的短句不会触发原文 TTS；工作流进入 `violation_response`；固定违规提示可以正常播报；文本流、持久化回复和音频内容一致；测试覆盖短句边界、违规路由和发布顺序。
+- 验收标准：包含禁用表达的短句不会触发原文 TTS；工作流进入 `compliance_node`；固定安全提示可以正常播报；文本流、持久化回复和音频内容一致；测试覆盖短句边界、违规兜底和发布顺序。
 
 ## 5. 下一迭代任务
 

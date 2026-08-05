@@ -5,11 +5,9 @@ from voice_shopping_api.agents.nodes.clarification import clarify_requirements
 from voice_shopping_api.agents.nodes.intent import recognize_intent
 from voice_shopping_api.agents.nodes.recommendation import recommend_products
 from voice_shopping_api.agents.nodes.response import (
-    compliance_check,
+    compliance_node,
     emotional_response,
     order_response,
-    publish_response,
-    violation_response,
 )
 from voice_shopping_api.agents.state import (
     ShoppingContext,
@@ -39,10 +37,6 @@ def _route_clarification(state: ShoppingState) -> str:
     return "recommend" if state.get("clarification_status") == "READY" else "respond"
 
 
-def _route_compliance(state: ShoppingState) -> str:
-    return "violation" if state.get("compliance_blocked") else "publish"
-
-
 def build_workflow(*, checkpointer: BaseCheckpointSaver | None = None):
     """Assemble the graph; business rules remain inside the individual nodes."""
     graph = StateGraph(
@@ -56,9 +50,7 @@ def build_workflow(*, checkpointer: BaseCheckpointSaver | None = None):
     graph.add_node("recommendation_agent", recommend_products)
     graph.add_node("order_node", order_response)
     graph.add_node("emotional_agent", emotional_response)
-    graph.add_node("compliance_check", compliance_check)
-    graph.add_node("violation_response", violation_response)
-    graph.add_node("publish_response", publish_response)
+    graph.add_node("compliance_node", compliance_node)
     graph.add_conditional_edges(
         START,
         _route_start,
@@ -80,15 +72,9 @@ def build_workflow(*, checkpointer: BaseCheckpointSaver | None = None):
         {"recommend": "recommendation_agent", "respond": "emotional_agent"},
     )
     graph.add_edge("recommendation_agent", "emotional_agent")
-    graph.add_edge("order_node", "compliance_check")
-    graph.add_edge("emotional_agent", "compliance_check")
-    graph.add_conditional_edges(
-        "compliance_check",
-        _route_compliance,
-        {"violation": "violation_response", "publish": "publish_response"},
-    )
-    graph.add_edge("violation_response", "publish_response")
-    graph.add_edge("publish_response", END)
+    graph.add_edge("order_node", "compliance_node")
+    graph.add_edge("emotional_agent", "compliance_node")
+    graph.add_edge("compliance_node", END)
     return graph.compile(checkpointer=checkpointer)
 
 
