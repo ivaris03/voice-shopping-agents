@@ -214,7 +214,7 @@ function goTo(route: string) {
   window.location.hash = `#${route}`
 }
 
-function formatPrice(value: number) {
+function formatPrice(value: string | number) {
   return Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 

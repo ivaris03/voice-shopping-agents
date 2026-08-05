@@ -33,7 +33,7 @@ const statusLabels: Record<Product['status'], string> = {
 const attributeEntries = computed(() => Object.entries(props.product.attributes ?? {}))
 const productInitial = computed(() => props.product.name.slice(0, 1))
 
-function formatPrice(value: number) {
+function formatPrice(value: string | number) {
   return Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 

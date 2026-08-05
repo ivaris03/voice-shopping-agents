@@ -23,7 +23,7 @@ pnpm test:api
 pnpm lint:api
 ```
 
-当前基线提交：`1f73913 docs: sync design documentation`。
+当前基线提交：`f0f0212 chore: ignore local development logs`。
 
 ## 2. 状态和优先级
 

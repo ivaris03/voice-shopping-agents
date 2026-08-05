@@ -318,7 +318,7 @@ function finishTurn(turnId: string, retryable = false) {
   }
 }
 
-function formatPrice(value: number) {
+function formatPrice(value: string | number) {
   return Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
@@ -1123,7 +1123,7 @@ function recommendationToProduct(card: RecommendationCard): Product {
     categoryL2: card.categoryL2 || '推荐商品',
     brand: card.brand,
     description: card.description || '',
-    price: card.price,
+    price: String(card.price),
     stock: card.stock,
     attributes: card.attributes ?? {},
     sellingPoints: card.sellingPoints,
