@@ -1005,14 +1005,14 @@ $$;
 
 INSERT INTO user_profile_static (
     user_id, gender, age, city, height_cm, weight_kg, skin_type,
-    tech_savvy, budget_band, locale, updated_at
+    tech_savvy, locale, updated_at
 )
 VALUES
-    ('00000000-0000-4000-8000-000000000101', 'male', 29, '上海', 178, 68, 'normal', 'mid', 'mid', 'zh_cn', CURRENT_TIMESTAMP - interval '1 day'),
-    ('00000000-0000-4000-8000-000000000102', 'female', 32, '杭州', 165, 52, 'dry', 'novice', 'premium', 'zh_cn', CURRENT_TIMESTAMP - interval '2 days'),
-    ('00000000-0000-4000-8000-000000000103', 'female', 28, '北京', 168, 55, 'normal', 'expert', 'mid', 'zh_cn', CURRENT_TIMESTAMP - interval '6 hours'),
-    ('00000000-0000-4000-8000-000000000104', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'zh_cn', CURRENT_TIMESTAMP),
-    ('00000000-0000-4000-8000-000000000105', 'male', 35, '深圳', 180, 75, 'oily', 'mid', 'premium', 'zh_cn', CURRENT_TIMESTAMP - interval '12 hours')
+    ('00000000-0000-4000-8000-000000000101', 'male', 29, '上海', 178, 68, 'normal', 'mid', 'zh_cn', CURRENT_TIMESTAMP - interval '1 day'),
+    ('00000000-0000-4000-8000-000000000102', 'female', 32, '杭州', 165, 52, 'dry', 'novice', 'zh_cn', CURRENT_TIMESTAMP - interval '2 days'),
+    ('00000000-0000-4000-8000-000000000103', 'female', 28, '北京', 168, 55, 'normal', 'expert', 'zh_cn', CURRENT_TIMESTAMP - interval '6 hours'),
+    ('00000000-0000-4000-8000-000000000104', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'zh_cn', CURRENT_TIMESTAMP),
+    ('00000000-0000-4000-8000-000000000105', 'male', 35, '深圳', 180, 75, 'oily', 'mid', 'zh_cn', CURRENT_TIMESTAMP - interval '12 hours')
 ON CONFLICT (user_id) DO UPDATE SET
     gender = EXCLUDED.gender,
     age = EXCLUDED.age,
@@ -1021,7 +1021,6 @@ ON CONFLICT (user_id) DO UPDATE SET
     weight_kg = EXCLUDED.weight_kg,
     skin_type = EXCLUDED.skin_type,
     tech_savvy = EXCLUDED.tech_savvy,
-    budget_band = EXCLUDED.budget_band,
     locale = EXCLUDED.locale,
     updated_at = EXCLUDED.updated_at;
 

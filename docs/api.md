@@ -469,16 +469,14 @@ embedding 重建返回：
 {
   "reason": "page_closed",
   "profile": {
-    "city": "上海",
-    "budgetBand": "mid",
-    "budget": "1000"
+    "city": "上海"
   }
 }
 ```
 
 `reason` 可取 `order_completed`、`page_closed`、`user_ended`、`disconnect`，默认是 `user_ended`。
 
-`profile` 支持以下静态画像字段：`gender`、`age`、`city`、`heightCm`、`weightKg`、`skinType`、`techSavvy`、`budgetBand`、`budget`、`locale`。其中年龄、身高、体重和预算有范围校验。
+`profile` 支持以下静态画像字段：`gender`、`age`、`city`、`heightCm`、`weightKg`、`skinType`、`techSavvy`、`locale`。其中年龄、身高和体重有范围校验。预算不是静态画像字段；用户话语中的“2000 元以下”等表达会解析为当前会话的 `budgetMax` 槽位，仅用于本轮及后续同一需求的商品价格过滤。
 
 成功响应：
 
@@ -486,7 +484,7 @@ embedding 重建返回：
 {
   "sessionId": "30000000-0000-4000-8000-000000000001",
   "status": "closed",
-  "updatedFields": ["city", "budgetBand"]
+  "updatedFields": ["city"]
 }
 ```
 

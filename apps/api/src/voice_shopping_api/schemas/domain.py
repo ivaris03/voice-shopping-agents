@@ -244,9 +244,18 @@ class UserProfileStaticPatch(ApiModel):
     weight_kg: int | None = Field(default=None, ge=10, le=300)
     skin_type: str | None = Field(default=None, max_length=16)
     tech_savvy: str | None = Field(default=None, max_length=16)
-    budget_band: str | None = Field(default=None, max_length=16)
-    budget: Decimal | None = Field(default=None, ge=0)
     locale: str | None = Field(default=None, max_length=16)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_budget_profile_fields(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            unsupported = {"budget", "budgetBand", "budget_band"}.intersection(value)
+            if unsupported:
+                raise ValueError(
+                    "预算只能作为当前会话的 budgetMax 槽位使用，不能写入静态画像"
+                )
+        return value
 
 
 class SessionClose(ApiModel):

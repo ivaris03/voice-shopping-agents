@@ -5,7 +5,7 @@ import pytest
 from fastapi import HTTPException
 
 from voice_shopping_api.realtime import hub as realtime_module
-from voice_shopping_api.realtime.router import _audio_error_event
+from voice_shopping_api.realtime.router import _audio_error_event, _profile_updates
 
 USER_ID = UUID("00000000-0000-4000-8000-000000000101")
 OTHER_USER_ID = UUID("00000000-0000-4000-8000-000000000102")
@@ -135,6 +135,15 @@ def test_audio_error_event_preserves_workflow_stage_and_capture_metrics() -> Non
             "clientMetrics": {"peak": 0.12, "durationMs": 1200},
         },
     }
+
+
+@pytest.mark.parametrize("field", ["budget", "budgetBand", "budget_band"])
+def test_websocket_profile_rejects_budget_fields(field: str) -> None:
+    with pytest.raises(HTTPException) as error:
+        _profile_updates({"profile": {field: 2000}})
+
+    assert error.value.status_code == 422
+    assert "budgetMax" in str(error.value.detail)
 
 
 @pytest.mark.asyncio

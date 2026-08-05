@@ -477,6 +477,7 @@ CREATE TABLE IF NOT EXISTS user_profile_static (
     weight_kg       integer,
     skin_type       varchar(16),
     tech_savvy      varchar(16),
+    -- Retained for compatibility with historical migrations; runtime no longer reads or writes it.
     budget_band     varchar(16),
     locale          varchar(16) NOT NULL DEFAULT 'zh_cn',
     updated_at      timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,

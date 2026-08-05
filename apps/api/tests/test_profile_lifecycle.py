@@ -1,9 +1,13 @@
+import pytest
+from pydantic import ValidationError
+
 from voice_shopping_api.agents.state import carry_forward_state, state_for_persistence
 from voice_shopping_api.modules.catalog.profile import (
     extract_static_profile_candidates,
     merge_static_profile_patches,
     normalize_static_profile_patch,
 )
+from voice_shopping_api.schemas.domain import UserProfileStaticPatch
 
 
 def test_profile_candidates_extract_high_confidence_facts_from_a_turn() -> None:
@@ -16,7 +20,6 @@ def test_profile_candidates_extract_high_confidence_facts_from_a_turn() -> None:
         "age": 32,
         "city": "上海",
         "skin_type": "dry",
-        "budget_band": "mid",
     }
 
 
@@ -24,13 +27,23 @@ def test_product_gender_preference_does_not_become_user_gender() -> None:
     assert extract_static_profile_candidates("我想买女款跑鞋。") == {}
 
 
+def test_budget_max_is_not_a_static_profile_candidate() -> None:
+    assert extract_static_profile_candidates("预算两千元以下", {"budgetMax": 2000}) == {}
+
+
 def test_explicit_profile_facts_override_dialogue_and_never_clear_values() -> None:
     merged = merge_static_profile_patches(
-        {"age": 28, "city": "上海", "budgetBand": "budget"},
-        {"age": 31, "city": "", "budget": 1800},
+        {"age": 28, "city": "上海", "locale": "zh_cn"},
+        {"age": 31, "city": "", "locale": "en_us"},
     )
 
-    assert merged == {"age": 31, "city": "上海", "budget_band": "mid"}
+    assert merged == {"age": 31, "city": "上海", "locale": "en_us"}
+
+
+@pytest.mark.parametrize("field", ["budget", "budgetBand", "budget_band"])
+def test_static_profile_rejects_budget_fields(field: str) -> None:
+    with pytest.raises(ValidationError, match="budgetMax"):
+        UserProfileStaticPatch.model_validate({field: 2000})
 
 
 def test_profile_patch_rejects_values_that_would_violate_static_table_checks() -> None:

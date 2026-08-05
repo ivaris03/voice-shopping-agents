@@ -21,7 +21,6 @@ STATIC_PROFILE_FIELDS = (
     "weight_kg",
     "skin_type",
     "tech_savvy",
-    "budget_band",
     "locale",
 )
 
@@ -39,8 +38,6 @@ _STATIC_PROFILE_ALIASES = {
     "skin_type": "skin_type",
     "techSavvy": "tech_savvy",
     "tech_savvy": "tech_savvy",
-    "budgetBand": "budget_band",
-    "budget_band": "budget_band",
     "locale": "locale",
 }
 
@@ -101,22 +98,6 @@ def _normalize_enum(value: object, aliases: Mapping[str, str], maximum_length: i
         return None
     normalized = aliases.get(value.strip().lower(), value.strip().lower())
     return normalized[:maximum_length] if normalized and len(normalized) <= maximum_length else None
-
-
-def _budget_band(value: object) -> str | None:
-    if isinstance(value, bool):
-        return None
-    try:
-        amount = float(value)
-    except (TypeError, ValueError):
-        return None
-    if amount < 0:
-        return None
-    if amount <= 500:
-        return "budget"
-    if amount <= 2000:
-        return "mid"
-    return "premium"
 
 
 def normalize_static_profile_patch(value: Mapping[str, Any] | None) -> dict[str, object]:
@@ -181,18 +162,6 @@ def normalize_static_profile_patch(value: Mapping[str, Any] | None) -> dict[str,
     }, 16)) in {"novice", "mid", "expert"}:
         normalized["tech_savvy"] = tech_savvy
 
-    if (budget_band := _normalize_enum(raw_values.get("budget_band"), {
-        "经济": "budget",
-        "入门": "budget",
-        "中端": "mid",
-        "中档": "mid",
-        "高端": "premium",
-        "奢侈": "premium",
-    }, 16)) in {"budget", "mid", "premium"}:
-        normalized["budget_band"] = budget_band
-    elif (budget := _budget_band(value.get("budget"))) is not None:
-        normalized["budget_band"] = budget
-
     if isinstance(locale := raw_values.get("locale"), str):
         locale = locale.strip()
         if locale and len(locale) <= 16:
@@ -248,8 +217,6 @@ def extract_static_profile_candidates(
     slot_values = slots if isinstance(slots, Mapping) else {}
     if slot_values.get("skinType") is not None:
         candidates["skin_type"] = slot_values["skinType"]
-    if (budget_max := slot_values.get("budgetMax")) is not None:
-        candidates["budget"] = budget_max
     return normalize_static_profile_patch(candidates)
 
 
@@ -275,10 +242,10 @@ async def update_static_profile(
             """
             INSERT INTO user_profile_static (
                 user_id, gender, age, city, height_cm, weight_kg,
-                skin_type, tech_savvy, budget_band, locale
+                skin_type, tech_savvy, locale
             ) VALUES (
                 :user_id, :gender, :age, :city, :height_cm, :weight_kg,
-                :skin_type, :tech_savvy, :budget_band, COALESCE(:locale, 'zh_cn')
+                :skin_type, :tech_savvy, COALESCE(:locale, 'zh_cn')
             )
             ON CONFLICT (user_id) DO UPDATE SET
                 gender = COALESCE(EXCLUDED.gender, user_profile_static.gender),
@@ -288,7 +255,6 @@ async def update_static_profile(
                 weight_kg = COALESCE(EXCLUDED.weight_kg, user_profile_static.weight_kg),
                 skin_type = COALESCE(EXCLUDED.skin_type, user_profile_static.skin_type),
                 tech_savvy = COALESCE(EXCLUDED.tech_savvy, user_profile_static.tech_savvy),
-                budget_band = COALESCE(EXCLUDED.budget_band, user_profile_static.budget_band),
                 locale = COALESCE(EXCLUDED.locale, user_profile_static.locale)
             """
         ),
@@ -301,7 +267,6 @@ async def update_static_profile(
             "weight_kg": normalized.get("weight_kg"),
             "skin_type": normalized.get("skin_type"),
             "tech_savvy": normalized.get("tech_savvy"),
-            "budget_band": normalized.get("budget_band"),
             "locale": normalized.get("locale"),
         },
     )
@@ -468,7 +433,7 @@ async def profile_snapshot(session: AsyncSession, user_id: UUID) -> dict[str, ob
             """
             SELECT
                 s.gender, s.age, s.city, s.height_cm, s.weight_kg,
-                s.skin_type, s.tech_savvy, s.budget_band, s.locale,
+                s.skin_type, s.tech_savvy, s.locale,
                 d.category_affinity, d.brand_affinity, d.recent_viewed,
                 d.recent_purchased, d.price_sensitivity, d.avg_order_amount
             FROM users u
@@ -492,7 +457,6 @@ async def profile_snapshot(session: AsyncSession, user_id: UUID) -> dict[str, ob
             "weightKg": row["weight_kg"],
             "skinType": row["skin_type"],
             "techSavvy": row["tech_savvy"],
-            "budgetBand": row["budget_band"],
             "locale": row["locale"] or "zh_cn",
         },
         "dynamic": {

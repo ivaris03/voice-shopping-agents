@@ -8,11 +8,13 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import ValidationError
 
 from voice_shopping_api.core.config import get_settings
 from voice_shopping_api.core.identity import websocket_customer_principal
 from voice_shopping_api.realtime.asr import StreamingAsr
 from voice_shopping_api.realtime.hub import RealtimeHub, hub
+from voice_shopping_api.schemas.domain import UserProfileStaticPatch
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -25,6 +27,22 @@ async def _customer_user_id(websocket: WebSocket) -> UUID | None:
     except HTTPException as exc:
         await websocket.close(code=4401 if exc.status_code == 401 else 4403)
         return None
+
+
+def _profile_updates(message: dict[str, Any]) -> dict[str, Any] | None:
+    profile = message.get("profile")
+    if not isinstance(profile, dict):
+        return None
+    try:
+        return UserProfileStaticPatch.model_validate(profile).model_dump(exclude_none=True)
+    except ValidationError as exc:
+        errors = exc.errors()
+        detail = (
+            str(errors[0].get("msg", "静态画像字段不合法"))
+            if errors
+            else "静态画像字段不合法"
+        )
+        raise HTTPException(status_code=422, detail=detail) from exc
 
 
 def _audio_error_event(
@@ -91,12 +109,11 @@ async def text_socket(websocket: WebSocket, session_id: str) -> None:
                 continue
             if message_type == "session.close":
                 try:
+                    profile_updates = _profile_updates(message)
                     result = await hub.close_session(
                         session_id,
                         user_id,
-                        message.get("profile")
-                        if isinstance(message.get("profile"), dict)
-                        else None,
+                        profile_updates,
                     )
                 except HTTPException as exc:
                     await websocket.send_json(
@@ -131,14 +148,13 @@ async def text_socket(websocket: WebSocket, session_id: str) -> None:
                 )
                 continue
             try:
+                profile_updates = _profile_updates(message)
                 await hub.run_turn(
                     session_id,
                     turn_id,
                     utterance,
                     user_id,
-                    message.get("profile")
-                    if isinstance(message.get("profile"), dict)
-                    else None,
+                    profile_updates,
                 )
             except HTTPException as exc:
                 await websocket.send_json(

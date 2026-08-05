@@ -143,7 +143,7 @@ async def test_profile_snapshot_uses_static_and_dynamic_profile_fields(
     snapshot = await profile_snapshot(session, USER_101)
 
     assert snapshot["static"]["city"] == "上海"
-    assert snapshot["static"]["budgetBand"] == "mid"
+    assert "budgetBand" not in snapshot["static"]
     assert snapshot["dynamic"]["categoryAffinity"]["HEADPHONES"] == pytest.approx(0.94)
     assert snapshot["dynamic"]["brandAffinity"]["Sony"] == pytest.approx(0.72)
     assert snapshot["dynamic"]["recentViewed"]
