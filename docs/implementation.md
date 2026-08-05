@@ -13,7 +13,7 @@
 | 推荐 | `agents/nodes/recommendation.py`、`agents/service.py` | SQL 召回、向量排序、Reranker 和画像二排 |
 | 回复 | `agents/nodes/response.py`、`agents/model.py` | 逐卡理由、话术组装、流式发布和合规检查 |
 | 会话服务 | `agents/service.py`、`modules/sessions/service.py` | turn 执行、状态投影、消息保存、画像收敛 |
-| 品类/属性 | `core/taxonomy.py`、`modules/platform/router.py` | 动态品类、槽位枚举和商品属性校验 |
+| 品类/属性 | `core/taxonomy.py`、`modules/platform/router.py` | 动态品类、槽位枚举、Redis 快照缓存和商品属性校验 |
 | 商品向量 | `core/product_embedding.py`、`core/embeddings.py` | 中文商品卡片文本、向量生成、归一化和降级 |
 | 订单 | `modules/orders/service.py`、`modules/orders/router.py` | 幂等创建、锁行确认、库存事务和订单查询 |
 | 实时语音 | `realtime/router.py`、`realtime/hub.py`、`realtime/asr.py`、`realtime/tts.py` | 双 WebSocket、事件广播/重放、ASR/TTS 适配 |
@@ -383,7 +383,7 @@ audio.commit(turnId, clientMetrics)
 | `test_catalog_query.py` | 可见性、预算、布尔/数值/尺码/防水/枚举 SQL 条件和向量降级 |
 | `test_recommendation_e2e.py` | 多品类硬过滤、PGVector 召回、Reranker/画像排序、冷启动和禁用商家 |
 | `test_recommendation_rules.py` | 画像二排分数和词法 Reranker fallback |
-| `test_taxonomy.py` | 父级分类、槽位枚举、商品属性校验 |
+| `test_taxonomy.py`、`test_taxonomy_cache.py` | 父级分类、槽位枚举、商品属性校验、缓存命中和失效 |
 | `test_product_embedding.py` | 中文向量卡片、单位归一化、标签/单位/价格带渲染 |
 | `test_profile_lifecycle.py` | 静态画像候选、显式覆盖、空值保护和持久化键筛选 |
 | `test_speech.py` | ASR 句子切分、TTS 分片、fallback 和安全 usage 统计 |

@@ -17,7 +17,11 @@ from voice_shopping_api.core.queries import (
     row_or_404,
     rows,
 )
-from voice_shopping_api.core.taxonomy import list_categories
+from voice_shopping_api.core.taxonomy import (
+    invalidate_taxonomy_cache,
+    list_categories,
+    list_category_level_ones,
+)
 from voice_shopping_api.schemas.domain import (
     CategoryCreate,
     CategoryL1Create,
@@ -43,17 +47,18 @@ async def get_categories(session: Db) -> dict[str, object]:
     return {"items": await list_categories(session)}
 
 
-async def _category_or_404(session: AsyncSession, category_id: UUID) -> dict[str, Any]:
-    for category in await list_categories(session):
-        if category["id"] == category_id:
+async def _category_or_404(
+    session: AsyncSession, category_id: UUID, *, force_refresh: bool = False
+) -> dict[str, Any]:
+    for category in await list_categories(session, force_refresh=force_refresh):
+        if str(category["id"]) == str(category_id):
             return category
     raise HTTPException(status_code=404, detail="二级分类不存在")
 
 
 @router.get("/category-level-ones", response_model=ItemsResponse[CategoryL1Out])
 async def get_category_level_ones(session: Db) -> dict[str, object]:
-    result = await session.execute(text("SELECT * FROM category_l1 ORDER BY code, created_at"))
-    return {"items": rows(result)}
+    return {"items": await list_category_level_ones(session)}
 
 
 @router.post("/category-level-ones", response_model=CategoryL1Out, status_code=201)
@@ -72,6 +77,7 @@ async def create_category_level_one(payload: CategoryL1Create, session: Db) -> d
     if created is None:
         raise HTTPException(status_code=409, detail="一级分类已存在")
     await session.commit()
+    await invalidate_taxonomy_cache()
     return dict(created)
 
 
@@ -93,6 +99,7 @@ async def delete_category_level_one(category_l1_id: UUID, session: Db) -> Respon
     if result.scalar_one_or_none() is None:
         raise HTTPException(status_code=409, detail="一级分类不存在或仍有关联二级分类")
     await session.commit()
+    await invalidate_taxonomy_cache()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -123,7 +130,8 @@ async def create_category(payload: CategoryCreate, session: Db) -> dict[str, Any
     if category_id is None:
         raise HTTPException(status_code=409, detail="二级分类已存在")
     await session.commit()
-    return await _category_or_404(session, category_id)
+    await invalidate_taxonomy_cache()
+    return await _category_or_404(session, category_id, force_refresh=True)
 
 
 @router.patch("/categories/{category_id}", response_model=CategoryOut)
@@ -151,7 +159,8 @@ async def update_category(
             {**values, "id": category_id},
         )
         await commit_or_conflict(session, "二级分类已存在")
-    return await _category_or_404(session, category_id)
+        await invalidate_taxonomy_cache()
+    return await _category_or_404(session, category_id, force_refresh=bool(values))
 
 
 @router.post("/categories/{category_id}/slots", response_model=CategorySlotOut, status_code=201)
@@ -183,6 +192,7 @@ async def create_category_slot(
     if created is None:
         raise HTTPException(status_code=409, detail="该二级分类下的槽位已存在")
     await session.commit()
+    await invalidate_taxonomy_cache()
     return dict(created)
 
 
@@ -204,6 +214,7 @@ async def update_category_slot(
         )
         updated = row_or_404(result, "槽位不存在")
         await session.commit()
+        await invalidate_taxonomy_cache()
         return updated
     result = await session.execute(
         text("SELECT * FROM category_slots WHERE id = :id"), {"id": slot_id}
@@ -219,6 +230,7 @@ async def delete_category_slot(slot_id: UUID, session: Db) -> Response:
     if result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="槽位不存在")
     await session.commit()
+    await invalidate_taxonomy_cache()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -241,6 +253,7 @@ async def delete_category(category_id: UUID, session: Db) -> Response:
     if result.scalar_one_or_none() is None:
         raise HTTPException(status_code=409, detail="分类不存在或仍有关联商品")
     await session.commit()
+    await invalidate_taxonomy_cache()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

@@ -67,7 +67,7 @@ flowchart LR
 | ASR | `qwen-audio-3.0-asr-flash-streaming` |
 | TTS | `qwen-audio-3.0-tts-plus` |
 | 数据库 | PostgreSQL + PGVector、JSONB、数组、部分索引 |
-| 缓存/重放 | Redis 事件列表；进程内 deque 作为热缓存 |
+| 缓存/重放 | Redis taxonomy 快照缓存和文本事件列表；进程内 deque 作为事件热缓存 |
 | 前端 | 三个独立 Vue 应用 + `packages/web-ui` 共享包 |
 | 可观测性 | LangSmith，可选启用，失败不阻断业务请求 |
 
@@ -172,7 +172,7 @@ graph TD;
 
 ### 5.1 动态品类配置
 
-平台品类由 `category_l1`、`category_l2` 和 `category_slots` 组成。二级分类通过外键关联一级分类；槽位保存 `key`、`is_required` 和非空 `enum_values`。运行时 `list_categories()` 从槽位表聚合 `requiredSlots` 和 `optionalSlots`，并将完整配置注入意图和澄清节点。
+平台品类由 `category_l1`、`category_l2` 和 `category_slots` 组成。二级分类通过外键关联一级分类；槽位保存 `key`、`is_required` 和非空 `enum_values`。运行时 `list_categories()` 从槽位表聚合 `requiredSlots` 和 `optionalSlots`，并将完整配置注入意图和澄清节点。一级分类列表与二级分类/槽位聚合结果分别以 Redis 快照缓存，默认 TTL 为 900 秒；所有 taxonomy 写入口在数据库提交成功后同时失效两个快照，读取或失效 Redis 失败时回退数据库。
 
 商品写入时由 API 重新读取当前二级分类的槽位定义，校验一级/二级归属、未知键、必填值、枚举范围和空值。数据库约束负责基本结构，跨表语义由 API 负责。
 
@@ -314,7 +314,7 @@ LangSmith 追踪由环境变量可选开启。代码会记录工作流的 sessio
 | `user_profile_static` | 静态用户资料 |
 | `user_profile_dynamic` | 品类/品牌偏好、最近行为和客单价 |
 
-Redis 只保存短期文本事件日志，不保存连接状态、商品、订单、画像或会话业务事实。
+Redis 保存短期文本事件日志和可丢弃的 taxonomy 快照，不保存连接状态、商品、订单、画像或会话业务事实。
 
 ## 12. 当前架构边界
 
