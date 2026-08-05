@@ -1,0 +1,203 @@
+name: Build and deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: production
+  cancel-in-progress: true
+
+env:
+  IMAGE_PREFIX: ghcr.io/ivaris03/voice-shopping-agents
+  VITE_API_BASE_URL: https://api.ivaris.top/api/v1
+  VITE_TEXT_WS_URL: wss://api.ivaris.top/ws/text
+  VITE_AUDIO_WS_URL: wss://api.ivaris.top/ws/audio
+  VITE_MERCHANT_WEB_URL: https://merchant.ivaris.top/
+  VITE_PLATFORM_WEB_URL: https://platform.ivaris.top/
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install pnpm
+        shell: bash
+        run: corepack enable && corepack prepare pnpm@11.9.0 --activate
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck and build frontends
+        run: |
+          pnpm typecheck
+          pnpm build
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: latest
+
+      - name: Install API dependencies
+        run: uv sync --project apps/api --dev --frozen
+
+      - name: Lint and test API
+        run: |
+          uv run --project apps/api ruff check .
+          uv run --project apps/api pytest -m "not e2e"
+
+  build-api:
+    name: Build API image
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/api
+          tags: |
+            type=raw,value=latest
+            type=raw,value=sha-${{ github.sha }}
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/api.Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-web:
+    name: Build ${{ matrix.app }} frontend image
+    needs: validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [user, merchant, platform]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/${{ matrix.app }}-web
+          tags: |
+            type=raw,value=latest
+            type=raw,value=sha-${{ github.sha }}
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/frontend.Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP=${{ matrix.app }}
+            VITE_API_BASE_URL=${{ env.VITE_API_BASE_URL }}
+            VITE_TEXT_WS_URL=${{ env.VITE_TEXT_WS_URL }}
+            VITE_AUDIO_WS_URL=${{ env.VITE_AUDIO_WS_URL }}
+            VITE_MERCHANT_WEB_URL=${{ env.VITE_MERCHANT_WEB_URL }}
+            VITE_PLATFORM_WEB_URL=${{ env.VITE_PLATFORM_WEB_URL }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to Ubuntu
+    needs: [build-api, build-web]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout deployment files
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        shell: bash
+        env:
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+        run: |
+          port="${SERVER_PORT:-22}"
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$SERVER_SSH_KEY" > "$HOME/.ssh/voice-shopping-deploy"
+          chmod 600 "$HOME/.ssh/voice-shopping-deploy"
+          ssh-keyscan -p "$port" -H "$SERVER_HOST" >> "$HOME/.ssh/known_hosts"
+
+      - name: Upload deployment files
+        shell: bash
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          port="${SERVER_PORT:-22}"
+          deploy_path="${DEPLOY_PATH:-/opt/voice-shopping-agents}"
+          ssh -i "$HOME/.ssh/voice-shopping-deploy" -p "$port" "$SERVER_USER@$SERVER_HOST" "mkdir -p '$deploy_path/deploy'"
+          scp -i "$HOME/.ssh/voice-shopping-deploy" -P "$port" \
+            deploy/docker-compose.prod.yml \
+            deploy/remote-deploy.sh \
+            "$SERVER_USER@$SERVER_HOST:$deploy_path/deploy/"
+
+      - name: Pull and restart production services
+        shell: bash
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          port="${SERVER_PORT:-22}"
+          deploy_path="${DEPLOY_PATH:-/opt/voice-shopping-agents}"
+          ssh -i "$HOME/.ssh/voice-shopping-deploy" -p "$port" "$SERVER_USER@$SERVER_HOST" \
+            "cd '$deploy_path' && IMAGE_PREFIX='$IMAGE_PREFIX' DEPLOY_PATH='$deploy_path' bash deploy/remote-deploy.sh 'sha-${GITHUB_SHA}'"
