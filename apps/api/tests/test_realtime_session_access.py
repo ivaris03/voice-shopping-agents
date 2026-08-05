@@ -6,9 +6,9 @@ from uuid import UUID
 import pytest
 from fastapi import HTTPException
 
-from voice_shopping_api.realtime.events import event_envelope
 from voice_shopping_api.realtime import hub as realtime_module
 from voice_shopping_api.realtime import router as realtime_router
+from voice_shopping_api.realtime.events import event_envelope
 from voice_shopping_api.realtime.router import _audio_error_payload, _profile_updates
 
 USER_ID = UUID("00000000-0000-4000-8000-000000000101")
