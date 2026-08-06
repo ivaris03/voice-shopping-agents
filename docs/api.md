@@ -201,6 +201,7 @@ JWT 的 `sub` 是现有用户 UUID，角色来自登录时的 `users.role`：`cu
 
 | 方法 | 路径 | 成功响应 | 说明 |
 | --- | --- | --- | --- |
+| `GET` | `/api/v1/catalog/categories` | `200` + `ItemsResponse[CategoryOut]` | 返回当前支持的完整二级品类目录 |
 | `GET` | `/api/v1/catalog/merchants` | `200` + `ItemsResponse[MerchantOut]` | 只返回未删除且启用的商家 |
 | `GET` | `/api/v1/catalog/products` | `200` + `ItemsResponse[ProductOut]` | 浏览可见商品 |
 | `POST` | `/api/v1/catalog/behaviors` | `202` + `{ "status": "accepted" }` | 当前只接受 `click` |

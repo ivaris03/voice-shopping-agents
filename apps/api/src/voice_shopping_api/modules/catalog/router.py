@@ -9,9 +9,11 @@ from voice_shopping_api.core.catalog_cache import CatalogCache, get_catalog_cach
 from voice_shopping_api.core.database import get_db_session
 from voice_shopping_api.core.identity import current_user_id
 from voice_shopping_api.core.queries import MERCHANT_COLUMNS, PRODUCT_COLUMNS, rows
+from voice_shopping_api.core.taxonomy import list_categories
 from voice_shopping_api.modules.catalog.profile import update_profiles
 from voice_shopping_api.schemas.domain import (
     BehaviorCreate,
+    CategoryOut,
     ItemsResponse,
     MerchantOut,
     ProductOut,
@@ -21,6 +23,12 @@ router = APIRouter()
 Db = Annotated[AsyncSession, Depends(get_db_session)]
 UserId = Annotated[UUID, Depends(current_user_id)]
 Cache = Annotated[CatalogCache, Depends(get_catalog_cache)]
+
+
+@router.get("/categories", response_model=ItemsResponse[CategoryOut])
+async def list_supported_categories(session: Db) -> dict[str, object]:
+    """Expose the platform-maintained category taxonomy to shopping customers."""
+    return {"items": await list_categories(session)}
 
 
 @router.get("/merchants", response_model=ItemsResponse[MerchantOut])
