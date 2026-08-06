@@ -16,8 +16,8 @@
 
 ## 演示视频
 
-<video controls src="https://voice-shopping-agents.oss-cn-beijing.aliyuncs.com/Desktop%202026.08.06%20-%2019.55.25.06.mp4?Expires=1786018152&amp;OSSAccessKeyId=TMP.3KtQnFE5PuFFgQD1Q9SAxGVSTgBFGzNep6GvkxyBNjG1yDEig41V47GVYFeyJGNyoBmk8KJrtbBf2rbvPGhNkAyRzSJU3A&amp;Signature=YIY4b9xVK21td6x73S6JMLBmshc%3D">
-  <a href="https://voice-shopping-agents.oss-cn-beijing.aliyuncs.com/Desktop%202026.08.06%20-%2019.55.25.06.mp4?Expires=1786018152&amp;OSSAccessKeyId=TMP.3KtQnFE5PuFFgQD1Q9SAxGVSTgBFGzNep6GvkxyBNjG1yDEig41V47GVYFeyJGNyoBmk8KJrtbBf2rbvPGhNkAyRzSJU3A&amp;Signature=YIY4b9xVK21td6x73S6JMLBmshc%3D">观看演示视频</a>
+<video controls src="https://voice-shopping-agents.oss-cn-beijing.aliyuncs.com/Desktop%202026.08.06%20-%2019.55.25.06.mp4">
+  <a href="https://voice-shopping-agents.oss-cn-beijing.aliyuncs.com/Desktop%202026.08.06%20-%2019.55.25.06.mp4">观看演示视频</a>
 </video>
 
 ## 文档导航
