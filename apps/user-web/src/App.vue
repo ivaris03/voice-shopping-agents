@@ -1350,15 +1350,27 @@ onBeforeUnmount(() => {
             <button v-for="prompt in quickPrompts" :key="prompt" class="voice-example" type="button" :disabled="isTurnInFlight" @click="sendQuickPrompt(prompt)">{{ prompt }}</button>
           </div>
         </div>
-        <div ref="conversationElement" class="conversation" aria-live="polite">
+        <div class="conversation" aria-live="polite">
           <div class="conversation-header">
-            <div>
-              <strong>对话记录</strong>
-              <span>文字和语音会在这里同步</span>
+            <div class="conversation-header__title">
+              <span class="conversation-kicker">实时同步</span>
+              <strong>{{ messages.length > 1 ? '需求对话' : '准备开始对话' }}</strong>
+              <span>{{ messages.length > 1 ? '导购会在这里持续确认你的需求' : '文字和语音会在这里同步' }}</span>
             </div>
-            <span v-if="messages.length > 1" class="conversation-count">{{ messages.length }} 条</span>
+            <div class="conversation-meta">
+              <span class="conversation-state"><span class="status-dot"></span>{{ messages.length > 1 ? '进行中' : '待开始' }}</span>
+              <span v-if="messages.length > 1" class="conversation-count">{{ messages.length }} 条</span>
+            </div>
           </div>
-          <div class="conversation-list">
+          <div v-if="messages.length === 1" class="conversation-empty">
+            <div class="conversation-signal" aria-hidden="true">
+              <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            </div>
+            <span class="conversation-empty__eyebrow">会话准备就绪</span>
+            <p>{{ messages[0]?.text }}</p>
+            <span class="conversation-empty__status">等待你的第一句话</span>
+          </div>
+          <div v-else ref="conversationElement" class="conversation-list">
             <div v-for="(message, index) in messages" :key="index" class="message" :class="`message--${message.role}`">
               <span class="message__role">{{ message.role === 'user' ? '你' : '声选导购' }}</span>
               <span>{{ message.text }}</span>
