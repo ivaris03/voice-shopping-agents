@@ -1,4 +1,4 @@
-# Ubuntu 部署文档
+# 部署文档
 
 This deployment uses four subdomains:
 

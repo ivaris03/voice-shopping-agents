@@ -23,7 +23,7 @@
 | [实现说明](docs/implementation.md) | 代码地图、关键实现、降级策略和测试覆盖 |
 | [接口文档](docs/api.md) | HTTP API、请求/响应结构和 WebSocket 协议 |
 | [任务文档](docs/tasks.md) | POC 验证基线、产品化任务、依赖和验收标准 |
-| [Ubuntu 部署文档](deploy/README.md) | Docker、Nginx、HTTPS 和 GitHub Actions 部署 |
+| [部署文档](deploy/README.md) | Docker、Nginx、HTTPS 和 GitHub Actions 部署 |
 
 ## 已实现能力
 
