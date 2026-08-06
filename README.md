@@ -8,9 +8,7 @@
 
 ## 演示视频
 
-<video controls preload="metadata" width="100%" src="resources/video/demo.mp4">
-  <a href="resources/video/demo.mp4">下载演示视频（MP4，165 MB）</a>
-</video>
+[观看演示视频（MP4，165 MB）](resources/video/demo.mp4)
 
 ## 文档导航
 
