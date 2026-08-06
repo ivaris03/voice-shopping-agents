@@ -6,6 +6,10 @@
 [实现说明](docs/implementation.md)，后续开发拆解见
 [任务文档](docs/tasks.md)。
 
+## 演示视频
+
+[观看演示视频](https://github.com/user-attachments/assets/d9dca369-3024-4ed4-9494-2059de308f1e)
+
 ## 文档导航
 
 | 文档 | 内容 |
