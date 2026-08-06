@@ -61,12 +61,36 @@ class FakeWebSocket {
   emitJson(message: unknown) {
     this.onmessage?.({ data: JSON.stringify(message) })
   }
+
+  emitBinary(data: Blob) {
+    this.onmessage?.({ data })
+  }
 }
 
 class FakeSpeechSynthesisUtterance {
   lang = ''
 
   constructor(readonly text: string) {}
+}
+
+class FakeAudio {
+  static instances: FakeAudio[] = []
+
+  onended: (() => void) | null = null
+  onerror: (() => void) | null = null
+  play = vi.fn(async () => undefined)
+  pause = vi.fn()
+  removeAttribute = vi.fn()
+  load = vi.fn()
+
+  constructor(readonly src: string) {
+    FakeAudio.instances.push(this)
+  }
+}
+
+class FakeUrl extends URL {
+  static createObjectURL = vi.fn(() => 'blob:assistant-audio')
+  static revokeObjectURL = vi.fn()
 }
 
 class FakeAudioContext {
@@ -145,6 +169,7 @@ describe('assistant reply audio coordination', () => {
   beforeEach(() => {
     FakeWebSocket.instances = []
     FakeWebSocket.closeBeforeOpen = false
+    FakeAudio.instances = []
     localStorage.clear()
     sessionStorage.clear()
     setAccessToken('test-customer-token')
@@ -156,6 +181,8 @@ describe('assistant reply audio coordination', () => {
 
     vi.stubGlobal('WebSocket', FakeWebSocket)
     vi.stubGlobal('SpeechSynthesisUtterance', FakeSpeechSynthesisUtterance)
+    vi.stubGlobal('Audio', FakeAudio)
+    vi.stubGlobal('URL', FakeUrl)
     vi.stubGlobal('AudioContext', FakeAudioContext)
     Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
@@ -489,6 +516,39 @@ describe('assistant reply audio coordination', () => {
     expect(pause).toHaveBeenCalledTimes(1)
     await wrapper.get('[aria-label="继续朗读"]').trigger('click')
     expect(resume).toHaveBeenCalledTimes(1)
+
+    wrapper.unmount()
+  })
+
+  it('keeps the pause control enabled when the next server-audio segment starts buffering', async () => {
+    const wrapper = mount(App)
+    await flushPromises()
+    const audioSocket = FakeWebSocket.instances.find((socket) => socket.url.includes('/ws/audio/'))
+    if (!audioSocket) throw new Error('Audio socket was not created')
+
+    audioSocket.emitJson({
+      type: 'audio.start',
+      turnId: 'turn-server-audio',
+      payload: { fallback: false, text: '第一段推荐说明。' },
+    })
+    audioSocket.emitBinary(new Blob(['first audio segment']))
+    audioSocket.emitJson({ type: 'audio.end', turnId: 'turn-server-audio', payload: {} })
+    await flushPromises()
+
+    expect(FakeAudio.instances).toHaveLength(1)
+    expect((wrapper.get('[aria-label="暂停朗读"]').element as HTMLButtonElement).disabled).toBe(false)
+
+    audioSocket.emitJson({
+      type: 'audio.start',
+      turnId: 'turn-server-audio',
+      payload: { fallback: false, text: '第二段推荐说明。' },
+    })
+    await flushPromises()
+
+    const pauseButton = wrapper.get('[aria-label="暂停朗读"]')
+    expect((pauseButton.element as HTMLButtonElement).disabled).toBe(false)
+    await pauseButton.trigger('click')
+    expect(FakeAudio.instances[0]?.pause).toHaveBeenCalledTimes(1)
 
     wrapper.unmount()
   })

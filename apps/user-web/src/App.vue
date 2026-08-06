@@ -446,12 +446,17 @@ function handleAudioDeviceChange() {
   void refreshAudioInputs()
 }
 
+function syncAssistantSpeechState() {
+  const hasActivePlayback = Boolean(activeAssistantAudio || activeAssistantSpeech)
+  isAssistantSpeaking.value = hasActivePlayback
+  if (!hasActivePlayback) isAssistantSpeechPaused.value = false
+}
+
 function pumpAudioQueue() {
   if (activeAssistantAudio || activeAssistantSpeech) return
   const next = audioQueue.shift()
   if (!next) {
-    isAssistantSpeaking.value = false
-    isAssistantSpeechPaused.value = false
+    syncAssistantSpeechState()
     return
   }
 
@@ -463,13 +468,12 @@ function pumpAudioQueue() {
     const speech = new SpeechSynthesisUtterance(next.text)
     speech.lang = 'zh-CN'
     activeAssistantSpeech = speech
-    isAssistantSpeaking.value = true
+    syncAssistantSpeechState()
     isAssistantSpeechPaused.value = false
     const finishSpeech = () => {
       if (activeAssistantSpeech !== speech) return
       activeAssistantSpeech = null
-      isAssistantSpeaking.value = false
-      isAssistantSpeechPaused.value = false
+      syncAssistantSpeechState()
       pumpAudioQueue()
     }
     speech.onend = finishSpeech
@@ -486,7 +490,7 @@ function pumpAudioQueue() {
   const audio = new Audio(url)
   activeAssistantAudio = audio
   activeAssistantAudioUrl = url
-  isAssistantSpeaking.value = true
+  syncAssistantSpeechState()
   isAssistantSpeechPaused.value = false
   let finished = false
   const finishAudio = () => {
@@ -495,8 +499,7 @@ function pumpAudioQueue() {
     if (activeAssistantAudio === audio) {
       activeAssistantAudio = null
       if (activeAssistantAudioUrl === url) activeAssistantAudioUrl = null
-      isAssistantSpeaking.value = false
-      isAssistantSpeechPaused.value = false
+      syncAssistantSpeechState()
     }
     URL.revokeObjectURL(url)
     pumpAudioQueue()
@@ -519,8 +522,6 @@ function stopAssistantSpeech() {
     if (segment.turnId) mutedSpeechTurnIds.add(segment.turnId)
   }
   activeAssistantSpeech = null
-  isAssistantSpeaking.value = false
-  isAssistantSpeechPaused.value = false
   for (const turnId of pendingSpeechByTurn.keys()) mutedSpeechTurnIds.add(turnId)
   pendingSpeechByTurn.clear()
   audioQueue.length = 0
@@ -533,6 +534,7 @@ function stopAssistantSpeech() {
   }
   if (activeAssistantAudioUrl) URL.revokeObjectURL(activeAssistantAudioUrl)
   activeAssistantAudioUrl = null
+  syncAssistantSpeechState()
 }
 
 function toggleAssistantSpeechPause() {
@@ -910,11 +912,10 @@ function connectAudio(): Promise<void> {
       if (suppressed) return
       if (fallback) {
         speak(text, turnId)
-      } else if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel()
+      } else if (activeAssistantSpeech) {
         activeAssistantSpeech = null
-        isAssistantSpeaking.value = false
-        isAssistantSpeechPaused.value = false
+        if ('speechSynthesis' in window) window.speechSynthesis.cancel()
+        syncAssistantSpeechState()
       }
     }
     if (event.type === 'audio.end') {
