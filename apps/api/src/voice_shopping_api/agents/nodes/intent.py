@@ -83,7 +83,18 @@ def _has_explicit_order_request(utterance: str) -> bool:
 
 
 def _order_action(utterance: str, *, has_pending_order: bool) -> str:
-    if any(word in utterance for word in ("取消", "不要了", "不买了")):
+    if any(
+        word in utterance
+        for word in (
+            "取消",
+            "不要了",
+            "不买了",
+            "不确认",
+            "不要确认",
+            "不下单",
+            "不要下单",
+        )
+    ):
         return "CANCEL"
     if has_pending_order and any(word in utterance for word in ("确认", "确定", "就这样")):
         return "CONFIRM"
