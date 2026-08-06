@@ -4,11 +4,17 @@ set -Eeuo pipefail
 IMAGE_TAG="${1:?usage: remote-deploy.sh <image-tag>}"
 DEPLOY_PATH="${DEPLOY_PATH:-/opt/voice-shopping-agents}"
 IMAGE_PREFIX="${IMAGE_PREFIX:?IMAGE_PREFIX is required}"
+ENV_FILE="${DEPLOY_PATH}/.env"
 
 cd "$DEPLOY_PATH"
 export IMAGE_TAG IMAGE_PREFIX
 
-compose=(docker compose -f deploy/docker-compose.prod.yml)
+if [[ ! -r "$ENV_FILE" ]]; then
+    echo "Deployment env file is missing or unreadable: ${ENV_FILE}" >&2
+    exit 1
+fi
+
+compose=(docker compose --env-file "$ENV_FILE" -f deploy/docker-compose.prod.yml)
 
 echo "Pulling images for ${IMAGE_TAG}..."
 "${compose[@]}" pull api user-web merchant-web platform-web
