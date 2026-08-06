@@ -6,14 +6,6 @@
 [实现说明](docs/implementation.md)，后续开发拆解见
 [任务文档](docs/tasks.md)。
 
-## 在线演示
-
-| 端 | 地址 |
-| --- | --- |
-| 用户端 | [https://app.ivaris.top](https://app.ivaris.top) |
-| 商家端 | [https://merchant.ivaris.top](https://merchant.ivaris.top) |
-| 平台端 | [https://platform.ivaris.top](https://platform.ivaris.top) |
-
 ## 演示视频
 
 <video controls src="https://voice-shopping-agents.oss-cn-beijing.aliyuncs.com/Desktop%202026.08.06%20-%2019.55.25.06.mp4?Expires=1786018152&amp;OSSAccessKeyId=TMP.3KtQnFE5PuFFgQD1Q9SAxGVSTgBFGzNep6GvkxyBNjG1yDEig41V47GVYFeyJGNyoBmk8KJrtbBf2rbvPGhNkAyRzSJU3A&amp;Signature=YIY4b9xVK21td6x73S6JMLBmshc%3D">
