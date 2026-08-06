@@ -1,4 +1,4 @@
-# 语音导购 Agents
+# 声选 Agent
 
 基于 FastAPI、LangGraph、PostgreSQL/PGVector、Redis 和三个 Vue 应用实现的语音导购
 电商 POC（概念验证）。项目聚焦验证从需求理解、商品推荐到待确认下单的端到端链路；产品范围见 [需求文档](docs/requirements.md)，系统设计见

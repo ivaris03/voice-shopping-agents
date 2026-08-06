@@ -1,4 +1,4 @@
-# 语音导购 Agent 架构文档
+# 声选 Agent 架构文档
 
 本文描述当前仓库已经落地的系统架构和关键设计决策。实现以 FastAPI 模块化单体为核心，Agent 工作流由 LangGraph 装配，三个 Vue 前端通过 HTTP 和双 WebSocket 访问后端。
 
