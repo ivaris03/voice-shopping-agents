@@ -18,6 +18,7 @@ coverage/
 
 # Local development server logs
 .dev-*.log
+.codex-logs/
 
 # Editors and operating systems
 .idea/
