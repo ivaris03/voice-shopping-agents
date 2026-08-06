@@ -7,6 +7,8 @@ import {
   formatCatalogAttributeLabel,
   formatCatalogAttributeValue,
   formatCategoryLabel,
+  leaveLoginPath,
+  moveToLoginPath,
   requestJson,
   type Category,
   type CategoryLevelOne,
@@ -472,6 +474,7 @@ async function startApp() {
   if (appStarted) return
   appStarted = true
   appReady.value = true
+  leaveLoginPath()
   await nextTick()
   routeFromHash()
   window.addEventListener('hashchange', routeFromHash)
@@ -481,6 +484,7 @@ async function startApp() {
 function signOut() {
   appReady.value = false
   clearAccessToken()
+  moveToLoginPath()
   window.location.reload()
 }
 

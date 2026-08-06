@@ -7,7 +7,9 @@ import {
   clearAccessToken,
   formatCategoryLabel,
   getAccessToken,
+  leaveLoginPath,
   merchantWebUrl,
+  moveToLoginPath,
   platformWebUrl,
   requestJson,
   textWsBaseUrl,
@@ -1222,6 +1224,7 @@ async function startApp() {
   if (appStarted) return
   appStarted = true
   appReady.value = true
+  leaveLoginPath()
   await nextTick()
   syncRoute()
   void Promise.all([loadData(), connectText(), connectAudio(), refreshAudioInputs()]).catch((reason) => {
@@ -1237,6 +1240,7 @@ async function startApp() {
 function signOut() {
   appReady.value = false
   clearAccessToken()
+  moveToLoginPath()
   window.location.reload()
 }
 onBeforeUnmount(() => {

@@ -2,6 +2,7 @@ export { default as AppShell } from './AppShell.vue'
 export { default as FeatureCard } from './FeatureCard.vue'
 export { default as LoginGate } from './LoginGate.vue'
 export { default as ProductDetailModal } from './ProductDetailModal.vue'
+export { leaveLoginPath, loginPath, moveToLoginPath } from './login-route'
 
 export interface NavItem {
   label: string

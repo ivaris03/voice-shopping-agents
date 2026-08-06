@@ -9,6 +9,7 @@ import {
   type AuthenticatedUser,
   type UserRole,
 } from './api'
+import { moveToLoginPath } from './login-route'
 
 const props = defineProps<{
   requiredRole: UserRole
@@ -34,6 +35,7 @@ const error = ref('')
 function acceptUser(user: AuthenticatedUser) {
   if (user.role !== props.requiredRole) {
     clearAccessToken()
+    moveToLoginPath()
     error.value = `该账号无权进入${props.workspaceName}`
     return
   }
@@ -42,6 +44,7 @@ function acceptUser(user: AuthenticatedUser) {
 
 async function restoreSession() {
   if (!getAccessToken()) {
+    moveToLoginPath()
     loading.value = false
     return
   }
@@ -49,6 +52,7 @@ async function restoreSession() {
     acceptUser(await getCurrentUser())
   } catch {
     clearAccessToken()
+    moveToLoginPath()
   } finally {
     loading.value = false
   }
