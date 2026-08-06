@@ -101,6 +101,7 @@ let appStarted = false
 // never reuse that terminal session ID.
 const sessionId = crypto.randomUUID()
 const REALTIME_CONNECT_TIMEOUT_MS = 8_000
+const TURN_TIMEOUT_MS = 60_000
 
 const currentRoute = ref('/voice')
 const isVoicePage = computed(() => currentRoute.value === '/voice')
@@ -221,6 +222,7 @@ let latestVoiceTurnId = ''
 const orderIdempotencyKeys = new Map<string, string>()
 let activeTurnId = ''
 let activeTurnSource: 'text' | 'voice' | null = null
+let activeTurnTimeout = 0
 let retryableTextTurn: { id: string; text: string } | null = null
 
 const categories = computed(() => [...new Set(products.value.map((item) => item.categoryL2))])
@@ -282,6 +284,7 @@ function startTextTurn(text: string) {
   activeTurnId = pending.id
   activeTurnSource = 'text'
   isTurnInFlight.value = true
+  armTurnTimeout(pending.id)
   return pending
 }
 
@@ -289,6 +292,17 @@ function startVoiceTurn(turnId: string) {
   activeTurnId = turnId
   activeTurnSource = 'voice'
   isTurnInFlight.value = true
+  armTurnTimeout(turnId)
+}
+
+function armTurnTimeout(turnId: string) {
+  if (activeTurnTimeout) window.clearTimeout(activeTurnTimeout)
+  activeTurnTimeout = window.setTimeout(() => {
+    if (activeTurnId !== turnId) return
+    error.value = '导购处理超时，请重试'
+    flowStatus.value = '导购处理超时，请重试'
+    finishTurn(turnId, true)
+  }, TURN_TIMEOUT_MS)
 }
 
 function setLiveAsrTranscript(turnId: string, transcript: string, streaming: boolean) {
@@ -308,6 +322,10 @@ function setLiveAsrTranscript(turnId: string, transcript: string, streaming: boo
 
 function finishTurn(turnId: string, retryable = false) {
   if (activeTurnId !== turnId) return
+  if (activeTurnTimeout) {
+    window.clearTimeout(activeTurnTimeout)
+    activeTurnTimeout = 0
+  }
   const source = activeTurnSource
   activeTurnId = ''
   activeTurnSource = null

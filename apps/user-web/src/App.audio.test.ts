@@ -866,4 +866,28 @@ describe('assistant reply audio coordination', () => {
     expect((sendButton.element as HTMLButtonElement).disabled).toBe(false)
     wrapper.unmount()
   })
+
+  it('releases the input when a turn never reaches a terminal event', async () => {
+    vi.useFakeTimers()
+    try {
+      const wrapper = mount(App)
+      await flushPromises()
+      const input = wrapper.get('[aria-label="导购消息"]')
+      const sendButton = wrapper.get('.voice-send-button')
+
+      await input.setValue('我想买一个蓝牙耳机')
+      await sendButton.trigger('click')
+      await flushPromises()
+      expect((sendButton.element as HTMLButtonElement).disabled).toBe(true)
+
+      vi.advanceTimersByTime(60_000)
+      await nextTick()
+
+      expect(wrapper.text()).toContain('导购处理超时，请重试')
+      expect((sendButton.element as HTMLButtonElement).disabled).toBe(false)
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

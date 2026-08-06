@@ -1,3 +1,4 @@
+import asyncio
 import sys
 from types import SimpleNamespace
 
@@ -34,6 +35,77 @@ async def test_checkpointer_falls_back_on_windows_proactor_loop(
     )
 
     assert await saver.get() is None
+    assert await saver.get() is None
+    await saver.close()
+
+
+@pytest.mark.asyncio
+async def test_checkpointer_falls_back_when_setup_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingSaver:
+        async def setup(self) -> None:
+            raise RuntimeError("database unavailable")
+
+    class Context:
+        async def __aenter__(self) -> FailingSaver:
+            return FailingSaver()
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    saver = checkpointer_module.LazyPostgresCheckpointer()
+    monkeypatch.setattr(
+        checkpointer_module,
+        "get_settings",
+        lambda: SimpleNamespace(
+            langgraph_checkpoint_enabled=True,
+            langgraph_checkpoint_url="postgresql://unavailable",
+            langgraph_checkpoint_init_timeout_seconds=1.0,
+        ),
+    )
+    monkeypatch.setattr(
+        checkpointer_module.AsyncPostgresSaver,
+        "from_conn_string",
+        lambda _url: Context(),
+    )
+
+    assert await saver.get() is None
+    assert await saver.get() is None
+    await saver.close()
+
+
+@pytest.mark.asyncio
+async def test_checkpointer_falls_back_when_setup_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class SlowSaver:
+        async def setup(self) -> None:
+            await asyncio.sleep(0.05)
+
+    class Context:
+        async def __aenter__(self) -> SlowSaver:
+            return SlowSaver()
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    saver = checkpointer_module.LazyPostgresCheckpointer()
+    monkeypatch.setattr(
+        checkpointer_module,
+        "get_settings",
+        lambda: SimpleNamespace(
+            langgraph_checkpoint_enabled=True,
+            langgraph_checkpoint_url="postgresql://slow",
+            langgraph_checkpoint_init_timeout_seconds=0.01,
+        ),
+    )
+    monkeypatch.setattr(
+        checkpointer_module.AsyncPostgresSaver,
+        "from_conn_string",
+        lambda _url: Context(),
+    )
+
     assert await saver.get() is None
     await saver.close()
 
