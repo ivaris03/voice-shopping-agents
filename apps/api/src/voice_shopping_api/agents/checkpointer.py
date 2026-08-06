@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import sys
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, suppress
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -49,16 +49,36 @@ class LazyPostgresCheckpointer:
                 )
                 return None
             try:
-                checkpointer = await self._resources.enter_async_context(
-                    AsyncPostgresSaver.from_conn_string(settings.langgraph_checkpoint_url)
+                async with asyncio.timeout(
+                    settings.langgraph_checkpoint_init_timeout_seconds
+                ):
+                    checkpointer = await self._resources.enter_async_context(
+                        AsyncPostgresSaver.from_conn_string(settings.langgraph_checkpoint_url)
+                    )
+                    await checkpointer.setup()
+            except TimeoutError:
+                logger.warning(
+                    "LangGraph Postgres checkpointer initialization timed out after %.1fs; "
+                    "falling back to session state persistence",
+                    settings.langgraph_checkpoint_init_timeout_seconds,
                 )
-                await checkpointer.setup()
+                await self._disable_after_failure()
+                return None
             except Exception:
-                await self._resources.aclose()
-                self._resources = AsyncExitStack()
-                raise
+                logger.exception(
+                    "LangGraph Postgres checkpointer initialization failed; "
+                    "falling back to session state persistence"
+                )
+                await self._disable_after_failure()
+                return None
             self._checkpointer = checkpointer
             return checkpointer
+
+    async def _disable_after_failure(self) -> None:
+        self._disabled_for_event_loop = True
+        with suppress(Exception):
+            await self._resources.aclose()
+        self._resources = AsyncExitStack()
 
     async def close(self) -> None:
         async with self._lock:
