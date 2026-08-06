@@ -301,6 +301,54 @@ async def test_new_category_detection_ignores_the_abandoned_category() -> None:
 
 
 @pytest.mark.asyncio
+async def test_asr_filler_in_negated_category_does_not_override_a_new_category() -> None:
+    result = await recognize_intent(
+        {
+            "utterance": "嗯我现在不想嗯要这个口红了，你来帮我推荐一下蓝牙耳机吧。",
+            "model_enabled": False,
+            "product_category": "LIPSTICK",
+            "slots": {"shade": "tomato-red", "finish": "matte"},
+            "pending_question": {
+                "slot": "shade",
+                "slots": ["shade", "finish"],
+                "question": "你偏好什么色调？",
+            },
+        }
+    )
+
+    assert result["intent"]["type"] == "PRODUCT_RECOMMENDATION"
+    assert result["intent"]["product_category"] == "HEADPHONES"
+    assert result["product_category"] == "HEADPHONES"
+    assert result["category_changed"] is True
+    assert result["slots"] == {}
+    assert result["pending_question"] is None
+
+
+@pytest.mark.asyncio
+async def test_negated_selected_order_routes_to_the_new_category_request() -> None:
+    result = await shopping_workflow.ainvoke(
+        {
+            "utterance": "嗯我现在不想买这个口红了，你来给我推荐一下蓝牙耳机吧。",
+            "model_enabled": False,
+            "product_category": "LIPSTICK",
+            "slots": {"shade": "tomato-red", "finish": "matte"},
+            "previous_product_cards": [
+                {"productId": "lipstick-1", "name": "测试口红"},
+                {"productId": "lipstick-2", "name": "测试口红 2"},
+            ],
+            "user_profile_snapshot": {},
+        }
+    )
+
+    assert result["intent"]["type"] == "PRODUCT_RECOMMENDATION"
+    assert result["product_category"] == "HEADPHONES"
+    assert result["category_changed"] is True
+    assert result["slots"] == {"connectivity": "bluetooth"}
+    assert "form" in result["pending_question"]["slots"]
+    assert not {"shade", "finish"}.intersection(result["pending_question"]["slots"])
+
+
+@pytest.mark.asyncio
 async def test_explicit_slot_answer_is_not_overwritten_by_conflicting_model_value(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

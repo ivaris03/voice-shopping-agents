@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Any
 
 from voice_shopping_api.agents.model import recognize_with_model
@@ -6,6 +7,32 @@ from voice_shopping_api.agents.nodes.constants import CATEGORY_ALIASES
 from voice_shopping_api.agents.state import IntentResult, ShoppingState
 
 logger = logging.getLogger(__name__)
+
+_CLAUSE_BOUNDARY = re.compile(r"[，。；！？、]|但是|不过|然而|而是|但")
+_ASR_FILLERS = re.compile(r"[\s嗯啊呃额唔]+")
+_NEGATION_MARKERS = (
+    "不想要",
+    "不想买",
+    "不想下单",
+    "不要下单",
+    "不下单",
+    "不要",
+    "不买",
+    "不需要",
+    "算了",
+    "别买",
+    "别要",
+    "别下单",
+)
+
+
+def _is_negated_at(utterance: str, position: int) -> bool:
+    """Return whether the current clause contains a negation before ``position``."""
+    prefix = utterance[:position]
+    boundaries = list(_CLAUSE_BOUNDARY.finditer(prefix))
+    clause_prefix = prefix[boundaries[-1].end() :] if boundaries else prefix
+    normalized_prefix = _ASR_FILLERS.sub("", clause_prefix)
+    return any(marker in normalized_prefix for marker in _NEGATION_MARKERS)
 
 
 def _category(utterance: str) -> str | None:
@@ -18,17 +45,7 @@ def _category(utterance: str) -> str | None:
     if not matches:
         return None
 
-    def is_negated(position: int) -> bool:
-        prefix = utterance[:position]
-        sentence_start = (
-            max(prefix.rfind(marker) for marker in ("，", "。", "；", "！", "？", "、")) + 1
-        )
-        return any(
-            marker in prefix[sentence_start:]
-            for marker in ("不想要", "不想买", "不要", "不买", "不需要", "算了", "别买", "别要")
-        )
-
-    positive_matches = [match for match in matches if not is_negated(match[0])]
+    positive_matches = [match for match in matches if not _is_negated_at(utterance, match[0])]
     return min(positive_matches or matches, key=lambda match: match[0])[1]
 
 
@@ -65,21 +82,25 @@ def _has_pending_order(state: ShoppingState) -> bool:
 
 
 def _has_explicit_order_request(utterance: str) -> bool:
-    return any(
-        marker in utterance
-        for marker in (
-            "下单",
-            "买第一",
-            "买第二",
-            "买第三",
-            "买这个",
-            "买这款",
-            "就买",
-            "就要",
-            "帮我买",
-            "取消订单",
-        )
+    order_markers = (
+        "下单",
+        "买第一",
+        "买第二",
+        "买第三",
+        "买这个",
+        "买这款",
+        "就买",
+        "就要",
+        "帮我买",
+        "取消订单",
     )
+    for marker in order_markers:
+        start = utterance.find(marker)
+        while start >= 0:
+            if not _is_negated_at(utterance, start + len(marker)):
+                return True
+            start = utterance.find(marker, start + len(marker))
+    return False
 
 
 def _order_action(utterance: str, *, has_pending_order: bool) -> str:
