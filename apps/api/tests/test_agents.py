@@ -1655,12 +1655,12 @@ async def test_recommendation_hook_model_uses_all_product_cards(
                 "condition": "更看重支持调节色温",
             },
         ],
-        "",
     )
 
     assert "第1款（基础台灯）" in hook
     assert "productCards" in str(captured["payload"])
     assert "selectionOptions" in str(captured["payload"])
+    assert "insufficiencyNote" not in captured["payload"]
     assert "选择钩子" in str(captured["system_prompt"])
 
 
@@ -1813,11 +1813,30 @@ def test_selection_hook_does_not_recommend_shared_headphone_highlight_twice() ->
 
     hook = response_module._fallback_recommendation_hook(cards)
 
-    assert hook == (
-        "如果您更在意性价比，推荐您选择第2款（Bose QuietComfort 无线降噪耳机）；"
-        "其余商品的当前资料不足以按不同偏好进一步区分。"
-    )
+    assert hook == "如果您更在意性价比，推荐您选择第2款（Bose QuietComfort 无线降噪耳机）。"
     assert hook.count("头戴式包裹感") == 0
+    assert "资料不足" not in hook
+
+
+def test_selection_hook_is_omitted_when_products_have_no_unique_difference() -> None:
+    cards = [
+        {
+            "productId": "headphone-1",
+            "name": "耳机一",
+            "price": 1999,
+            "sellingPoints": ["头戴式包裹感"],
+            "attributes": {"form": "over-ear"},
+        },
+        {
+            "productId": "headphone-2",
+            "name": "耳机二",
+            "price": 1999,
+            "sellingPoints": ["头戴式包裹感"],
+            "attributes": {"form": "over-ear"},
+        },
+    ]
+
+    assert response_module._fallback_recommendation_hook(cards) == ""
 
 
 def test_selection_hook_uses_the_longest_numeric_attribute_value() -> None:
@@ -1951,6 +1970,30 @@ def test_selection_hook_rejects_a_shared_condition_even_with_valid_product_names
     )
 
 
+def test_selection_hook_rejects_a_comparison_insufficiency_tail() -> None:
+    cards = [
+        {
+            "productId": "lamp-1",
+            "name": "基础台灯",
+            "price": 99,
+            "sellingPoints": ["价格亲民"],
+        },
+        {
+            "productId": "lamp-2",
+            "name": "调光台灯",
+            "price": 159,
+            "sellingPoints": ["支持调节色温"],
+        },
+    ]
+
+    assert not response_module._is_usable_hook(
+        "如果您更在意性价比，推荐您选择第1款（基础台灯）；"
+        "如果您更看重支持调节色温，推荐您选择第2款（调光台灯）；"
+        "其余商品的当前资料不足以按不同偏好进一步区分。",
+        cards,
+    )
+
+
 @pytest.mark.asyncio
 async def test_model_selection_hook_falls_back_when_it_reuses_a_shared_condition(
     monkeypatch: pytest.MonkeyPatch,
@@ -1981,7 +2024,6 @@ async def test_model_selection_hook_falls_back_when_it_reuses_a_shared_condition
         __: list[dict[str, object]],
         ___: str,
         ____: list[dict[str, object]],
-        _____: str,
     ) -> str:
         return (
             "如果您更看重头戴式包裹感，推荐您选择第1款（Apple AirPods Max USB-C 头戴耳机）；"
@@ -2003,10 +2045,7 @@ async def test_model_selection_hook_falls_back_when_it_reuses_a_shared_condition
         }
     )
 
-    assert hook == (
-        "如果您更在意性价比，推荐您选择第2款（Bose QuietComfort 无线降噪耳机）；"
-        "其余商品的当前资料不足以按不同偏好进一步区分。"
-    )
+    assert hook == "如果您更在意性价比，推荐您选择第2款（Bose QuietComfort 无线降噪耳机）。"
 
 
 @pytest.mark.asyncio

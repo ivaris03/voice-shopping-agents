@@ -27,7 +27,6 @@ from voice_shopping_api.core.text import split_sentences
 
 logger = logging.getLogger(__name__)
 REASON_MODEL_CONCURRENCY = 3
-INSUFFICIENT_COMPARISON_NOTE = "当前资料不足以按不同偏好进一步区分"
 # Numeric attributes with an unambiguous "higher is better" interpretation.
 # They are handled as a comparison across cards instead of as independent
 # unique values, otherwise a lower value can be presented as a preference.
@@ -231,17 +230,16 @@ def _price_leader_index(cards: list[dict[str, Any]]) -> int | None:
     return prices.index(lowest)
 
 
-def _selection_options(cards: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str]:
+def _selection_options(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Return only fact-backed conditions that identify one displayed product."""
     # A selection hook only helps users compare alternatives. With zero or one
     # result, the product introduction is already the complete response.
     if len(cards) < 2:
-        return [], ""
+        return []
 
     options: list[dict[str, Any]] = []
     selected_indexes: set[int] = set()
     used_condition_keys: set[str] = set()
-    has_complete_numeric_comparison = False
     price_leader = _price_leader_index(cards)
     if price_leader is not None:
         options.append(
@@ -278,7 +276,6 @@ def _selection_options(cards: list[dict[str, Any]]) -> tuple[list[dict[str, Any]
         )
         selected_indexes.add(leader_index)
         used_condition_keys.add(condition_key)
-        has_complete_numeric_comparison = True
 
     for index, card in enumerate(cards):
         if index in selected_indexes:
@@ -303,17 +300,13 @@ def _selection_options(cards: list[dict[str, Any]]) -> tuple[list[dict[str, Any]
         selected_indexes.add(index)
         used_condition_keys.add(condition_key)
 
-    if len(selected_indexes) == len(cards) or has_complete_numeric_comparison:
-        return options, ""
-    if not options:
-        return options, f"这些商品的{INSUFFICIENT_COMPARISON_NOTE}"
-    return options, f"其余商品的{INSUFFICIENT_COMPARISON_NOTE}"
+    return options
 
 
 def _fallback_recommendation_hook(cards: list[dict[str, Any]]) -> str:
     """Build a useful, fact-only choice prompt when the hook model is unavailable."""
-    options, insufficiency_note = _selection_options(cards)
-    if not options and not insufficiency_note:
+    options = _selection_options(cards)
+    if not options:
         return ""
     clauses = [
         f"如果您{option['condition']}，推荐您选择"
@@ -321,8 +314,6 @@ def _fallback_recommendation_hook(cards: list[dict[str, Any]]) -> str:
         + (f"，{option['fact']}" if option.get("fact") else "")
         for option in options
     ]
-    if insufficiency_note:
-        clauses.append(insufficiency_note)
     return "；".join(clauses) + "。"
 
 
@@ -330,12 +321,13 @@ def _is_usable_hook(
     hook: str,
     cards: list[dict[str, Any]],
     selection_options: list[dict[str, Any]] | None = None,
-    insufficiency_note: str | None = None,
 ) -> bool:
     if not hook or not is_compliant(hook):
         return False
-    if selection_options is None or insufficiency_note is None:
-        selection_options, insufficiency_note = _selection_options(cards)
+    if "资料不足" in hook or "无法进一步区分" in hook:
+        return False
+    if selection_options is None:
+        selection_options = _selection_options(cards)
     matches = list(_SELECTION_CLAUSE_PATTERN.finditer(hook))
     references = [
         (
@@ -384,12 +376,7 @@ def _is_usable_hook(
         }
         if name not in expected_names:
             return False
-    for _, _, _, fact in expected_options:
-        if fact and fact not in hook:
-            return False
-    if insufficiency_note:
-        return insufficiency_note in hook
-    return INSUFFICIENT_COMPARISON_NOTE not in hook
+    return all(not (fact and fact not in hook) for _, _, _, fact in expected_options)
 
 
 def _complete_sentence(text_value: str) -> str:
@@ -401,9 +388,9 @@ def _complete_sentence(text_value: str) -> str:
 
 async def _generate_recommendation_hook(state: ShoppingState) -> str:
     cards = state["product_cards"]
-    selection_options, insufficiency_note = _selection_options(cards)
+    selection_options = _selection_options(cards)
     fallback = _fallback_recommendation_hook(cards)
-    if not selection_options and not insufficiency_note:
+    if not selection_options:
         return ""
     if not state.get("model_enabled"):
         return fallback
@@ -413,9 +400,8 @@ async def _generate_recommendation_hook(state: ShoppingState) -> str:
             cards,
             state.get("emotion_style", "warm-professional"),
             selection_options,
-            insufficiency_note,
         )
-        if not _is_usable_hook(hook, cards, selection_options, insufficiency_note):
+        if not _is_usable_hook(hook, cards, selection_options):
             raise ValueError("模型返回的选择钩子不完整、不合规或未按已验证差异引用商品")
         return _complete_sentence(hook)
     except Exception as exc:
