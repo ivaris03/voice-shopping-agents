@@ -37,7 +37,7 @@ echo "Applying database migrations..."
 "${compose[@]}" run --rm --no-deps api python apps/api/scripts/migrate.py
 
 echo "Starting application services..."
-"${compose[@]}" up -d --remove-orphans api user-web merchant-web platform-web
+"${compose[@]}" up -d --wait --wait-timeout 120 --remove-orphans api user-web merchant-web platform-web
 "${compose[@]}" ps
 
 echo "Removing dangling images..."
