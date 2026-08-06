@@ -220,7 +220,7 @@ describe('assistant reply audio coordination', () => {
     wrapper.unmount()
   })
 
-  it('shows platform-supported second-level categories in a dismissible dialog', async () => {
+  it('opens the supported second-level categories dialog from the voice guide card', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
@@ -240,6 +240,8 @@ describe('assistant reply audio coordination', () => {
     const wrapper = mount(App)
     await flushPromises()
 
+    expect(wrapper.find('.supported-categories-dialog').exists()).toBe(false)
+    expect(wrapper.get('.supported-categories-summary').text()).toContain('已支持 1 个二级品类')
     await wrapper.get('.supported-categories-trigger').trigger('click')
     await nextTick()
 

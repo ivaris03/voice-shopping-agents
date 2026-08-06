@@ -232,6 +232,11 @@ let activeTurnTimeout = 0
 let retryableTextTurn: { id: string; text: string } | null = null
 
 const categories = computed(() => [...new Set(products.value.map((item) => item.categoryL2))])
+const supportedCategoryPreview = computed(() =>
+  [...new Set(supportedCategories.value.map((category) => formatCategoryLabel(category.categoryL2)))]
+    .slice(0, 3)
+    .join('、'),
+)
 const visibleProducts = computed(() =>
   selectedCategory.value
     ? products.value.filter((item) => item.categoryL2 === selectedCategory.value)
@@ -1278,12 +1283,6 @@ onBeforeUnmount(() => {
             {{ isOrdersPage ? `${orders.length} 笔订单 · ${pendingOrders} 笔待确认` : `${merchants.length} 家店 · ${products.length} 件商品` }}
           </p>
           <p class="hero-panel__note">{{ isOrdersPage ? `已完成 ${successfulOrders} 笔订单，确认前会再次校验价格和库存。` : '已完成的点击和成交会持续更新你的偏好画像。' }}</p>
-          <button
-            v-if="!isOrdersPage"
-            class="supported-categories-trigger"
-            type="button"
-            @click="isSupportedCategoriesDialogOpen = true"
-          >查看支持品类</button>
         </div>
       </div>
     </template>
@@ -1301,6 +1300,22 @@ onBeforeUnmount(() => {
             <span class="voice-live-badge"><span class="status-dot"></span>在线</span>
           </div>
           <p class="voice-description">支持推荐、对比、查询和二次确认下单；每次只追问一到两个必要条件。</p>
+          <div class="supported-categories-summary">
+            <div class="supported-categories-summary__copy">
+              <span class="supported-categories-summary__label">支持导购</span>
+              <p v-if="supportedCategories.length" class="supported-categories-summary__text">
+                已支持 {{ supportedCategories.length }} 个二级品类：{{ supportedCategoryPreview }}<template v-if="supportedCategories.length > 3"> 等</template>
+              </p>
+              <p v-else-if="loading" class="supported-categories-summary__text">正在加载支持的二级品类</p>
+              <p v-else class="supported-categories-summary__text">暂未配置支持的二级品类</p>
+            </div>
+            <button
+              class="supported-categories-trigger"
+              type="button"
+              aria-label="查看全部支持的二级品类"
+              @click="isSupportedCategoriesDialogOpen = true"
+            >查看全部</button>
+          </div>
           <div class="voice-action-row">
             <button
               class="mic-button"

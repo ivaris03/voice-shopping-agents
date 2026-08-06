@@ -355,8 +355,12 @@ button:disabled { opacity: 0.48; cursor: not-allowed; }
 .product-detail-footer .section-actions { justify-content: flex-end; }
 body.has-product-detail-modal { overflow: hidden; }
 
-.supported-categories-trigger { margin-top: 14px; padding: 0; border: 0; color: #1f5b3c; background: transparent; cursor: pointer; font-size: 13px; font-weight: 760; text-decoration: underline; text-underline-offset: 3px; }
-.supported-categories-trigger:hover { color: #a84f29; }
+.supported-categories-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; padding: 14px 0; border-top: 1px solid rgba(255,255,255,.13); border-bottom: 1px solid rgba(255,255,255,.13); }
+.supported-categories-summary__copy { min-width: 0; }
+.supported-categories-summary__label { display: block; color: rgba(255,255,255,.52); font-size: 12px; font-weight: 760; }
+.supported-categories-summary__text { margin: 5px 0 0; color: rgba(255,255,255,.84); font-size: 13px; line-height: 1.55; }
+.supported-categories-trigger { flex: 0 0 auto; padding: 4px 0; border: 0; color: #f1c27d; background: transparent; cursor: pointer; font-size: 13px; font-weight: 760; text-decoration: underline; text-underline-offset: 3px; }
+.supported-categories-trigger:hover { color: #fff0cf; }
 .supported-categories-trigger:focus-visible { outline: 3px solid #e6a95c; outline-offset: 3px; }
 .supported-categories-backdrop { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 24px; background: rgba(19, 35, 26, 0.58); backdrop-filter: blur(5px); }
 .supported-categories-dialog { width: min(640px, 100%); max-height: min(720px, calc(100vh - 48px)); overflow-y: auto; border: 1px solid rgba(24, 34, 28, 0.14); border-radius: 8px; background: #fffdfa; box-shadow: 0 28px 90px rgba(11, 31, 20, 0.28); }
@@ -489,6 +493,7 @@ body.has-supported-categories-modal { overflow: hidden; }
   .voice-heading-row { gap: 10px; }
   .voice-controls h2 { font-size: 27px; }
   .voice-live-badge { padding: 6px 8px; }
+  .supported-categories-summary { align-items: flex-start; gap: 12px; }
   .voice-examples { align-items: flex-start; flex-direction: column; }
   .voice-examples__label { margin-bottom: 1px; }
   .voice-action-row { align-items: flex-start; flex-wrap: wrap; }
