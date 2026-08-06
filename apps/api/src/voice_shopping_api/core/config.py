@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     catalog_cache_redis_url: str = ""
     product_embedding_cache_ttl_seconds: int = 30 * 24 * 60 * 60
     langgraph_checkpoint_enabled: bool = True
+    langgraph_checkpoint_init_timeout_seconds: float = Field(
+        default=5.0, ge=0.1, le=60.0
+    )
     langgraph_checkpoint_database_url: str = Field(
         default="",
         validation_alias=AliasChoices(

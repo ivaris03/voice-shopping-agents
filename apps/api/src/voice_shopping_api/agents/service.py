@@ -553,9 +553,13 @@ async def process_turn(
     # request from racing with graph execution and makes all session-scoped
     # reads below safe against cross-user access.
     session_record = await ensure_active_session(session, session_id, user_id)
-    workflow, checkpoint_enabled = await _workflow_for_turn()
     if session_record.get("_created"):
-        checkpoint_enabled = False
+        # The first turn has no checkpoint to restore. Avoid initializing the
+        # optional Postgres checkpointer on this path so a checkpoint database
+        # outage cannot block a brand-new conversation before its first event.
+        workflow, checkpoint_enabled = shopping_workflow, False
+    else:
+        workflow, checkpoint_enabled = await _workflow_for_turn()
     run_config = {
         "run_name": "voice-shopping-turn",
         "configurable": {"thread_id": str(session_id)},
