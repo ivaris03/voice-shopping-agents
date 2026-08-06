@@ -780,6 +780,24 @@ async def test_confirmation_requires_an_existing_pending_order() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "utterance",
+    ("我不要确认下单。", "我不确认下单。", "我不要下单。", "我不下单。"),
+)
+async def test_negated_order_confirmation_cancels_a_pending_order(utterance: str) -> None:
+    result = await recognize_intent(
+        {
+            "utterance": utterance,
+            "model_enabled": False,
+            "pending_order": {"id": "order-2", "status": "pending"},
+        }
+    )
+
+    assert result["intent"]["type"] == "PRODUCT_ORDER"
+    assert result["intent"]["action"] == "CANCEL"
+
+
+@pytest.mark.asyncio
 async def test_order_handler_uses_the_selected_product_and_requests_confirmation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
