@@ -233,21 +233,10 @@ def _price_leader_index(cards: list[dict[str, Any]]) -> int | None:
 
 def _selection_options(cards: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str]:
     """Return only fact-backed conditions that identify one displayed product."""
-    if not cards:
+    # A selection hook only helps users compare alternatives. With zero or one
+    # result, the product introduction is already the complete response.
+    if len(cards) < 2:
         return [], ""
-    if len(cards) == 1:
-        highlight = _unique_attribute_highlight(cards, 0) or _unique_selling_point_highlight(
-            cards, 0
-        )
-        highlight = highlight or "当前筛选条件"
-        return [
-            {
-                "displayNumber": 1,
-                "productId": str(cards[0].get("productId") or ""),
-                "name": _card_name(cards[0]),
-                "condition": f"更看重{highlight}",
-            }
-        ], ""
 
     options: list[dict[str, Any]] = []
     selected_indexes: set[int] = set()

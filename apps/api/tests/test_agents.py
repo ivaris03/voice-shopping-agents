@@ -1634,6 +1634,37 @@ async def test_emotional_response_appends_a_fact_based_selection_hook() -> None:
     assert "如果您更看重支持调节色温，推荐您选择第2款（调光台灯）" in speech
 
 
+@pytest.mark.asyncio
+async def test_emotional_response_omits_selection_hook_for_a_single_product() -> None:
+    async def load_catalog(
+        _: str, __: bool, ___: dict[str, object]
+    ) -> list[dict[str, object]]:
+        return []
+
+    result = await emotional_response(
+        {
+            "model_enabled": False,
+            "utterance": "推荐一支珊瑚色调口红",
+            "emotion_style": "warm-professional",
+            "product_cards": [
+                {
+                    "productId": "lipstick-1",
+                    "name": "3CE Velvet Lip Tint Daffodil",
+                    "price": 129,
+                    "sellingPoints": ["珊瑚色调，雾面妆效"],
+                    "attributes": {"tone": "coral", "finish": "matte"},
+                }
+            ],
+        },
+        Runtime(context=ShoppingRuntimeDependencies(catalog_loader=load_catalog)),
+    )
+
+    speech = result["speech_text"]
+    assert "第1款（3CE Velvet Lip Tint Daffodil）" in speech
+    assert "推荐您选择" not in speech
+    assert "如果您更看重" not in speech
+
+
 def test_product_reason_removes_ambiguous_pronouns_and_adds_display_identity() -> None:
     card = {"productId": "headphone-1", "name": "测试头戴式耳机"}
 
