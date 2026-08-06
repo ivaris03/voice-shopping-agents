@@ -36,7 +36,7 @@ JWT 的 `sub` 是现有用户 UUID，角色来自登录时的 `users.role`：`cu
 
 ```json
 {
-  "phone": "13900000101",
+  "phone": "13700000001",
   "password": "12345678"
 }
 ```
@@ -138,7 +138,7 @@ JWT 的 `sub` 是现有用户 UUID，角色来自登录时的 `users.role`：`cu
   "slug": "sound-digital",
   "description": "本地演示集合店，展示通勤音频的真实品牌型号。",
   "logoUrl": null,
-  "contactPhone": "13800000002"
+  "contactPhone": "13800000001"
 }
 ```
 

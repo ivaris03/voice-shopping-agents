@@ -51,7 +51,7 @@ def test_list_owned_stores_uses_the_authenticated_merchant(
                     "slug": "sound-digital",
                     "description": "音频设备",
                     "logo_url": None,
-                    "contact_phone": "13800000002",
+                    "contact_phone": "13800000001",
                     "is_enabled": True,
                     "disabled_reason": None,
                     "product_count": 3,

@@ -20,9 +20,9 @@ const emit = defineEmits<{
 }>()
 
 const defaultCredentialsByRole: Record<UserRole, { phone: string; password: string }> = {
-  customer: { phone: '13900000101', password: '12345678' },
-  merchant: { phone: '13800000002', password: '12345678' },
-  platform: { phone: '13800000001', password: '12345678' },
+  customer: { phone: '13700000001', password: '12345678' },
+  merchant: { phone: '13800000001', password: '12345678' },
+  platform: { phone: '13900000001', password: '12345678' },
 }
 const defaultCredentials = defaultCredentialsByRole[props.requiredRole]
 const phone = ref(defaultCredentials.phone)
