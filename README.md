@@ -8,8 +8,8 @@
 
 ## 演示视频
 
-<video controls preload="metadata" width="100%" src="https://ivaris03.github.io/voice-shopping-agents/demo.mp4">
-  <a href="https://ivaris03.github.io/voice-shopping-agents/demo.mp4">下载演示视频（MP4，165 MB）</a>
+<video controls preload="metadata" width="100%" src="resources/video/demo.mp4">
+  <a href="resources/video/demo.mp4">下载演示视频（MP4，165 MB）</a>
 </video>
 
 ## 文档导航
