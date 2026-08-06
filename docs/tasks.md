@@ -136,9 +136,11 @@ pnpm lint:api
 ### TASK-007：建立稳定的 CI 和集成测试环境
 
 - 优先级：`P1`
-- 状态：`TODO`
+- 状态：`DONE`
 - 目标：让完整测试在干净环境中可重复运行，消除本地 Windows/Python 版本差异导致的 asyncpg 跨事件循环问题。
 - 影响范围：`apps/api/pyproject.toml`、测试 fixture、CI workflow、PostgreSQL/PGVector/Redis 服务定义。
+- 完成记录：GitHub Actions 固定 Python 3.12、`pgvector/pgvector:pg16` 和 `redis:7-alpine`，在独立
+  测试数据库中执行迁移、播种和标记为 `e2e` 的测试；非 E2E 测试继续与外部模型调用分层执行。
 - 实施要点：
   - 固定并明确 CI 支持的 Python、PostgreSQL、PGVector 和 Redis 版本。
   - 为数据库集成测试提供隔离数据库或事务回滚策略，确保连接池和事件循环生命周期一致。

@@ -673,9 +673,9 @@ uv run --project apps/api python -m voice_shopping_api.server --reload --port 80
 运行接口相关测试：
 
 ```bash
-uv run --project apps/api pytest -m contract
-uv run --project apps/api pytest -m service
-uv run --project apps/api pytest -m e2e
+uv run --project apps/api pytest -c apps/api/pyproject.toml -m contract
+uv run --project apps/api pytest -c apps/api/pyproject.toml -m service
+pnpm test:e2e
 ```
 
 E2E 必须设置独立且可丢弃的 PostgreSQL/PGVector 测试库：

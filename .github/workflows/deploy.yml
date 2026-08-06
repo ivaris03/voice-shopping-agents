@@ -64,11 +64,77 @@ jobs:
       - name: Lint and test API
         run: |
           uv run --project apps/api ruff check .
-          uv run --project apps/api pytest -m "not e2e"
+          uv run --project apps/api pytest -c apps/api/pyproject.toml -m "not e2e"
+
+  e2e:
+    name: E2E
+    runs-on: ubuntu-latest
+    env:
+      VOICE_SHOPPING_ENVIRONMENT: test
+      VOICE_SHOPPING_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/voice-shopping-agents
+      VOICE_SHOPPING_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/voice-shopping-agents-e2e
+      VOICE_SHOPPING_REDIS_URL: redis://localhost:6379/0
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: voice-shopping-agents
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d voice-shopping-agents"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install pnpm
+        shell: bash
+        run: corepack enable && corepack prepare pnpm@11.9.0 --activate
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: latest
+
+      - name: Install API dependencies
+        run: uv sync --project apps/api --dev --frozen
+
+      - name: Prepare isolated E2E database
+        run: pnpm db:prepare-e2e
+
+      - name: Run API E2E tests
+        run: pnpm test:e2e
 
   build-api:
     name: Build API image
-    needs: validate
+    needs: [validate, e2e]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -106,7 +172,7 @@ jobs:
 
   build-web:
     name: Build ${{ matrix.app }} frontend image
-    needs: validate
+    needs: [validate, e2e]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
