@@ -8,7 +8,9 @@
 
 ## 演示视频
 
-[观看演示视频（MP4，165 MB）](https://voice-shopping-agents.oss-cn-beijing.aliyuncs.com/Desktop%202026.08.06%20-%2019.55.25.06.mp4)
+<video controls preload="metadata" width="100%" src="https://ivaris03.github.io/voice-shopping-agents/demo.mp4">
+  <a href="https://ivaris03.github.io/voice-shopping-agents/demo.mp4">下载演示视频（MP4，165 MB）</a>
+</video>
 
 ## 文档导航
 
