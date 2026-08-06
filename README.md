@@ -6,10 +6,6 @@
 [实现说明](docs/implementation.md)，后续开发拆解见
 [任务文档](docs/tasks.md)。
 
-## 演示视频
-
-[观看演示视频（MP4，165 MB）](resources/video/demo.mp4)
-
 ## 文档导航
 
 | 文档 | 内容 |
