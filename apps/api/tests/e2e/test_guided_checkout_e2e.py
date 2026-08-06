@@ -48,8 +48,16 @@ async def test_default_guided_checkout_reaches_confirmed_order(
         CUSTOMER_ID,
     )
     assert second["clarification_status"] == "READY"
-    assert second["product_cards"][0]["name"] == "Sony WH-CH720N 无线降噪头戴耳机"
-    product_id = second["product_cards"][0]["productId"]
+    assert second["product_cards"]
+    selected_product = second["product_cards"][0]
+    assert selected_product["categoryL2"] == "HEADPHONES"
+    assert selected_product["price"] <= 1000
+    assert selected_product["stock"] > 0
+    attributes = selected_product["attributes"]
+    assert attributes["form"] == "over-ear"
+    assert attributes["connectivity"] == "bluetooth"
+    assert attributes["noiseCancellation"] is True
+    product_id = selected_product["productId"]
     persisted_state = await e2e_committing_session.scalar(
         text(
             """

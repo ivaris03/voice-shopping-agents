@@ -413,7 +413,7 @@ pnpm lint:api
 API 子项目也可以直接运行：
 
 ```bash
-uv run --project apps/api pytest
+uv run --project apps/api pytest -c apps/api/pyproject.toml
 uv run --project apps/api ruff check .
 ```
 

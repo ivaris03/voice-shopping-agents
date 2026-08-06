@@ -12,8 +12,8 @@
     "db:prepare-e2e": "uv run --project apps/api python apps/api/scripts/prepare_test_database.py",
     "build": "pnpm -r --if-present build",
     "typecheck": "pnpm -r --if-present typecheck",
-    "test:api": "uv run --project apps/api pytest",
-    "test:e2e": "uv run --project apps/api pytest -m e2e",
+    "test:api": "uv run --project apps/api pytest -c apps/api/pyproject.toml",
+    "test:e2e": "uv run --project apps/api pytest -c apps/api/pyproject.toml -m e2e",
     "lint:api": "uv run --project apps/api ruff check .",
     "format:api": "uv run --project apps/api ruff format ."
   }
