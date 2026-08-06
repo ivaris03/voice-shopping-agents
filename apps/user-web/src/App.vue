@@ -250,7 +250,13 @@ const orderStatusLabels: Record<Order['status'], string> = {
   success: '已完成',
   fail: '已取消',
 }
-const quickPrompts = ['通勤降噪耳机，预算一千以内', '适合日常跑步的鞋', '送给朋友的口红']
+const quickPrompts = [
+  '通勤降噪耳机，预算一千以内',
+  '适合日常跑步的鞋',
+  '送给朋友的口红',
+  '适合办公室的咖啡机',
+  '送给爸爸的腕表',
+]
 const workflowNodeLabels: Record<string, string> = {
   intent_agent: '意图识别正在进行',
   clarification_agent: '需求澄清正在进行',
