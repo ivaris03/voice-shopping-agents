@@ -9,10 +9,27 @@ logger = logging.getLogger(__name__)
 
 
 def _category(utterance: str) -> str | None:
+    matches: list[tuple[int, str]] = []
     for category, aliases in CATEGORY_ALIASES.items():
-        if any(alias in utterance for alias in aliases):
-            return category
-    return None
+        for alias in aliases:
+            position = utterance.find(alias)
+            if position >= 0:
+                matches.append((position, category))
+    if not matches:
+        return None
+
+    def is_negated(position: int) -> bool:
+        prefix = utterance[:position]
+        sentence_start = (
+            max(prefix.rfind(marker) for marker in ("，", "。", "；", "！", "？", "、")) + 1
+        )
+        return any(
+            marker in prefix[sentence_start:]
+            for marker in ("不想要", "不想买", "不要", "不买", "不需要", "算了", "别买", "别要")
+        )
+
+    positive_matches = [match for match in matches if not is_negated(match[0])]
+    return min(positive_matches or matches, key=lambda match: match[0])[1]
 
 
 def _normalize_category(value: str | None) -> str | None:
@@ -105,6 +122,34 @@ def _starts_new_request_during_clarification(
     ) or any(marker in utterance for marker in ("重新", "换个", "换一个", "改买", "再推荐"))
 
 
+def _requests_unspecified_category_switch(
+    state: ShoppingState, utterance: str, category: str | None
+) -> bool:
+    """Detect a request to abandon the current category without naming a replacement."""
+    current_category = _normalize_category(state.get("product_category"))
+    if not current_category:
+        return False
+    if not any(
+        marker in utterance
+        for marker in (
+            "另一个品类",
+            "另外一个品类",
+            "其他品类",
+            "其它品类",
+            "别的品类",
+            "换个品类",
+            "换一个品类",
+            "另一个类别",
+            "另外一个类别",
+            "其他类别",
+            "其它类别",
+            "别的类别",
+        )
+    ):
+        return False
+    return not category or _normalize_category(category) == current_category
+
+
 def _selected_recommendation_order(state: ShoppingState, utterance: str) -> IntentResult | None:
     """Prefer a concrete checkout instruction over category-word recommendations."""
     has_order_context = _has_recommendation_cards(state) or _has_pending_order(state)
@@ -130,6 +175,16 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
         (code for code, name in dynamic_category_names.items() if name and name in utterance),
         None,
     ) or _category(utterance)
+    if _requests_unspecified_category_switch(state, utterance, explicit_category):
+        return _finalize_intent(
+            state,
+            IntentResult(
+                type="PRODUCT_RECOMMENDATION",
+                confidence=0.99,
+            ).model_dump(exclude_none=True),
+            True,
+            clear_product_category=True,
+        )
     selected_order = _selected_recommendation_order(state, utterance)
     if selected_order:
         return _finalize_intent(state, selected_order.model_dump(exclude_none=True), False)
@@ -217,6 +272,8 @@ def _finalize_intent(
     state: ShoppingState,
     recognized_intent: dict[str, Any],
     starts_new_product_request: bool,
+    *,
+    clear_product_category: bool = False,
 ) -> dict[str, Any]:
     """Normalize the recognized intent and apply deterministic safety guards.
 
@@ -229,9 +286,12 @@ def _finalize_intent(
     previous_category = _normalize_category(state.get("product_category"))
     updates: dict[str, Any] = {
         "starts_new_product_request": starts_new_product_request,
-        "category_changed": bool(category and category != previous_category),
+        "category_changed": clear_product_category
+        or bool(category and category != previous_category),
     }
-    if category:
+    if clear_product_category:
+        updates["product_category"] = None
+    elif category:
         intent["product_category"] = category
         updates["product_category"] = category
 
@@ -250,6 +310,8 @@ def _finalize_intent(
     if starts_new_product_request or updates["category_changed"]:
         updates["slots"] = {}
         updates["pending_question"] = None
+        updates["product_cards"] = []
+        updates["previous_product_cards"] = []
 
     if (
         intent.get("type") == "PRODUCT_ORDER"

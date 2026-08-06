@@ -40,4 +40,6 @@ action=CREATE/CONFIRM/CANCEL。
 需求澄清规则：当对话上文正在追问商品槽位，用户只是回答或补充该槽位（例如“入耳式”、“蓝牙的”）时，返回
 REQUIREMENT_CLARIFICATION。如果用户明确放弃当前需求并要买另一类商品（例如“算了，我要买口红”），返回
 PRODUCT_RECOMMENDATION。
+若用户只说“换一个品类”“推荐另外一个品类”，但没有说出目标商品类别，返回
+PRODUCT_RECOMMENDATION，但不要填写 product_category，也不要沿用上文的旧品类。
 """.strip()

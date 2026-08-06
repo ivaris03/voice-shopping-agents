@@ -85,7 +85,7 @@ class ConversationState(TypedDict, total=False):
     """Cross-turn dialogue facts, produced by intent and clarification nodes."""
 
     intent: Intent
-    product_category: str
+    product_category: str | None
     category_changed: bool
     required_slots: list[str]
     allowed_slots: list[str]
@@ -158,7 +158,7 @@ class ShoppingInputState(TypedDict, total=False):
     model_enabled: bool
 
     # Cross-turn facts and deterministic inputs needed to seed this turn.
-    product_category: str
+    product_category: str | None
     slots: dict[str, Any]
     pending_question: dict[str, Any] | None
     user_profile_updates: dict[str, Any]
@@ -191,7 +191,7 @@ class ShoppingOutputState(TypedDict, total=False):
 
     intent: Intent
     starts_new_product_request: bool
-    product_category: str
+    product_category: str | None
     category_changed: bool
     required_slots: list[str]
     allowed_slots: list[str]

@@ -262,6 +262,45 @@ async def test_new_same_category_request_clears_pending_clarification_slots() ->
 
 
 @pytest.mark.asyncio
+async def test_unspecified_category_switch_clears_previous_category_and_asks_for_category() -> None:
+    result = await shopping_workflow.ainvoke(
+        {
+            "utterance": "我不想要耳机了，给我推荐另外一个品类的商品。",
+            "model_enabled": False,
+            "product_category": "HEADPHONES",
+            "slots": {"form": "over-ear", "connectivity": "bluetooth"},
+            "previous_product_cards": [{"productId": "headphone-1", "name": "测试耳机"}],
+            "user_profile_snapshot": {},
+        }
+    )
+
+    assert result["intent"] == {
+        "type": "PRODUCT_RECOMMENDATION",
+        "confidence": 0.99,
+    }
+    assert result["product_category"] is None
+    assert result["category_changed"] is True
+    assert result["slots"] == {}
+    assert result["product_cards"] == []
+    assert result["pending_question"]["slot"] == "productCategory"
+
+
+@pytest.mark.asyncio
+async def test_new_category_detection_ignores_the_abandoned_category() -> None:
+    result = await recognize_intent(
+        {
+            "utterance": "嗯，就不想买耳机了，就给我推荐一支口红吧。",
+            "model_enabled": False,
+            "product_category": "HEADPHONES",
+        }
+    )
+
+    assert result["intent"]["type"] == "PRODUCT_RECOMMENDATION"
+    assert result["intent"]["product_category"] == "LIPSTICK"
+    assert result["product_category"] == "LIPSTICK"
+
+
+@pytest.mark.asyncio
 async def test_explicit_slot_answer_is_not_overwritten_by_conflicting_model_value(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
