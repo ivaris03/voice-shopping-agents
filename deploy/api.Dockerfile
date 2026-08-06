@@ -7,6 +7,10 @@ ENV UV_COMPILE_BYTECODE=1 \
     PATH="/app/apps/api/.venv/bin:$PATH" \
     PYTHONPATH="/app/apps/api/src"
 
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY apps/api/pyproject.toml apps/api/uv.lock apps/api/README.md ./apps/api/
 RUN uv sync --project apps/api --frozen --no-dev --no-install-project
 
