@@ -29,7 +29,7 @@ def test_login_verifies_the_existing_phone_and_password_hash_and_issues_a_jwt(
 
     response = client.post(
         "/api/v1/auth/login",
-        json={"phone": " 139 0000 0101 ", "password": "12345678"},
+        json={"phone": " 137 0000 0001 ", "password": "12345678"},
     )
 
     assert response.status_code == 200
@@ -47,7 +47,7 @@ def test_login_verifies_the_existing_phone_and_password_hash_and_issues_a_jwt(
     assert principal.role == "customer"
     assert "phone = :phone" in contract_session.calls[0][0]
     assert "crypt(:password, password_hash)" in contract_session.calls[0][0]
-    assert contract_session.calls[0][1] == {"phone": "13900000101", "password": "12345678"}
+    assert contract_session.calls[0][1] == {"phone": "13700000001", "password": "12345678"}
 
 
 @pytest.mark.contract
@@ -93,7 +93,7 @@ def test_login_rejects_an_ambiguous_phone_without_selecting_an_account(
 
     response = client.post(
         "/api/v1/auth/login",
-        json={"phone": "13900000101", "password": "12345678"},
+        json={"phone": "13700000001", "password": "12345678"},
     )
 
     assert response.status_code == 401
