@@ -122,6 +122,20 @@ function catalogProduct() {
   }
 }
 
+function supportedCategory() {
+  return {
+    id: '30000000-0000-4000-8000-000000000001',
+    categoryL1Id: '30000000-0000-4000-8000-000000000010',
+    categoryL1: 'ELECTRONICS',
+    categoryL2: 'HEADPHONES',
+    requiredSlots: [],
+    optionalSlots: [],
+    slots: [],
+    createdAt: '',
+    updatedAt: '',
+  }
+}
+
 describe('assistant reply audio coordination', () => {
   const speak = vi.fn()
   const cancel = vi.fn()
@@ -203,6 +217,40 @@ describe('assistant reply audio coordination', () => {
     expect(wrapper.text()).toContain(reply)
     expect(speak).not.toHaveBeenCalled()
 
+    wrapper.unmount()
+  })
+
+  it('shows platform-supported second-level categories in a dismissible dialog', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).endsWith('/auth/me')) return currentUserResponse()
+        if (String(input).endsWith('/catalog/categories')) {
+          return new Response(JSON.stringify({ items: [supportedCategory()] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        return new Response(JSON.stringify({ items: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }),
+    )
+    const wrapper = mount(App)
+    await flushPromises()
+
+    await wrapper.get('.supported-categories-trigger').trigger('click')
+    await nextTick()
+
+    const dialog = wrapper.get('.supported-categories-dialog')
+    expect(dialog.attributes('aria-modal')).toBe('true')
+    expect(dialog.text()).toContain('当前支持的二级品类')
+    expect(dialog.text()).toContain('数码电子（ELECTRONICS）')
+    expect(dialog.text()).toContain('耳机（HEADPHONES）')
+
+    await dialog.get('[aria-label="关闭支持品类弹窗"]').trigger('click')
+    expect(wrapper.find('.supported-categories-dialog').exists()).toBe(false)
     wrapper.unmount()
   })
 

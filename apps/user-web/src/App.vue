@@ -12,12 +12,14 @@ import {
   requestJson,
   textWsBaseUrl,
   type ApiEvent,
+  type Category,
   type ItemsResponse,
   type Merchant,
   type Order,
   type Product,
 } from '@voice-shopping/web-ui'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import SupportedCategoriesModal from './SupportedCategoriesModal.vue'
 
 interface RecommendationCard {
   productId: string
@@ -151,6 +153,8 @@ const products = ref<Product[]>([])
 const orders = ref<Order[]>([])
 const recommendations = ref<RecommendationCard[]>([])
 const selectedProduct = ref<Product | null>(null)
+const supportedCategories = ref<Category[]>([])
+const isSupportedCategoriesDialogOpen = ref(false)
 const orderRequestsInFlight = ref(new Set<string>())
 const selectedCategory = ref('')
 const audioInputs = ref<AudioInputOption[]>([])
@@ -343,14 +347,16 @@ async function loadData() {
   loading.value = true
   error.value = ''
   try {
-    const [merchantData, productData, orderData] = await Promise.all([
+    const [merchantData, productData, orderData, categoryData] = await Promise.all([
       requestJson<ItemsResponse<Merchant>>('/catalog/merchants'),
       requestJson<ItemsResponse<Product>>('/catalog/products'),
       requestJson<ItemsResponse<Order>>('/orders/mine'),
+      requestJson<ItemsResponse<Category>>('/catalog/categories'),
     ])
     merchants.value = merchantData.items
     products.value = productData.items
     orders.value = orderData.items
+    supportedCategories.value = categoryData.items
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '加载失败'
   } finally {
@@ -1250,6 +1256,12 @@ onBeforeUnmount(() => {
             {{ isOrdersPage ? `${orders.length} 笔订单 · ${pendingOrders} 笔待确认` : `${merchants.length} 家店 · ${products.length} 件商品` }}
           </p>
           <p class="hero-panel__note">{{ isOrdersPage ? `已完成 ${successfulOrders} 笔订单，确认前会再次校验价格和库存。` : '已完成的点击和成交会持续更新你的偏好画像。' }}</p>
+          <button
+            v-if="!isOrdersPage"
+            class="supported-categories-trigger"
+            type="button"
+            @click="isSupportedCategoriesDialogOpen = true"
+          >查看支持品类</button>
         </div>
       </div>
     </template>
@@ -1397,6 +1409,11 @@ onBeforeUnmount(() => {
       :action-disabled="isOrderRequestInFlight(selectedProduct.id)"
       @close="closeProductDetails"
       @action="buySelectedProduct"
+    />
+    <SupportedCategoriesModal
+      v-if="isSupportedCategoriesDialogOpen"
+      :categories="supportedCategories"
+      @close="isSupportedCategoriesDialogOpen = false"
     />
   </AppShell>
 </template>
