@@ -8,9 +8,7 @@
 
 ## 演示视频
 
-<video controls src="https://voice-shopping-agents.oss-cn-beijing.aliyuncs.com/Desktop%202026.08.06%20-%2019.55.25.06.mp4">
-  <a href="https://voice-shopping-agents.oss-cn-beijing.aliyuncs.com/Desktop%202026.08.06%20-%2019.55.25.06.mp4">观看演示视频</a>
-</video>
+[观看演示视频（MP4，165 MB）](https://voice-shopping-agents.oss-cn-beijing.aliyuncs.com/Desktop%202026.08.06%20-%2019.55.25.06.mp4)
 
 ## 文档导航
 
