@@ -11,8 +11,9 @@ def build_intent_system_prompt(taxonomy_categories: list[dict[str, Any]]) -> str
     )
     return f"""
 你是电商导购意图识别 Agent。只返回一个 JSON 对象。
-type 只能是 PRODUCT_RECOMMENDATION、PRODUCT_ORDER、PRODUCT_COMPARE、PRODUCT_QUERY、
-CHAT、UNSUPPORTED_REQUEST；confidence 必须在 0~1。PRODUCT_ORDER 必须有
+type 只能是 PRODUCT_RECOMMENDATION、REQUIREMENT_CLARIFICATION、PRODUCT_ORDER、
+PRODUCT_COMPARE、PRODUCT_QUERY、CHAT、UNSUPPORTED_REQUEST；confidence 必须在 0~1。
+PRODUCT_ORDER 必须有
 action=CREATE/CONFIRM/CANCEL。
 
 以下是平台当前维护的完整品类与槽位配置：
@@ -35,4 +36,8 @@ action=CREATE/CONFIRM/CANCEL。
 应返回 PRODUCT_ORDER 且 action=CREATE；商品品类词（例如“耳机”）不应把它识别成新的推荐。
 只有在用户明确要确认一个已生成的待确认订单时，才返回 action=CONFIRM；“下单吧”本身不是
 确认。不要输出解释或 Markdown。
+
+需求澄清规则：当对话上文正在追问商品槽位，用户只是回答或补充该槽位（例如“入耳式”、“蓝牙的”）时，返回
+REQUIREMENT_CLARIFICATION。如果用户明确放弃当前需求并要买另一类商品（例如“算了，我要买口红”），返回
+PRODUCT_RECOMMENDATION。
 """.strip()

@@ -136,10 +136,10 @@ async def test_intent_normalizes_category_and_tracks_category_change() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pending_question_skips_intent_recognition_and_completes_slot(
+async def test_pending_question_is_classified_as_requirement_clarification_and_completes_slot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A slot answer resumes clarification instead of starting a second intent turn."""
+    """A slot answer is explicitly routed back to requirement clarification."""
 
     intent_calls: list[str] = []
 
@@ -207,11 +207,58 @@ async def test_pending_question_skips_intent_recognition_and_completes_slot(
     )
 
     assert intent_calls == []
-    assert result.get("intent") is None
+    assert result["intent"]["type"] == "REQUIREMENT_CLARIFICATION"
     assert result["clarification_status"] == "READY"
     assert result["slots"] == {"movement": "automatic"}
     assert result["pending_question"] is None
     assert result["product_cards"][0]["productId"] == product["id"]
+
+
+@pytest.mark.asyncio
+async def test_new_product_request_replaces_pending_clarification_and_clears_slots() -> None:
+    result = await shopping_workflow.ainvoke(
+        {
+            "utterance": "那算了吧，我还是买一个口红。",
+            "model_enabled": False,
+            "product_category": "HEADPHONES",
+            "slots": {"form": "over-ear", "connectivity": "bluetooth"},
+            "pending_question": {
+                "slot": "form",
+                "slots": ["form", "connectivity"],
+                "question": "你想要入耳式还是头戴式？",
+            },
+            "user_profile_snapshot": {},
+        }
+    )
+
+    assert result["intent"]["type"] == "PRODUCT_RECOMMENDATION"
+    assert result["intent"]["product_category"] == "LIPSTICK"
+    assert result["product_category"] == "LIPSTICK"
+    assert result["slots"] == {}
+    assert result["pending_question"]["slots"] == ["shade", "finish"]
+
+
+@pytest.mark.asyncio
+async def test_new_same_category_request_clears_pending_clarification_slots() -> None:
+    result = await recognize_intent(
+        {
+            "utterance": "重新推荐一个耳机。",
+            "model_enabled": False,
+            "product_category": "HEADPHONES",
+            "slots": {"form": "over-ear", "connectivity": "bluetooth"},
+            "pending_question": {
+                "slot": "form",
+                "slots": ["form", "connectivity"],
+                "question": "你想要入耳式还是头戴式？",
+            },
+        }
+    )
+
+    assert result["intent"]["type"] == "PRODUCT_RECOMMENDATION"
+    assert result["starts_new_product_request"] is True
+    assert result["category_changed"] is False
+    assert result["slots"] == {}
+    assert result["pending_question"] is None
 
 
 @pytest.mark.asyncio

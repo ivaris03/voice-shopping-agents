@@ -18,15 +18,15 @@ from voice_shopping_api.agents.state import (
 
 
 def _route_start(state: ShoppingState) -> str:
-    """Resume an outstanding clarification without reclassifying a slot answer."""
-    return "clarify" if state.get("pending_question") else "intent"
+    """Classify every turn before deciding whether it answers a pending question."""
+    return "intent"
 
 
 def _route_intent(state: ShoppingState) -> str:
     intent = (state.get("intent") or {}).get("type")
     if intent == "PRODUCT_ORDER":
         return "order"
-    if intent == "PRODUCT_RECOMMENDATION":
+    if intent in ("PRODUCT_RECOMMENDATION", "REQUIREMENT_CLARIFICATION"):
         return "clarify"
     if intent in ("PRODUCT_COMPARE", "PRODUCT_QUERY"):
         return "recommend"

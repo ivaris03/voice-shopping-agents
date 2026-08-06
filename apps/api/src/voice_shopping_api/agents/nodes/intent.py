@@ -90,6 +90,21 @@ def _starts_new_product_request(utterance: str, category: str | None, intent_typ
     )
 
 
+def _starts_new_request_during_clarification(
+    state: ShoppingState, utterance: str, category: str | None
+) -> bool:
+    """Separate a replacement shopping request from an answer to an open slot."""
+    if not category:
+        return False
+    previous_category = _normalize_category(state.get("product_category"))
+    if category != previous_category:
+        # Naming a different product category abandons the outstanding question.
+        return True
+    return _starts_new_product_request(
+        utterance, category, "PRODUCT_RECOMMENDATION"
+    ) or any(marker in utterance for marker in ("重新", "换个", "换一个", "改买", "再推荐"))
+
+
 def _selected_recommendation_order(state: ShoppingState, utterance: str) -> IntentResult | None:
     """Prefer a concrete checkout instruction over category-word recommendations."""
     has_order_context = _has_recommendation_cards(state) or _has_pending_order(state)
@@ -118,6 +133,25 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
     selected_order = _selected_recommendation_order(state, utterance)
     if selected_order:
         return _finalize_intent(state, selected_order.model_dump(exclude_none=True), False)
+    if state.get("pending_question"):
+        if _starts_new_request_during_clarification(state, utterance, explicit_category):
+            return _finalize_intent(
+                state,
+                IntentResult(
+                    type="PRODUCT_RECOMMENDATION",
+                    confidence=0.99,
+                    product_category=explicit_category,
+                ).model_dump(exclude_none=True),
+                True,
+            )
+        return _finalize_intent(
+            state,
+            IntentResult(
+                type="REQUIREMENT_CLARIFICATION",
+                confidence=0.99,
+            ).model_dump(exclude_none=True),
+            False,
+        )
     if state.get("model_enabled"):
         try:
             model_intent = await recognize_with_model(
@@ -211,10 +245,9 @@ def _finalize_intent(
             product_category=category,
         ).model_dump(exclude_none=True)
 
-    # Query and comparison paths bypass clarification. Clear stale constraints
-    # here as well so a category switch can never filter the new catalog using
-    # attributes from the previous category.
-    if updates["category_changed"]:
+    # New recommendation turns and category switches must not inherit filters
+    # or a question that belonged to an earlier shopping request.
+    if starts_new_product_request or updates["category_changed"]:
         updates["slots"] = {}
         updates["pending_question"] = None
 
