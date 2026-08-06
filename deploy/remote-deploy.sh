@@ -34,7 +34,7 @@ for attempt in $(seq 1 30); do
 done
 
 echo "Applying database migrations..."
-"${compose[@]}" run --rm --no-deps api python apps/api/scripts/migrate.py
+"${compose[@]}" run --rm --no-deps api python apps/api/scripts/migrate.py --seed-demo
 
 echo "Starting application services..."
 "${compose[@]}" up -d --wait --wait-timeout 120 --remove-orphans api user-web merchant-web platform-web
