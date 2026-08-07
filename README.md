@@ -8,7 +8,7 @@
 
 ## 演示视频
 
-[观看演示视频](https://github.com/user-attachments/assets/d9dca369-3024-4ed4-9494-2059de308f1e)
+<a href="https://github.com/user-attachments/assets/d9dca369-3024-4ed4-9494-2059de308f1e">观看演示视频</a>
 
 ## 文档导航
 
