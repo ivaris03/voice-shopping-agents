@@ -2,7 +2,7 @@
 
 This deployment uses four subdomains:
 
-- `app.ivaris.top` - customer web
+- `voice.ivaris.top` - customer web
 - `merchant.ivaris.top` - merchant web
 - `platform.ivaris.top` - platform web
 - `api.ivaris.top` - FastAPI and WebSocket endpoints
@@ -12,7 +12,7 @@ This deployment uses four subdomains:
 Create four `A` records pointing to the Ubuntu server public IP:
 
 ```text
-app.ivaris.top
+voice.ivaris.top
 merchant.ivaris.top
 platform.ivaris.top
 api.ivaris.top
@@ -88,7 +88,7 @@ After DNS resolves, issue certificates:
 
 ```bash
 sudo certbot --nginx \
-  -d app.ivaris.top \
+  -d voice.ivaris.top \
   -d merchant.ivaris.top \
   -d platform.ivaris.top \
   -d api.ivaris.top
