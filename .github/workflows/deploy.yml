@@ -224,6 +224,9 @@ jobs:
     needs: [build-api, build-web]
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      contents: read
+      packages: read
     steps:
       - name: Checkout deployment files
         uses: actions/checkout@v4
@@ -260,6 +263,8 @@ jobs:
       - name: Pull and restart production services
         shell: bash
         env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
           SERVER_USER: ${{ secrets.SERVER_USER }}
           SERVER_PORT: ${{ secrets.SERVER_PORT }}
@@ -267,5 +272,11 @@ jobs:
         run: |
           port="${SERVER_PORT:-22}"
           deploy_path="${DEPLOY_PATH:-/opt/voice-shopping-agents}"
-          ssh -i "$HOME/.ssh/voice-shopping-deploy" -p "$port" "$SERVER_USER@$SERVER_HOST" \
-            "cd '$deploy_path' && IMAGE_PREFIX='$IMAGE_PREFIX' DEPLOY_PATH='$deploy_path' bash deploy/remote-deploy.sh 'sha-${GITHUB_SHA}'"
+          printf '%s\n' "$GHCR_TOKEN" | ssh -i "$HOME/.ssh/voice-shopping-deploy" -p "$port" "$SERVER_USER@$SERVER_HOST" \
+            "set -Eeuo pipefail
+            docker_config=\$(mktemp -d)
+            trap 'rm -rf \"\$docker_config\"' EXIT
+            export DOCKER_CONFIG=\"\$docker_config\"
+            docker login ghcr.io --username '$GHCR_USER' --password-stdin
+            cd '$deploy_path'
+            IMAGE_PREFIX='$IMAGE_PREFIX' DEPLOY_PATH='$deploy_path' bash deploy/remote-deploy.sh 'sha-${GITHUB_SHA}'"
