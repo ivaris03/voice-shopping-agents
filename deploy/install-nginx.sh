@@ -3,11 +3,26 @@ set -Eeuo pipefail
 
 DEPLOY_PATH="${DEPLOY_PATH:-/opt/voice-shopping-agents}"
 SOURCE_CONFIG="${DEPLOY_PATH}/deploy/nginx/ivaris.top.conf"
-TARGET_CONFIG="/etc/nginx/sites-available/ivaris.top.conf"
+DEFAULT_TARGET_CONFIG="/etc/nginx/sites-available/ivaris.top.conf"
 
 if [[ ! -r "$SOURCE_CONFIG" ]]; then
     echo "Nginx configuration is missing or unreadable: ${SOURCE_CONFIG}" >&2
     exit 1
+fi
+
+enabled_config="$(
+    grep -RIl --include='*.conf' 'server_name[[:space:]].*voice\.ivaris\.top' \
+        /etc/nginx/sites-enabled 2>/dev/null | head -n 1 || true
+)"
+if [[ -n "$enabled_config" ]]; then
+    TARGET_CONFIG="$(readlink -f "$enabled_config")"
+else
+    TARGET_CONFIG="$DEFAULT_TARGET_CONFIG"
+    if [[ ! -e /etc/nginx/sites-enabled/ivaris.top.conf ]]; then
+        echo "No enabled Nginx site for voice.ivaris.top was found." >&2
+        echo "Enable ${DEFAULT_TARGET_CONFIG} before running automated deployments." >&2
+        exit 1
+    fi
 fi
 
 backup_config="$(mktemp)"
@@ -31,7 +46,7 @@ restore_previous_config() {
     fi
 }
 
-echo "Installing Nginx configuration..."
+echo "Installing Nginx configuration to ${TARGET_CONFIG}..."
 sudo -n install -m 0644 "$SOURCE_CONFIG" "$TARGET_CONFIG"
 
 if ! sudo -n nginx -t; then

@@ -88,8 +88,10 @@ unset GHCR_READ_TOKEN
 
 ## 4. Nginx and HTTPS
 
-Copy `nginx/ivaris.top.conf` to `/etc/nginx/sites-available/ivaris.top.conf`,
-enable it, and reload Nginx:
+The checked-in site configuration expects the certificate at
+`/etc/letsencrypt/live/ivaris-top/`. For a first installation, issue the
+certificate, then copy `nginx/ivaris.top.conf` to
+`/etc/nginx/sites-available/ivaris.top.conf`, enable it, and reload Nginx:
 
 ```bash
 sudo ln -s /etc/nginx/sites-available/ivaris.top.conf /etc/nginx/sites-enabled/ivaris.top.conf
@@ -98,12 +100,21 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-After DNS resolves, issue certificates:
+If the certificate does not exist yet, first use Certbot's standalone mode
+while port 80 is free:
 
 ```bash
-sudo certbot --nginx \
+sudo systemctl stop nginx
+sudo certbot certonly --standalone \
   -d voice.ivaris.top
+sudo systemctl start nginx
 ```
+
+Automated deployments locate the enabled site containing
+`server_name voice.ivaris.top` and replace its resolved target. This supports
+both the current `ivaris.conf` installation and the documented
+`ivaris.top.conf` filename without leaving a newer but disabled config beside
+the active one.
 
 ## 5. GitHub configuration
 

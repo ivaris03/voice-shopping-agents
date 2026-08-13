@@ -260,6 +260,7 @@ jobs:
             deploy/docker-compose.prod.yml \
             deploy/install-nginx.sh \
             deploy/remote-deploy.sh \
+            deploy/smoke-test.sh \
             "$SERVER_USER@$SERVER_HOST:$deploy_path/deploy/"
           scp -i "$HOME/.ssh/voice-shopping-deploy" -P "$port" \
             deploy/nginx/ivaris.top.conf \
@@ -330,3 +331,7 @@ jobs:
             docker login ghcr.io --username '$GHCR_USER' --password-stdin
             cd '$deploy_path'
             IMAGE_PREFIX='$IMAGE_PREFIX' DEPLOY_PATH='$deploy_path' bash deploy/remote-deploy.sh 'sha-${GITHUB_SHA}'"
+
+      - name: Verify production routing
+        shell: bash
+        run: bash deploy/smoke-test.sh
