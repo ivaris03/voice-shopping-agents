@@ -681,7 +681,7 @@ pnpm test:e2e
 E2E 必须设置独立且可丢弃的 PostgreSQL/PGVector 测试库：
 
 ```powershell
-$env:VOICE_SHOPPING_TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/voice-shopping-agents-test"
+$env:VOICE_SHOPPING_TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/voice_shopping_agents_test"
 pnpm db:prepare-e2e
 pnpm test:e2e
 ```

@@ -78,7 +78,7 @@ pnpm dev:platform
 API 文档位于 `http://localhost:8000/docs`，三个前端分别位于
 `http://localhost:5173`、`http://localhost:5174` 和 `http://localhost:5175`。
 PostgreSQL 与 Redis 默认使用宿主机 `5432`、`6379` 端口。首次使用空数据库时，先创建
-`voice-shopping-agents` 数据库，再执行版本化迁移；本地演示附带播种数据：
+`voice_shopping_agents` 数据库，再执行版本化迁移；本地演示附带播种数据：
 
 ```bash
 pnpm db:migrate --seed-demo

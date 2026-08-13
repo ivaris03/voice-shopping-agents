@@ -44,6 +44,17 @@ Copy `production.env.example` to
 sudo chmod 600 /opt/voice-shopping-agents/.env
 ```
 
+For an existing installation created with the former `voice-shopping-agents`
+database name, stop the API and rename the database once before changing the
+database URLs in `.env` to `voice_shopping_agents`:
+
+```bash
+cd /opt/voice-shopping-agents
+docker compose --env-file .env -f deploy/docker-compose.prod.yml stop api
+docker compose --env-file .env -f deploy/docker-compose.prod.yml exec postgres \
+  sh -lc "psql -U \"\$POSTGRES_USER\" -d postgres -c 'ALTER DATABASE \"voice-shopping-agents\" RENAME TO voice_shopping_agents;'"
+```
+
 The `deploy` user must be able to SSH in with the private key stored in the
 GitHub secret `SERVER_SSH_KEY`.
 

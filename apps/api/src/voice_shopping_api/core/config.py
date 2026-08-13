@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     environment: str = "development"
     api_v1_prefix: str = "/api/v1"
     database_url: str = (
-        "postgresql+asyncpg://postgres:postgres@localhost:5432/voice-shopping-agents"
+        "postgresql+asyncpg://postgres:postgres@localhost:5432/voice_shopping_agents"
     )
     redis_url: str = "redis://localhost:6379/0"
     taxonomy_cache_ttl_seconds: int = Field(default=900, ge=1)
