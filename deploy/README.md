@@ -109,3 +109,10 @@ DEPLOY_PATH       # optional; defaults to /opt/voice-shopping-agents
 Pushes to `main` run validation, build four images, push them to GHCR, upload
 the Compose/deploy scripts, run migrations, and restart the application
 containers. Database and Redis data remain in Docker volumes.
+
+The deployment also attaches PostgreSQL to the external Docker network
+`ivaris-shared` with the alias `ivaris-postgres`. Other applications on the
+same server may reuse this PostgreSQL instance through that network, but each
+application must use its own database and login role. The deploy script creates
+the external network when it does not exist; it never publishes PostgreSQL on
+the host network.

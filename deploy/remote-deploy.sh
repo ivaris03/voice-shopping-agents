@@ -16,17 +16,22 @@ fi
 
 compose=(docker compose --env-file "$ENV_FILE" -f deploy/docker-compose.prod.yml)
 
+if ! docker network inspect ivaris-shared >/dev/null 2>&1; then
+    docker network create ivaris-shared >/dev/null 2>&1 || true
+    docker network inspect ivaris-shared >/dev/null
+fi
+
 echo "Pulling images for ${IMAGE_TAG}..."
 "${compose[@]}" pull api user-web merchant-web platform-web
 
-echo "Starting PostgreSQL and Redis..."
-"${compose[@]}" up -d postgres redis
-
 echo "Stopping the existing API before migrations..."
 # A live WebSocket turn can keep an open database transaction while the
-# migration container waits for DDL locks. Stop the old API first so a stalled
-# realtime request cannot block deployment indefinitely.
+# migration container waits for DDL locks. Stopping before infrastructure
+# reconciliation also keeps the one-time shared-network update orderly.
 "${compose[@]}" stop api
+
+echo "Starting PostgreSQL and Redis..."
+"${compose[@]}" up -d postgres redis
 
 for attempt in $(seq 1 30); do
     if "${compose[@]}" exec -T postgres pg_isready -q; then

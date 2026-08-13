@@ -13,6 +13,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    networks:
+      default:
+      shared_database:
+        aliases:
+          - ivaris-postgres
 
   redis:
     image: redis:7-alpine
@@ -67,3 +72,8 @@ services:
 volumes:
   postgres_data:
   redis_data:
+
+networks:
+  shared_database:
+    name: ivaris-shared
+    external: true
