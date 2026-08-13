@@ -26,6 +26,7 @@ from voice_shopping_api.agents.state import (
     state_for_output,
     state_for_persistence,
 )
+from voice_shopping_api.agents.store import get_memory_store
 from voice_shopping_api.core.catalog_cache import catalog_cache
 from voice_shopping_api.core.config import get_settings
 from voice_shopping_api.core.queries import PRODUCT_COLUMNS, rows
@@ -35,6 +36,8 @@ from voice_shopping_api.modules.catalog.profile import (
     extract_static_profile_candidates,
     merge_static_profile_patches,
     profile_snapshot,
+    update_dynamic_profile_from_turn,
+    update_static_profile,
 )
 from voice_shopping_api.modules.orders.service import (
     cancel_order,
@@ -49,23 +52,24 @@ from voice_shopping_api.modules.sessions.service import (
 from voice_shopping_api.realtime.events import event_envelope
 from voice_shopping_api.schemas.domain import OrderCreate
 
-_checkpointed_workflow: tuple[object, Any] | None = None
+_checkpointed_workflow: tuple[tuple[object | None, object | None], Any] | None = None
 _checkpointed_workflow_lock = asyncio.Lock()
 
 
 async def _workflow_for_turn() -> tuple[Any, bool]:
-    checkpointer = await get_checkpointer()
-    if checkpointer is None:
+    checkpointer, store = await asyncio.gather(get_checkpointer(), get_memory_store())
+    if checkpointer is None and store is None:
         return shopping_workflow, False
+    backend_key = (checkpointer, store)
     global _checkpointed_workflow
-    if _checkpointed_workflow and _checkpointed_workflow[0] is checkpointer:
-        return _checkpointed_workflow[1], True
+    if _checkpointed_workflow and _checkpointed_workflow[0] == backend_key:
+        return _checkpointed_workflow[1], checkpointer is not None
     async with _checkpointed_workflow_lock:
-        if _checkpointed_workflow and _checkpointed_workflow[0] is checkpointer:
-            return _checkpointed_workflow[1], True
-        workflow = build_workflow(checkpointer=checkpointer)
-        _checkpointed_workflow = (checkpointer, workflow)
-        return workflow, True
+        if _checkpointed_workflow and _checkpointed_workflow[0] == backend_key:
+            return _checkpointed_workflow[1], checkpointer is not None
+        workflow = build_workflow(checkpointer=checkpointer, store=store)
+        _checkpointed_workflow = (backend_key, workflow)
+        return workflow, checkpointer is not None
 
 
 def _json_default(value: Any) -> str:
@@ -553,13 +557,7 @@ async def process_turn(
     # request from racing with graph execution and makes all session-scoped
     # reads below safe against cross-user access.
     session_record = await ensure_active_session(session, session_id, user_id)
-    if session_record.get("_created"):
-        # The first turn has no checkpoint to restore. Avoid initializing the
-        # optional Postgres checkpointer on this path so a checkpoint database
-        # outage cannot block a brand-new conversation before its first event.
-        workflow, checkpoint_enabled = shopping_workflow, False
-    else:
-        workflow, checkpoint_enabled = await _workflow_for_turn()
+    workflow, checkpoint_enabled = await _workflow_for_turn()
     run_config = {
         "run_name": "voice-shopping-turn",
         "configurable": {"thread_id": str(session_id)},
@@ -575,9 +573,14 @@ async def process_turn(
     }
     previous: ShoppingState = {}
     if checkpoint_enabled:
-        checkpoint = await workflow.aget_state(run_config)
-        if isinstance(checkpoint.values, Mapping):
-            previous = dict(checkpoint.values)
+        if session_record.get("_created"):
+            # A rolled-back session insert can leave an orphan checkpoint for
+            # the stable thread id. Clear it before saving this genuine first turn.
+            await workflow.checkpointer.adelete_thread(str(session_id))
+        else:
+            checkpoint = await workflow.aget_state(run_config)
+            if isinstance(checkpoint.values, Mapping):
+                previous = dict(checkpoint.values)
     if not previous:
         previous = await _load_business_state(session, session_id, user_id)
     carried_forward = carry_forward_state(previous)
@@ -606,7 +609,9 @@ async def process_turn(
         ),
         "model_enabled": model_enabled,
         "catalog_products": [],
-        "user_profile_snapshot": await profile_snapshot(session, user_id),
+        # The graph's memory_injection node loads the live snapshot. Keeping an
+        # empty fallback here makes the runtime boundary explicit.
+        "user_profile_snapshot": {},
         "user_profile_updates": profile_candidates,
         "previous_product_cards": carried_forward.get("product_cards", []),
         "product_cards": [],
@@ -651,6 +656,28 @@ async def process_turn(
             },
         )
 
+    async def load_profile_memory() -> dict[str, Any]:
+        return await profile_snapshot(session, user_id)
+
+    async def update_profile_memory(current_state: dict[str, Any]) -> dict[str, Any]:
+        patch = merge_static_profile_patches(
+            current_state.get("user_profile_updates", {}),
+            extract_static_profile_candidates(
+                str(current_state.get("utterance", "")),
+                current_state.get("slots", {}),
+            ),
+        )
+        await update_static_profile(session, user_id, patch)
+        if current_state.get("starts_new_product_request"):
+            await update_dynamic_profile_from_turn(
+                session,
+                user_id,
+                current_state.get("product_category"),
+            )
+        # Dynamic profile changes (for example an order confirmed by the order
+        # node) are read in the same async transaction and mirrored to Store.
+        return await profile_snapshot(session, user_id)
+
     async for stream_item in workflow.astream(
         state_input,
         config=run_config,
@@ -664,6 +691,8 @@ async def process_turn(
             reason_publisher=publish_reason if on_events else None,
             speech_delta_publisher=publish_speech_delta if on_events else None,
             speech_sentence_publisher=on_speech_sentence if on_events else None,
+            profile_loader=load_profile_memory,
+            profile_updater=update_profile_memory,
         ),
         # ``tasks`` emits a start item before each node executes.  That is the
         # point at which the UI can truthfully show the node as "running";

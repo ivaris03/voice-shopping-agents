@@ -38,6 +38,16 @@ class Settings(BaseSettings):
             "VOICE_SHOPPING_LANGGRAPH_CHECKPOINT_DATABASE_URL",
         ),
     )
+    langgraph_store_enabled: bool = True
+    langgraph_store_init_timeout_seconds: float = Field(default=5.0, ge=0.1, le=60.0)
+    langgraph_store_embedding_dimensions: int = Field(default=1024, ge=1)
+    langgraph_store_database_url: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "LANGGRAPH_STORE_DATABASE_URL",
+            "VOICE_SHOPPING_LANGGRAPH_STORE_DATABASE_URL",
+        ),
+    )
     cors_origins: str = Field(
         default="http://localhost:5173,http://localhost:5174,http://localhost:5175"
     )
@@ -86,6 +96,13 @@ class Settings(BaseSettings):
     def langgraph_checkpoint_url(self) -> str:
         if self.langgraph_checkpoint_database_url:
             return self.langgraph_checkpoint_database_url
+        return self.database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+
+    @computed_field
+    @property
+    def langgraph_store_url(self) -> str:
+        if self.langgraph_store_database_url:
+            return self.langgraph_store_database_url
         return self.database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
 
 

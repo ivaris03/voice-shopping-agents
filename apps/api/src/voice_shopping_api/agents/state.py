@@ -106,9 +106,10 @@ class TaxonomyState(TypedDict, total=False):
 
 
 class ProfileState(TypedDict, total=False):
-    """Static profile facts collected during the current conversation."""
+    """Profile and semantic memories injected or collected during the turn."""
 
     user_profile_updates: dict[str, Any]
+    semantic_memories: list[dict[str, Any]]
 
 
 class RecommendationState(TypedDict, total=False):
@@ -223,6 +224,8 @@ OrderHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 SpeechDeltaPublisher = Callable[[str], Awaitable[None]]
 SpeechSentencePublisher = Callable[[str, int, int], Awaitable[None]]
 ReasonPublisher = Callable[[ProductReason], Awaitable[None]]
+ProfileLoader = Callable[[], Awaitable[dict[str, Any]]]
+ProfileUpdater = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
 @dataclass(frozen=True)
@@ -234,6 +237,8 @@ class ShoppingRuntimeDependencies:
     reason_publisher: ReasonPublisher | None = None
     speech_delta_publisher: SpeechDeltaPublisher | None = None
     speech_sentence_publisher: SpeechSentencePublisher | None = None
+    profile_loader: ProfileLoader | None = None
+    profile_updater: ProfileUpdater | None = None
 
 
 # Alias used when describing the graph's context boundary.  Keep the longer

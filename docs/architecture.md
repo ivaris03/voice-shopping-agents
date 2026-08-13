@@ -205,25 +205,37 @@ Reranker 分数先裁剪到 `[0, 1]`，前 20 条取 Top 3；Reranker 不可用�
 
 对比和查询优先使用上一轮商品卡；没有商品卡时才进入正常召回路径。商品卡由后端事实构造，理由生成被拆到下一个回复节点。
 
-## 6. 用户画像架构
+## 6. 三层记忆与用户画像架构
 
 画像数据拆成两个表和一个会话候选区：
 
 ```mermaid
 flowchart LR
-    T["当前话语/槽位"] --> U["session_states.user_profile_updates"]
-    U --> F["会话关闭、断开或订单终态"]
-    F --> S["user_profile_static"]
+    T["当前 Graph State"] --> CP["AsyncPostgresSaver<br/>短期记忆"]
+    T --> MW["memory_update"]
+    MW --> SM["AsyncPostgresStore<br/>语义记忆"]
+    MW --> S["user_profile_static"]
     C["商品点击"] --> D["user_profile_dynamic"]
     O["成功订单"] --> D
-    S --> P["userProfileSnapshot"]
-    D --> P
-    P --> R["推荐节点，只读"]
+    S --> MI["memory_injection"]
+    D --> MI
+    SM --> MI
+    MI --> R["意图/澄清/推荐节点"]
 ```
 
+- 短期记忆由 `AsyncPostgresSaver` 按 `thread_id=session UUID` 保存完整 Graph State；
+  `session_states.business_state` 仍是可审计的业务投影和降级恢复源。
+- 语义记忆按 `("users", user_id, "semantic")` 命名空间写入
+  `AsyncPostgresStore`。配置 DashScope 时对 `text` 字段建立 1024 维向量索引并按当前话语召回，
+  未配置模型时退化为最近记忆读取。
+- `memory_injection` 是 Graph 的第一个节点：在意图识别前读取 SQL 静态/动态画像，召回语义事实，
+  并将 `user_profile_snapshot` 与 `semantic_memories` 注入 State。
+- `memory_update` 是合规发布后的最后一个节点：异步收敛当前轮静态画像、读取可能被订单节点更新的
+  动态画像，并把两层画像镜像到 Store；Store 失败只降级长期记忆，不中断购物回复。
 - 静态资料抽取只接受高置信度文本规则和可信 `profile` 渠道；无效值被丢弃，空值不覆盖旧值。
 - 显式 profile patch 在合并顺序上覆盖对话抽取结果。
 - 动态画像更新锁定用户和画像行，点击权重为 `0.1`，成功订单权重为 `0.32`，分数封顶为 `1.0`；最近浏览/购买列表去重并限制 20 条。
+- 明确的新购物请求以 `0.04` 的低权重更新品类亲和度；后续澄清回答不重复累计。
 - 成功订单后重新计算用户全部成功订单的平均客单价。
 - 推荐前读取静态和动态画像形成只读快照；快照、候选商品和生成文本不写入业务状态投影。
 
@@ -241,11 +253,12 @@ flowchart LR
 
 ## 8. 会话持久化和并发
 
-### 8.1 两层状态存储
+### 8.1 三层记忆存储
 
 LangGraph Checkpointer 和业务状态投影各自承担不同职责：
 
-- Checkpointer：可选的 PostgreSQL `AsyncPostgresSaver`，懒加载并持久化完整 StateGraph 状态；`configurable.thread_id` 使用 `stable_uuid(session_key)`。
+- 短期记忆：PostgreSQL `AsyncPostgresSaver` 懒加载并持久化完整 StateGraph 状态；`configurable.thread_id` 使用 `stable_uuid(session_key)`。新建 session 会先清理同 thread id 的孤儿 checkpoint，再从第一轮开始保存。
+- 语义记忆：PostgreSQL `AsyncPostgresStore` 使用 user id 命名空间隔离用户，保存跨会话购物事实与画像镜像；画像表仍是画像事实的权威来源。
 - `session_states.business_state`：每轮只保存业务侧需要查询、审计或在无 checkpoint 时引导下一轮的投影。当前版本的键为 `product_category`、`slots`、`user_profile_updates`、`pending_question`、`product_cards`，版本号为 `1`。
 - 下一轮优先从 Checkpointer 恢复；没有 checkpoint 时读取 `session_states` 最新投影，并通过 `carry_forward_state()` 丢弃未知或过期字段。
 - 待确认订单从 `orders` 查询，完整订单详情不依赖图状态；画像快照、候选商品、模型开关、回复文本不跨轮持久化。

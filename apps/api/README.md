@@ -45,3 +45,7 @@ LangGraph 使用 PostgreSQL Checkpointer 持久化每个工作流节点；业务
 `session_states.business_state`。默认复用 `VOICE_SHOPPING_DATABASE_URL`；如需单独的 checkpoint 数据库，设置
 `VOICE_SHOPPING_LANGGRAPH_CHECKPOINT_DATABASE_URL`。在 Windows 上，上述启动器会让 Uvicorn
 工作进程通过 psycopg 兼容的 Selector loop factory 创建事件循环；请不要直接用 `uvicorn` 命令替代它。
+
+长期语义记忆和画像镜像使用 `AsyncPostgresStore`，默认同样复用应用数据库，也可通过
+`VOICE_SHOPPING_LANGGRAPH_STORE_DATABASE_URL` 独立配置。Store 在应用首次使用时执行幂等 `setup()`；
+配置 DashScope API Key 后会对记忆文本建立 1024 维向量索引，未配置时保留非向量的最近记忆能力。

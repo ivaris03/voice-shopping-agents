@@ -5,6 +5,7 @@ from typing import Any
 from voice_shopping_api.agents.model import recognize_with_model
 from voice_shopping_api.agents.nodes.clarification import extract_slots_for_intent
 from voice_shopping_api.agents.nodes.constants import CATEGORY_ALIASES
+from voice_shopping_api.agents.nodes.memory import model_memory_context
 from voice_shopping_api.agents.state import IntentResult, ShoppingState
 
 logger = logging.getLogger(__name__)
@@ -246,7 +247,7 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
         try:
             model_intent = await recognize_with_model(
                 utterance,
-                state.get("conversation_history", []),
+                model_memory_context(state),
                 state.get("taxonomy_categories", []),
             )
             category = explicit_category or _normalize_category(model_intent.product_category)

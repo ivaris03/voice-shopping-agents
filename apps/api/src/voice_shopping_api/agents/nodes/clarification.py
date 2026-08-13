@@ -4,6 +4,7 @@ from typing import Any
 
 from voice_shopping_api.agents.model import extract_slots_with_model
 from voice_shopping_api.agents.nodes.constants import QUESTIONS, REQUIRED_SLOTS, SLOT_DEFINITIONS
+from voice_shopping_api.agents.nodes.memory import model_memory_context
 from voice_shopping_api.agents.state import ClarificationResult, ShoppingState
 
 logger = logging.getLogger(__name__)
@@ -310,7 +311,7 @@ async def extract_slots_for_intent(state: ShoppingState) -> dict[str, Any]:
                 slots,
                 state.get("pending_question") if not starts_new_request else None,
                 relevant_definitions,
-                state.get("conversation_history", []),
+                model_memory_context(state),
             )
             model_slots = _validated_agent_slots(agent_slots, allowed_slots, taxonomy_definitions)
             slots.update(

@@ -1,3 +1,6 @@
+import json
+from uuid import UUID
+
 import pytest
 from pydantic import ValidationError
 
@@ -6,6 +9,7 @@ from voice_shopping_api.modules.catalog.profile import (
     extract_static_profile_candidates,
     merge_static_profile_patches,
     normalize_static_profile_patch,
+    update_dynamic_profile_from_turn,
 )
 from voice_shopping_api.schemas.domain import UserProfileStaticPatch
 
@@ -73,3 +77,35 @@ def test_completed_clarification_clears_its_pending_question_before_persistence(
     )
 
     assert persisted["pending_question"] is None
+
+
+@pytest.mark.asyncio
+async def test_new_shopping_request_weakly_updates_dynamic_category_affinity() -> None:
+    class Result:
+        def __init__(self, value: object = None) -> None:
+            self.value = value
+
+        def scalar_one_or_none(self) -> object:
+            return self.value
+
+    class Session:
+        def __init__(self) -> None:
+            self.results = [Result(USER_ID), Result({"WATCHES": 0.2}), Result()]
+            self.calls: list[dict[str, object] | None] = []
+
+        async def execute(self, _statement: object, params: dict[str, object] | None = None):
+            self.calls.append(params)
+            return self.results.pop(0)
+
+    USER_ID = UUID("00000000-0000-0000-0000-000000000101")
+    session = Session()
+
+    changed = await update_dynamic_profile_from_turn(session, USER_ID, "WATCHES")
+
+    assert changed is True
+    assert json.loads(str(session.calls[-1]["category_affinity"])) == {"WATCHES": 0.24}
+
+
+@pytest.mark.asyncio
+async def test_dynamic_profile_ignores_turn_without_a_category() -> None:
+    assert await update_dynamic_profile_from_turn(None, UUID(int=1), None) is False

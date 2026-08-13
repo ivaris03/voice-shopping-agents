@@ -1,8 +1,10 @@
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
+from langgraph.store.base import BaseStore
 
 from voice_shopping_api.agents.nodes.clarification import clarify_requirements
 from voice_shopping_api.agents.nodes.intent import recognize_intent
+from voice_shopping_api.agents.nodes.memory import inject_profile_memory, update_long_term_memory
 from voice_shopping_api.agents.nodes.recommendation import recommend_products
 from voice_shopping_api.agents.nodes.response import (
     compliance_node,
@@ -37,7 +39,11 @@ def _route_clarification(state: ShoppingState) -> str:
     return "recommend" if state.get("clarification_status") == "READY" else "respond"
 
 
-def build_workflow(*, checkpointer: BaseCheckpointSaver | None = None):
+def build_workflow(
+    *,
+    checkpointer: BaseCheckpointSaver | None = None,
+    store: BaseStore | None = None,
+):
     """Assemble the graph; business rules remain inside the individual nodes."""
     graph = StateGraph(
         ShoppingState,
@@ -45,14 +51,17 @@ def build_workflow(*, checkpointer: BaseCheckpointSaver | None = None):
         output_schema=ShoppingOutputState,
         context_schema=ShoppingContext,
     )
+    graph.add_node("memory_injection", inject_profile_memory)
     graph.add_node("intent_agent", recognize_intent)
     graph.add_node("clarification_agent", clarify_requirements)
     graph.add_node("recommendation_agent", recommend_products)
     graph.add_node("order_node", order_response)
     graph.add_node("emotional_agent", emotional_response)
     graph.add_node("compliance_node", compliance_node)
+    graph.add_node("memory_update", update_long_term_memory)
+    graph.add_edge(START, "memory_injection")
     graph.add_conditional_edges(
-        START,
+        "memory_injection",
         _route_start,
         {"intent": "intent_agent", "clarify": "clarification_agent"},
     )
@@ -74,8 +83,9 @@ def build_workflow(*, checkpointer: BaseCheckpointSaver | None = None):
     graph.add_edge("recommendation_agent", "emotional_agent")
     graph.add_edge("order_node", "compliance_node")
     graph.add_edge("emotional_agent", "compliance_node")
-    graph.add_edge("compliance_node", END)
-    return graph.compile(checkpointer=checkpointer)
+    graph.add_edge("compliance_node", "memory_update")
+    graph.add_edge("memory_update", END)
+    return graph.compile(checkpointer=checkpointer, store=store)
 
 
 shopping_workflow = build_workflow()

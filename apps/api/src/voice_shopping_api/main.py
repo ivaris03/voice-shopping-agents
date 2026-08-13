@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from voice_shopping_api import __version__
 from voice_shopping_api.agents.checkpointer import close_checkpointer
+from voice_shopping_api.agents.store import close_memory_store
 from voice_shopping_api.api.router import api_router
 from voice_shopping_api.core.catalog_cache import catalog_cache
 from voice_shopping_api.core.config import get_settings
@@ -30,6 +31,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
     await close_taxonomy_cache()
     await close_checkpointer()
+    await close_memory_store()
     await catalog_cache.close()
     await close_product_embedding_cache()
     await realtime_hub.close()

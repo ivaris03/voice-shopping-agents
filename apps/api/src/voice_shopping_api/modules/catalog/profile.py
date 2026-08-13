@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 RECENT_ITEMS_LIMIT = 20
 CLICK_AFFINITY_WEIGHT = 0.1
 ORDER_AFFINITY_WEIGHT = 0.32
+SHOPPING_INTENT_AFFINITY_WEIGHT = 0.04
 
 STATIC_PROFILE_FIELDS = (
     "gender",
@@ -425,6 +426,62 @@ async def update_profiles(
             "now": now,
         },
     )
+
+
+async def update_dynamic_profile_from_turn(
+    session: AsyncSession,
+    user_id: UUID,
+    category: str | None,
+) -> bool:
+    """Learn a weak category preference from one explicit new shopping request.
+
+    Clicks and orders remain stronger behavioral evidence. The caller filters
+    out clarification answers, so a multi-turn request increments only once.
+    """
+    if not category:
+        return False
+
+    user_result = await session.execute(
+        text("SELECT id FROM users WHERE id = :user_id FOR UPDATE"),
+        {"user_id": user_id},
+    )
+    if user_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    dynamic_result = await session.execute(
+        text(
+            """
+            SELECT category_affinity
+            FROM user_profile_dynamic
+            WHERE user_id = :user_id
+            FOR UPDATE
+            """
+        ),
+        {"user_id": user_id},
+    )
+    current = dynamic_result.scalar_one_or_none()
+    category_affinity = _bump(
+        _score_map(current),
+        category,
+        SHOPPING_INTENT_AFFINITY_WEIGHT,
+    )
+    await session.execute(
+        text(
+            """
+            INSERT INTO user_profile_dynamic (user_id, category_affinity, updated_at)
+            VALUES (:user_id, CAST(:category_affinity AS jsonb), :now)
+            ON CONFLICT (user_id) DO UPDATE SET
+                category_affinity = EXCLUDED.category_affinity,
+                updated_at = EXCLUDED.updated_at
+            """
+        ),
+        {
+            "user_id": user_id,
+            "category_affinity": json.dumps(category_affinity, ensure_ascii=False),
+            "now": datetime.now(UTC),
+        },
+    )
+    return True
 
 
 async def profile_snapshot(session: AsyncSession, user_id: UUID) -> dict[str, object]:
