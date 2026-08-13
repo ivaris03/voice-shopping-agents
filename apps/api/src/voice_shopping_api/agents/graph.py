@@ -28,7 +28,7 @@ def _route_intent(state: ShoppingState) -> str:
         return "order"
     if intent in ("PRODUCT_RECOMMENDATION", "REQUIREMENT_CLARIFICATION"):
         return "clarify"
-    if intent in ("PRODUCT_COMPARE", "PRODUCT_QUERY"):
+    if intent == "PRODUCT_COMPARE":
         return "recommend"
     return "respond"
 

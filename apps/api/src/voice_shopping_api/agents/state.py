@@ -5,11 +5,10 @@ from typing import Any, Literal, TypedDict
 from pydantic import BaseModel, ConfigDict, Field
 
 IntentType = Literal[
-    "PRODUCT_RECOMMENDATION",
     "REQUIREMENT_CLARIFICATION",
-    "PRODUCT_ORDER",
+    "PRODUCT_RECOMMENDATION",
     "PRODUCT_COMPARE",
-    "PRODUCT_QUERY",
+    "PRODUCT_ORDER",
     "CHAT",
     "UNSUPPORTED_REQUEST",
 ]

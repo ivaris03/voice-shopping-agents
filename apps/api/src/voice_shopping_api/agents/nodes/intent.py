@@ -262,11 +262,12 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
         if positions:
             detections.append((min(positions), result))
 
-    recommendation_words = ("推荐", "想买", "帮我选", "需要一") + CATEGORY_ALIASES.get(
-        explicit_category or "", ()
-    )
-    if explicit_category in dynamic_category_names:
-        recommendation_words += (dynamic_category_names[explicit_category],)
+    comparison_words = ("对比", "比较", "区别", "比货", "多少钱", "库存", "介绍", "怎么样", "查询")
+    recommendation_words = ("推荐", "想买", "帮我选", "需要一")
+    if not any(word in utterance for word in comparison_words):
+        recommendation_words += CATEGORY_ALIASES.get(explicit_category or "", ())
+        if explicit_category in dynamic_category_names:
+            recommendation_words += (dynamic_category_names[explicit_category],)
     detect(
         recommendation_words,
         IntentResult(
@@ -274,12 +275,8 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
         ),
     )
     detect(
-        ("对比", "比较", "区别"),
+        comparison_words,
         IntentResult(type="PRODUCT_COMPARE", confidence=0.94, product_category=explicit_category),
-    )
-    detect(
-        ("多少钱", "库存", "介绍", "怎么样", "查询"),
-        IntentResult(type="PRODUCT_QUERY", confidence=0.9, product_category=explicit_category),
     )
     detect(
         ("下单", "买第一", "买第二", "买第三", "确认", "取消订单"),
@@ -327,7 +324,7 @@ def _finalize_intent(
         intent["product_category"] = category
         updates["product_category"] = category
 
-    # A clear new purchase request is more reliable than a model's query/chat
+    # A clear new purchase request is more reliable than a model's compare/chat
     # label for noisy ASR. Selected checkout requests were handled above, so
     # routing this case through clarification cannot steal a concrete order.
     if starts_new_product_request and intent.get("type") != "PRODUCT_RECOMMENDATION":

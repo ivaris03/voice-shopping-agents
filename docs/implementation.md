@@ -54,10 +54,10 @@
 START
   -> clarification_agent          (存在 pending_question)
   -> intent_agent                 (无 pending_question)
-     -> clarification_agent       (PRODUCT_RECOMMENDATION)
+     -> clarification_agent       (REQUIREMENT_CLARIFICATION / PRODUCT_RECOMMENDATION)
         -> recommendation_agent   (clarification_status=READY)
         -> emotional_agent         (clarification_status=ASK)
-     -> recommendation_agent      (PRODUCT_COMPARE / PRODUCT_QUERY)
+     -> recommendation_agent      (PRODUCT_COMPARE)
      -> order_node                (PRODUCT_ORDER)
      -> emotional_agent            (CHAT / UNSUPPORTED_REQUEST)
    -> emotional_agent
@@ -192,7 +192,7 @@ product.id in recentPurchased          -0.30
 
 输出卡片字段包括 `productId`、`merchantId`、`merchantName`、`sku`、`name`、`categoryL1`、`categoryL2`、`brand`、`description`、`price`、`stock`、`imageUrl`、`imageUrls`、`status`、`createdAt`、`updatedAt`、`sellingPoints`、`attributes`、`matchScore` 和 `scoreBreakdown`。这些字段均来自后端商品事实，推荐节点不生成理由。
 
-`PRODUCT_COMPARE` 和 `PRODUCT_QUERY` 有上一轮卡片时直接复用最多 3 张；查询意图优先选择用户话语中提到的商品名称，否则选择第一张。对比/查询的情绪风格为 `analytical-professional`，有商品推荐时为 `warm-professional`，无结果时为 `helpful-apologetic`。
+`PRODUCT_COMPARE` 有上一轮卡片时直接复用最多 3 张；商品对比、询价、库存和单品信息查询统一归入该意图。单品查询优先选择用户话语中提到的商品名称，否则选择第一张。比货的情绪风格为 `analytical-professional`，有商品推荐时为 `warm-professional`，无结果时为 `helpful-apologetic`。
 
 ## 6. 商品向量实现
 

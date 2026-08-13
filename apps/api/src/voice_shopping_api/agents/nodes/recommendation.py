@@ -84,13 +84,16 @@ async def recommend_products(
 ) -> dict[str, Any]:
     intent = (state.get("intent") or {}).get("type")
     previous_cards = state.get("previous_product_cards", [])
-    if intent in ("PRODUCT_COMPARE", "PRODUCT_QUERY") and previous_cards:
+    if intent == "PRODUCT_COMPARE" and previous_cards:
         selected = previous_cards
-        if intent == "PRODUCT_QUERY":
+        utterance = state.get("utterance", "")
+        comparison_words = ("对比", "比较", "区别", "比货")
+        single_product_query_words = ("多少钱", "库存", "介绍", "怎么样", "查询")
+        if any(word in utterance for word in single_product_query_words) and not any(
+            word in utterance for word in comparison_words
+        ):
             mentioned = [
-                card
-                for card in previous_cards
-                if str(card.get("name") or "") in state.get("utterance", "")
+                card for card in previous_cards if str(card.get("name") or "") in utterance
             ]
             selected = mentioned or previous_cards[:1]
         return ProductRecommendationResult(

@@ -43,19 +43,20 @@ POC 优先验证以下闭环：
 
 ### 3.1 意图与下单安全
 
-顶层意图固定为 6 类：
+顶层意图固定为 6 类（澄清、推荐、比货、下单、闲聊、越权）：
 
 ```text
-PRODUCT_RECOMMENDATION  PRODUCT_ORDER
-PRODUCT_COMPARE         PRODUCT_QUERY
-CHAT                    UNSUPPORTED_REQUEST
+REQUIREMENT_CLARIFICATION  PRODUCT_RECOMMENDATION
+PRODUCT_COMPARE            PRODUCT_ORDER
+CHAT                       UNSUPPORTED_REQUEST
 ```
 
 规则：
 
 - 每轮只返回一个主意图及其 `confidence`。一句话包含多个请求时，选择最先表达且当前可执行的请求。
 - `PRODUCT_ORDER` 使用 `action=CREATE/CONFIRM/CANCEL` 区分订单阶段。
-- 推荐、对比和查询只能使用平台当前维护的二级品类；用户未说明且上下文无法确定时不得猜测品类。
+- 推荐和比货只能使用平台当前维护的二级品类；用户未说明且上下文无法确定时不得猜测品类。
+- 商品对比、询价、库存和单品信息查询统一归为 `PRODUCT_COMPARE`，不再设置独立查询意图。
 - 意图识别提示词必须包含平台当前维护的全部二级品类、每个品类的必填/选填槽位和枚举值。
 - 用户已经看到推荐结果后说“买第二款”“买这个”“帮我下单”等，识别为 `PRODUCT_ORDER + CREATE`。
 - 只有存在待确认订单且用户明确说“确认/确定”等，才识别为 `PRODUCT_ORDER + CONFIRM`；“下单吧”本身仍是创建待确认订单。
@@ -137,7 +138,7 @@ flowchart TD
 
 推荐卡必须只引用后端商品事实，包括商品 ID、商家、SKU、名称、品类、品牌、描述、价格、库存、图片、卖点和属性。推荐 Agent 不生成推荐理由。
 
-`PRODUCT_COMPARE` 和 `PRODUCT_QUERY` 在已有推荐上下文时复用最近商品卡，不重新召回；查询可以根据用户提到的商品名称选择单卡。
+`PRODUCT_COMPARE` 在已有推荐上下文时复用最近商品卡，不重新召回；询价、库存和单品信息查询也归入该意图，并可根据用户提到的商品名称选择单卡。
 
 画像分为两层：
 

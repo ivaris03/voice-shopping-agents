@@ -1,4 +1,5 @@
 import asyncio
+from typing import get_args
 from uuid import UUID
 
 import pytest
@@ -27,6 +28,7 @@ from voice_shopping_api.agents.nodes.response import (
 from voice_shopping_api.agents.service import _handle_order, state_events
 from voice_shopping_api.agents.state import (
     IntentResult,
+    IntentType,
     ProductReason,
     RecommendationHook,
     ShoppingInputState,
@@ -37,11 +39,30 @@ from voice_shopping_api.agents.state import (
 )
 
 
+def test_intent_type_has_exactly_six_business_intents() -> None:
+    assert set(get_args(IntentType)) == {
+        "REQUIREMENT_CLARIFICATION",
+        "PRODUCT_RECOMMENDATION",
+        "PRODUCT_COMPARE",
+        "PRODUCT_ORDER",
+        "CHAT",
+        "UNSUPPORTED_REQUEST",
+    }
+
+
 @pytest.mark.asyncio
 async def test_intent_selects_the_first_expressed_request() -> None:
     result = await recognize_intent({"utterance": "先推荐耳机，再对比一下，然后下单"})
 
     assert result["intent"]["type"] == "PRODUCT_RECOMMENDATION"
+    assert result["intent"]["product_category"] == "HEADPHONES"
+
+
+@pytest.mark.asyncio
+async def test_product_information_query_uses_compare_intent() -> None:
+    result = await recognize_intent({"utterance": "这款耳机多少钱？", "model_enabled": False})
+
+    assert result["intent"]["type"] == "PRODUCT_COMPARE"
     assert result["intent"]["product_category"] == "HEADPHONES"
 
 
@@ -385,14 +406,14 @@ async def test_explicit_slot_answer_is_not_overwritten_by_conflicting_model_valu
 
 
 @pytest.mark.asyncio
-async def test_model_query_for_explicit_purchase_routes_through_clarification(
+async def test_model_compare_for_explicit_purchase_routes_through_clarification(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Noisy ASR must not let a query label bypass new-product clarification."""
+    """Noisy ASR must not let a compare label bypass new-product clarification."""
 
     async def fake_recognize_with_model(*_: object) -> IntentResult:
         return IntentResult(
-            type="PRODUCT_QUERY",
+            type="PRODUCT_COMPARE",
             confidence=0.95,
             product_category="HEADPHONES",
         )
@@ -459,12 +480,12 @@ async def test_model_query_for_explicit_purchase_routes_through_clarification(
 
 
 @pytest.mark.asyncio
-async def test_model_query_category_switch_clears_old_slots(
+async def test_model_compare_category_switch_clears_old_slots(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def fake_recognize_with_model(*_: object) -> IntentResult:
         return IntentResult(
-            type="PRODUCT_QUERY",
+            type="PRODUCT_COMPARE",
             confidence=0.95,
             product_category="HEADPHONES",
         )
@@ -479,7 +500,7 @@ async def test_model_query_category_switch_clears_old_slots(
         }
     )
 
-    assert result["intent"]["type"] == "PRODUCT_QUERY"
+    assert result["intent"]["type"] == "PRODUCT_COMPARE"
     assert result["category_changed"] is True
     assert result["slots"] == {}
     assert result["pending_question"] is None
@@ -498,7 +519,7 @@ async def test_retrieval_ignores_slots_outside_current_category() -> None:
     await recommend_products(
         {
             "utterance": "耳机多少钱？",
-            "intent": {"type": "PRODUCT_QUERY", "confidence": 0.95},
+            "intent": {"type": "PRODUCT_COMPARE", "confidence": 0.95},
             "model_enabled": False,
             "product_category": "HEADPHONES",
             "slots": {"gender": "male", "size": 42, "terrain": "road", "form": "over-ear"},
@@ -512,6 +533,23 @@ async def test_retrieval_ignores_slots_outside_current_category() -> None:
     )
 
     assert retrievals[0]["slots"] == {"form": "over-ear"}
+
+
+@pytest.mark.asyncio
+async def test_compare_intent_keeps_single_product_query_card_selection() -> None:
+    result = await recommend_products(
+        {
+            "utterance": "测试耳机 B 多少钱？",
+            "intent": {"type": "PRODUCT_COMPARE", "confidence": 0.95},
+            "previous_product_cards": [
+                {"productId": "headphone-a", "name": "测试耳机 A"},
+                {"productId": "headphone-b", "name": "测试耳机 B"},
+            ],
+        },
+        Runtime(context=None),
+    )
+
+    assert result["product_cards"] == [{"productId": "headphone-b", "name": "测试耳机 B"}]
 
 
 @pytest.mark.asyncio
