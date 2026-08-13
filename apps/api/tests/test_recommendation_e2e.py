@@ -473,13 +473,12 @@ async def test_capsule_coffee_machine(
 
 
 @pytest.mark.asyncio
-async def test_semi_auto_with_steam_wand_penalizes_repeat_purchase(
+async def test_semi_auto_with_steam_wand_excludes_repeat_purchase_from_top_three(
     session: AsyncSession,
     catalog: dict[str, dict[str, Any]],
     required_slots: dict[str, list[str]],
 ) -> None:
-    """102 半自动带蒸汽棒：type 与布尔槽位 steamWand 均参与硬过滤，
-    已购买的 De'Longhi Dedica 命中最近购买惩罚 -0.3。"""
+    """102 半自动带蒸汽棒：硬过滤保留已购商品，但复购惩罚将其移出 Top 3。"""
     outcome = await run_and_record(
         session,
         catalog,
@@ -492,11 +491,10 @@ async def test_semi_auto_with_steam_wand_penalizes_repeat_purchase(
         model_enabled=False,
     )
     dedica_name = "De'Longhi Dedica EC685 半自动咖啡机"
-    assert dedica_name in {product["name"] for product in outcome["candidates"]}
-    dedica = next(card for card in outcome["cards"] if card["name"] == dedica_name)
-    breakdown = dedica["scoreBreakdown"]
-    assert breakdown["repeatPurchase"] == -0.3  # 90 天内买过 Dedica
-    assert "priceOverAvgOrderAmount" not in breakdown  # 1899 < 1899 * 1.5
+    dedica = next(product for product in outcome["candidates"] if product["name"] == dedica_name)
+    snapshot = await profile_snapshot(session, USER_102)
+    assert str(dedica["id"]) in snapshot["dynamic"]["recentPurchased"]
+    assert dedica_name not in {card["name"] for card in outcome["cards"]}
 
 
 @pytest.mark.asyncio
@@ -537,12 +535,13 @@ async def test_rule_penalty_reorders_top_choice_deterministically(
         },
         model_enabled=False,
     )
-    penalized = next(
-        card for card in outcome["cards"] if card["productId"] == baseline_card["productId"]
-    )
-    assert penalized["matchScore"] == pytest.approx(baseline_card["matchScore"] - 0.3, abs=0.001)
-    assert penalized["scoreBreakdown"]["repeatPurchase"] == -0.3
-    assert outcome["cards"][-1]["productId"] == baseline_card["productId"]
+    assert [product["id"] for product in outcome["candidates"]] == [
+        product["id"] for product in without_profile["candidates"]
+    ]
+    baseline_ids = [card["productId"] for card in without_profile["cards"]]
+    reranked_ids = [card["productId"] for card in outcome["cards"]]
+    assert reranked_ids[:2] == baseline_ids[1:]
+    assert baseline_card["productId"] not in reranked_ids
 
 
 @pytest.mark.asyncio
@@ -576,8 +575,7 @@ async def test_fallback_path_without_model_is_deterministic(
     catalog: dict[str, dict[str, Any]],
     required_slots: dict[str, list[str]],
 ) -> None:
-    """无模型兜底：硬过滤仍生效（缓震为已填可选槽位），词法分 0.52 +
-    品牌命中 0.2，确定性返回唯一候选 Pegasus 41。"""
+    """无模型兜底：硬过滤仍生效，向量分为 0，品牌命中加 0.2。"""
     outcome = await run_and_record(
         session,
         catalog,
@@ -591,8 +589,8 @@ async def test_fallback_path_without_model_is_deterministic(
     )
     assert outcome["vector_used"] is False  # 无 embedding，走 created_at 排序
     assert [card["name"] for card in outcome["cards"]] == ["Nike Pegasus 41 跑鞋"]
-    assert outcome["cards"][0]["scoreBreakdown"]["vector"] == pytest.approx(0.52, abs=0.001)
-    assert outcome["cards"][0]["matchScore"] == pytest.approx(0.72, abs=0.001)  # 0.52 + 品牌 0.2
+    assert outcome["cards"][0]["scoreBreakdown"]["vector"] == 0.0
+    assert outcome["cards"][0]["matchScore"] == pytest.approx(0.2, abs=0.001)
 
 
 @pytest.mark.asyncio
