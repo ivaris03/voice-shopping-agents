@@ -254,11 +254,29 @@ jobs:
         run: |
           port="${SERVER_PORT:-22}"
           deploy_path="${DEPLOY_PATH:-/opt/voice-shopping-agents}"
-          ssh -i "$HOME/.ssh/voice-shopping-deploy" -p "$port" "$SERVER_USER@$SERVER_HOST" "mkdir -p '$deploy_path/deploy'"
+          ssh -i "$HOME/.ssh/voice-shopping-deploy" -p "$port" "$SERVER_USER@$SERVER_HOST" \
+            "mkdir -p '$deploy_path/deploy/nginx'"
           scp -i "$HOME/.ssh/voice-shopping-deploy" -P "$port" \
             deploy/docker-compose.prod.yml \
+            deploy/install-nginx.sh \
             deploy/remote-deploy.sh \
             "$SERVER_USER@$SERVER_HOST:$deploy_path/deploy/"
+          scp -i "$HOME/.ssh/voice-shopping-deploy" -P "$port" \
+            deploy/nginx/ivaris.top.conf \
+            "$SERVER_USER@$SERVER_HOST:$deploy_path/deploy/nginx/"
+
+      - name: Install and reload Nginx configuration
+        shell: bash
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          port="${SERVER_PORT:-22}"
+          deploy_path="${DEPLOY_PATH:-/opt/voice-shopping-agents}"
+          ssh -i "$HOME/.ssh/voice-shopping-deploy" -p "$port" "$SERVER_USER@$SERVER_HOST" \
+            "DEPLOY_PATH='$deploy_path' bash '$deploy_path/deploy/install-nginx.sh'"
 
       - name: Upload production API secrets
         shell: bash

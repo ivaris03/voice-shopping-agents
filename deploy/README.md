@@ -56,7 +56,10 @@ docker compose --env-file .env -f deploy/docker-compose.prod.yml exec postgres \
 ```
 
 The `deploy` user must be able to SSH in with the private key stored in the
-GitHub secret `SERVER_SSH_KEY`.
+GitHub secret `SERVER_SSH_KEY`. Automated deployments also install and reload
+the repository's Nginx configuration, so this user must be able to run the
+`install`, `rm`, `nginx -t`, and `systemctl reload nginx` commands with
+non-interactive (`sudo -n`) sudo.
 
 ## 3. GHCR access
 
@@ -128,8 +131,10 @@ with mode `600`. Docker Compose loads that file only into the API container and
 enables LangSmith tracing for the `voice-shopping-agents` project.
 
 Pushes to `main` run validation, build four images, push them to GHCR, upload
-the Compose/deploy scripts, run migrations, and restart the application
-containers. Database and Redis data remain in Docker volumes.
+the Compose/deploy scripts and Nginx site configuration, validate and reload
+Nginx, run migrations, and restart the application containers. A failed Nginx
+validation or reload restores the previously installed site configuration.
+Database and Redis data remain in Docker volumes.
 
 The deployment also attaches PostgreSQL to the external Docker network
 `ivaris-shared` with the alias `ivaris-postgres`. Other applications on the
