@@ -38,7 +38,10 @@ If you already have a suitable account, skip the `useradd` command and run
 that account in GitHub Actions.
 
 Copy `production.env.example` to
-`/opt/voice-shopping-agents/.env`, replace every placeholder, and protect it:
+`/opt/voice-shopping-agents/.env`, replace the infrastructure and application
+placeholders, and protect it. GitHub Actions writes the DashScope and LangSmith
+credentials to a separate `.env.secrets` file during every deployment, so those
+values do not need to be maintained in `.env`:
 
 ```bash
 sudo chmod 600 /opt/voice-shopping-agents/.env
@@ -107,7 +110,7 @@ sudo certbot --nginx \
 
 ## 5. GitHub configuration
 
-Add these repository secrets:
+Add these repository secrets (or production environment secrets):
 
 ```text
 SERVER_HOST
@@ -116,6 +119,19 @@ SERVER_SSH_KEY
 SERVER_PORT       # optional; defaults to 22
 DEPLOY_PATH       # optional; defaults to /opt/voice-shopping-agents
 ```
+
+Add these environment secrets under the GitHub `production` environment:
+
+```text
+DASHSCOPE_API_KEY
+LANGSMITH_API_KEY
+```
+
+The deploy job fails before restarting production if either API secret is
+missing. It transfers them over SSH without putting their values in command-line
+arguments, then atomically installs `/opt/voice-shopping-agents/.env.secrets`
+with mode `600`. Docker Compose loads that file only into the API container and
+enables LangSmith tracing for the `voice-shopping-agents` project.
 
 Pushes to `main` run validation, build four images, push them to GHCR, upload
 the Compose/deploy scripts, run migrations, and restart the application

@@ -36,8 +36,11 @@ services:
     restart: unless-stopped
     env_file:
       - ../.env
+      - ../.env.secrets
     environment:
       VOICE_SHOPPING_ENVIRONMENT: production
+      LANGSMITH_PROJECT: voice-shopping-agents
+      LANGSMITH_TRACING: "true"
     ports:
       - "127.0.0.1:18000:8000"
     depends_on:

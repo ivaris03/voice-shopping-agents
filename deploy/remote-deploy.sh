@@ -5,12 +5,18 @@ IMAGE_TAG="${1:?usage: remote-deploy.sh <image-tag>}"
 DEPLOY_PATH="${DEPLOY_PATH:-/opt/voice-shopping-agents}"
 IMAGE_PREFIX="${IMAGE_PREFIX:?IMAGE_PREFIX is required}"
 ENV_FILE="${DEPLOY_PATH}/.env"
+SECRETS_ENV_FILE="${DEPLOY_PATH}/.env.secrets"
 
 cd "$DEPLOY_PATH"
 export IMAGE_TAG IMAGE_PREFIX
 
 if [[ ! -r "$ENV_FILE" ]]; then
     echo "Deployment env file is missing or unreadable: ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if [[ ! -r "$SECRETS_ENV_FILE" ]]; then
+    echo "Deployment secrets file is missing or unreadable: ${SECRETS_ENV_FILE}" >&2
     exit 1
 fi
 

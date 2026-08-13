@@ -260,6 +260,38 @@ jobs:
             deploy/remote-deploy.sh \
             "$SERVER_USER@$SERVER_HOST:$deploy_path/deploy/"
 
+      - name: Upload production API secrets
+        shell: bash
+        env:
+          DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          : "${DASHSCOPE_API_KEY:?Missing production secret DASHSCOPE_API_KEY}"
+          : "${LANGSMITH_API_KEY:?Missing production secret LANGSMITH_API_KEY}"
+
+          port="${SERVER_PORT:-22}"
+          deploy_path="${DEPLOY_PATH:-/opt/voice-shopping-agents}"
+          secret_file="$(mktemp)"
+          trap 'rm -f "$secret_file"' EXIT
+          umask 077
+
+          {
+            printf 'DASHSCOPE_API_KEY=%s\n' "$DASHSCOPE_API_KEY"
+            printf 'LANGSMITH_API_KEY=%s\n' "$LANGSMITH_API_KEY"
+          } > "$secret_file"
+
+          ssh -i "$HOME/.ssh/voice-shopping-deploy" -p "$port" "$SERVER_USER@$SERVER_HOST" \
+            "set -Eeuo pipefail
+            umask 077
+            secret_file='$deploy_path/.env.secrets.tmp'
+            cat > \"\$secret_file\"
+            chmod 600 \"\$secret_file\"
+            mv -f \"\$secret_file\" '$deploy_path/.env.secrets'" < "$secret_file"
+
       - name: Pull and restart production services
         shell: bash
         env:
