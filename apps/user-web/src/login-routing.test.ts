@@ -34,4 +34,17 @@ describe('login routing', () => {
     expect(window.location.pathname).toBe('/')
     expect(window.location.hash).toBe('')
   })
+
+  it.each(['/merchant/', '/platform/'])('keeps the %s workspace prefix while routing to login', (basePath) => {
+    window.history.replaceState(null, '', `${basePath}#/catalog`)
+
+    moveToLoginPath()
+
+    expect(window.location.pathname).toBe(`${basePath.slice(0, -1)}/login`)
+    expect(window.location.hash).toBe('')
+
+    leaveLoginPath()
+
+    expect(window.location.pathname).toBe(basePath)
+  })
 })

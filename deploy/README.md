@@ -1,21 +1,18 @@
 # 部署文档
 
-This deployment uses four subdomains:
+This deployment uses one domain with path-based workspaces:
 
-- `voice.ivaris.top` - customer web
-- `merchant.ivaris.top` - merchant web
-- `platform.ivaris.top` - platform web
-- `api.ivaris.top` - FastAPI and WebSocket endpoints
+- `voice.ivaris.top/` - customer web
+- `voice.ivaris.top/merchant/` - merchant web
+- `voice.ivaris.top/platform/` - platform web
+- `voice.ivaris.top/api/` and `voice.ivaris.top/ws/` - FastAPI and WebSocket endpoints
 
 ## 1. DNS
 
-Create four `A` records pointing to the Ubuntu server public IP:
+Create one `A` record pointing to the Ubuntu server public IP:
 
 ```text
 voice.ivaris.top
-merchant.ivaris.top
-platform.ivaris.top
-api.ivaris.top
 ```
 
 ## 2. Ubuntu server
@@ -102,10 +99,7 @@ After DNS resolves, issue certificates:
 
 ```bash
 sudo certbot --nginx \
-  -d voice.ivaris.top \
-  -d merchant.ivaris.top \
-  -d platform.ivaris.top \
-  -d api.ivaris.top
+  -d voice.ivaris.top
 ```
 
 ## 5. GitHub configuration

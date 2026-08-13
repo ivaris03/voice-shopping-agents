@@ -15,11 +15,11 @@ concurrency:
 
 env:
   IMAGE_PREFIX: ghcr.io/ivaris03/voice-shopping-agents
-  VITE_API_BASE_URL: https://api.ivaris.top/api/v1
-  VITE_TEXT_WS_URL: wss://api.ivaris.top/ws/text
-  VITE_AUDIO_WS_URL: wss://api.ivaris.top/ws/audio
-  VITE_MERCHANT_WEB_URL: https://merchant.ivaris.top/
-  VITE_PLATFORM_WEB_URL: https://platform.ivaris.top/
+  VITE_API_BASE_URL: https://voice.ivaris.top/api/v1
+  VITE_TEXT_WS_URL: wss://voice.ivaris.top/ws/text
+  VITE_AUDIO_WS_URL: wss://voice.ivaris.top/ws/audio
+  VITE_MERCHANT_WEB_URL: https://voice.ivaris.top/merchant/
+  VITE_PLATFORM_WEB_URL: https://voice.ivaris.top/platform/
 
 jobs:
   validate:
