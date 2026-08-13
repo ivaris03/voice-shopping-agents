@@ -1,20 +1,15 @@
-import asyncio
 import json
 import re
 from collections.abc import Awaitable, Callable
-from time import perf_counter
 from typing import Any
 
-import dashscope
-from langchain_community.document_compressors import DashScopeRerank
 from langchain_qwq import ChatQwen
 from langsmith import get_current_run_tree, traceable
 
 from voice_shopping_api.agents.prompts import (
     EMOTIONAL_RESPONSE_SYSTEM_PROMPT,
-    PRODUCT_REASON_SYSTEM_PROMPT,
+    PRODUCT_REASON_BATCH_SYSTEM_PROMPT,
     RECOMMENDATION_HOOK_SYSTEM_PROMPT,
-    RECOMMENDATION_RERANK_INSTRUCTION,
     SLOT_EXTRACTION_SYSTEM_PROMPT,
     build_intent_system_prompt,
 )
@@ -23,17 +18,12 @@ from voice_shopping_api.agents.state import (
     EmotionalResponseResult,
     IntentResult,
     ProductReason,
+    ProductReasonBatch,
     RecommendationHook,
     SlotExtractionResult,
 )
 from voice_shopping_api.core.config import get_settings
 from voice_shopping_api.core.embeddings import embed_text
-from voice_shopping_api.core.observability import (
-    finish_trace,
-    response_request_id,
-    response_usage,
-    start_trace,
-)
 from voice_shopping_api.core.text import take_completed_sentences
 
 
@@ -82,18 +72,6 @@ def _message_usage(message: Any) -> dict[str, Any] | None:
     return token_usage if isinstance(token_usage, dict) else None
 
 
-class _InstructionalRerankClient:
-    """Pass the existing rerank instruction through LangChain's client hook."""
-
-    def __init__(self, instruction: str) -> None:
-        self.instruction = instruction
-        self.response: Any = None
-
-    def call(self, **kwargs: Any) -> Any:
-        self.response = dashscope.TextReRank.call(instruct=self.instruction, **kwargs)
-        return self.response
-
-
 def _chat_model(*, json_mode: bool = False) -> ChatQwen:
     settings = get_settings()
     if not settings.dashscope_api_key:
@@ -139,14 +117,18 @@ async def _structured_chat(
 ) -> AgentModel:
     """Invoke Qwen with a Pydantic-constrained output and retain usage data."""
     settings = get_settings()
-    result = await _chat_model().with_structured_output(
-        schema,
-        include_raw=True,
-    ).ainvoke(
-        [
-            ("system", system_prompt),
-            ("human", json.dumps(payload, ensure_ascii=False)),
-        ]
+    result = (
+        await _chat_model()
+        .with_structured_output(
+            schema,
+            include_raw=True,
+        )
+        .ainvoke(
+            [
+                ("system", system_prompt),
+                ("human", json.dumps(payload, ensure_ascii=False)),
+            ]
+        )
     )
     if isinstance(result, schema):
         return result
@@ -168,86 +150,6 @@ async def embed_query(query: str) -> list[float]:
     vector, usage = await embed_text(query)
     _mark_model_run(settings.embedding_model, usage)
     return vector
-
-
-async def rerank_products(query: str, products: list[dict[str, Any]]) -> dict[str, float]:
-    settings = get_settings()
-    documents = [
-        json.dumps(
-            {
-                "name": product.get("name"),
-                "brand": product.get("brand"),
-                "description": product.get("description"),
-                "sellingPoints": product.get("selling_points", []),
-                "attributes": product.get("attributes", {}),
-            },
-            ensure_ascii=False,
-        )
-        for product in products
-    ]
-    started = perf_counter()
-    span = start_trace(
-        "dashscope-rerank",
-        run_type="retriever",
-        inputs={"query": query, "documents": documents},
-        metadata={
-            "ls_provider": "dashscope",
-            "ls_model_name": settings.reranker_model,
-            "operation": "rerank",
-            "document_count": len(documents),
-            "instruction": RECOMMENDATION_RERANK_INSTRUCTION,
-            "query": query,
-            "documents": documents,
-        },
-        tags=["dashscope", "rerank"],
-        project_name=settings.langsmith_project,
-    )
-    recording_client = _InstructionalRerankClient(RECOMMENDATION_RERANK_INSTRUCTION)
-
-    def call() -> Any:
-        dashscope.api_key = settings.dashscope_api_key
-        dashscope.base_http_api_url = settings.dashscope_http_base_url
-        reranker = DashScopeRerank(
-            client=recording_client,
-            model=settings.reranker_model,
-            top_n=len(documents),
-            dashscope_api_key=settings.dashscope_api_key,
-        )
-        return reranker.rerank(documents, query, top_n=len(documents))
-
-    try:
-        response = await asyncio.to_thread(call)
-        usage = response_usage(recording_client.response)
-        _mark_model_run(settings.reranker_model, usage)
-        scores: dict[str, float] = {}
-        for item in response:
-            product = products[int(item["index"])]
-            scores[str(product["id"])] = float(item["relevance_score"])
-        finish_trace(
-            span,
-            outputs={"scores": scores, "result_count": len(scores)},
-            metadata={
-                "status": "ok",
-                "duration_ms": round((perf_counter() - started) * 1000, 2),
-                "query": query,
-                "documents": documents,
-                "result_count": len(scores),
-                "request_id": response_request_id(recording_client.response),
-                "scores": scores,
-            },
-            usage=usage,
-        )
-        return scores
-    except Exception as exc:
-        finish_trace(
-            span,
-            metadata={
-                "status": "error",
-                "duration_ms": round((perf_counter() - started) * 1000, 2),
-            },
-            error=exc,
-        )
-        raise
 
 
 async def recognize_with_model(
@@ -410,27 +312,30 @@ async def respond_with_model(
     )
 
 
-async def generate_product_reason(
+async def generate_product_reasons(
     utterance: str,
-    product_card: dict[str, Any],
+    product_cards: list[dict[str, Any]],
     emotion_style: str,
-) -> ProductReason:
-    """Generate and validate one reason for one immutable product card."""
-    product_id = str(product_card["productId"])
-    reason = await _structured_chat(
-        PRODUCT_REASON_SYSTEM_PROMPT,
+) -> list[ProductReason]:
+    """Generate all Top-3 reasons in one structured model invocation."""
+    batch = await _structured_chat(
+        PRODUCT_REASON_BATCH_SYSTEM_PROMPT,
         {
             "utterance": utterance,
             "emotionStyle": emotion_style,
-            "productCard": product_card,
+            "productCards": product_cards,
         },
-        ProductReason,
+        ProductReasonBatch,
     )
-    if reason.product_id != product_id:
-        raise ValueError("模型返回的商品 ID 与输入商品事实不一致")
-    if not reason.reason.strip():
-        raise ValueError("模型返回的推荐理由为空")
-    return reason
+    expected_ids = [str(card["productId"]) for card in product_cards]
+    actual_ids = [reason.product_id for reason in batch.reasons]
+    if len(actual_ids) != len(set(actual_ids)) or set(actual_ids) != set(expected_ids):
+        raise ValueError("模型批量返回的商品 ID 与输入商品事实不一致")
+    by_id = {reason.product_id: reason for reason in batch.reasons}
+    ordered = [by_id[product_id] for product_id in expected_ids]
+    if any(not reason.reason.strip() for reason in ordered):
+        raise ValueError("模型批量返回的推荐理由为空")
+    return ordered
 
 
 async def generate_recommendation_hook(

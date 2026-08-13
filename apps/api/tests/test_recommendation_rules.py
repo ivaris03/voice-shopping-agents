@@ -1,106 +1,96 @@
-"""画像快照规则二次排序的纯函数测试。"""
+"""ProfileReranker pure-function tests."""
 
-from voice_shopping_api.agents.nodes.recommendation import (
+from voice_shopping_api.agents.profile_reranker import (
     RULE_BRAND_HIT,
     RULE_PRICE_OVER_AVG,
     RULE_REPEAT_PURCHASE,
-    _match_score,
-    _reranker_score,
-    _rule_adjustments,
+    ProfileReranker,
 )
 
 PRODUCT = {
     "id": "20000000-0000-4000-8000-000000000101",
     "brand": "Asics",
     "price": 899,
-    "name": "日常缓震跑鞋",
-    "description": "",
-    "selling_points": [],
-    "attributes": {},
+    "vector_score": 0.7,
 }
 
 
-def test_empty_profile_adds_no_adjustment() -> None:
-    score, parts = _rule_adjustments(PRODUCT, {})
-    assert score == 0.0
-    assert parts == {}
+def _adjustments(profile: dict[str, object]) -> tuple[float, dict[str, float]]:
+    return ProfileReranker._profile_adjustments(PRODUCT, profile)
+
+
+def test_empty_profile_keeps_vector_score() -> None:
+    ranked = ProfileReranker().rerank([PRODUCT], {})
+    assert ranked[0].match_score == 0.7
+    assert ranked[0].score_breakdown == {"vector": 0.7}
 
 
 def test_brand_hit_adds_points() -> None:
-    profile = {"dynamic": {"brandAffinity": {"Asics": 0.18}}}
-    score, parts = _rule_adjustments(PRODUCT, profile)
+    score, parts = _adjustments({"dynamic": {"brandAffinity": {"Asics": 0.18}}})
     assert score == RULE_BRAND_HIT
     assert parts == {"brandHit": RULE_BRAND_HIT}
 
 
 def test_brand_with_zero_score_is_not_a_hit() -> None:
-    profile = {"dynamic": {"brandAffinity": {"Asics": 0.0}}}
-    score, parts = _rule_adjustments(PRODUCT, profile)
+    score, parts = _adjustments({"dynamic": {"brandAffinity": {"Asics": 0.0}}})
     assert score == 0.0
     assert parts == {}
 
 
-def test_price_over_1_5x_avg_order_value_deducts() -> None:
-    profile = {"dynamic": {"avgOrderAmount": 500.0}}  # 899 > 750
-    score, parts = _rule_adjustments(PRODUCT, profile)
-    assert score == RULE_PRICE_OVER_AVG
-    assert parts == {"priceOverAvgOrderAmount": RULE_PRICE_OVER_AVG}
+def test_budget_sensitivity_controls_acceptable_price_ceiling() -> None:
+    sensitive = {"dynamic": {"avgOrderAmount": 500.0, "priceSensitivity": 0.8}}
+    insensitive = {"dynamic": {"avgOrderAmount": 500.0, "priceSensitivity": 0.1}}
+    assert _adjustments(sensitive) == (
+        RULE_PRICE_OVER_AVG,
+        {"priceOverAvgOrderAmount": RULE_PRICE_OVER_AVG},
+    )
+    assert _adjustments(insensitive) == (0.0, {})
 
 
-def test_price_below_1_5x_avg_order_value_is_not_deducted() -> None:
-    profile = {"dynamic": {"avgOrderAmount": 600.0}}  # 899 < 900
-    score, parts = _rule_adjustments(PRODUCT, profile)
-    assert score == 0.0
-    assert parts == {}
-
-
-def test_price_over_avg_without_orders_is_not_deducted() -> None:
-    profile = {"dynamic": {"avgOrderAmount": None}}
-    score, parts = _rule_adjustments(PRODUCT, profile)
-    assert score == 0.0
-    assert parts == {}
+def test_missing_price_sensitivity_uses_legacy_1_5x_ceiling() -> None:
+    assert _adjustments({"dynamic": {"avgOrderAmount": 600.0}}) == (0.0, {})
+    assert _adjustments({"dynamic": {"avgOrderAmount": 500.0}})[0] == RULE_PRICE_OVER_AVG
 
 
 def test_repeat_purchase_deducts() -> None:
     profile = {"dynamic": {"recentPurchased": [PRODUCT["id"]]}}
-    score, parts = _rule_adjustments(PRODUCT, profile)
+    score, parts = _adjustments(profile)
     assert score == RULE_REPEAT_PURCHASE
     assert parts == {"repeatPurchase": RULE_REPEAT_PURCHASE}
 
 
-def test_brand_hit_and_repeat_purchase_combine() -> None:
-    profile = {
-        "dynamic": {
-            "brandAffinity": {"Asics": 0.18},
-            "recentPurchased": [PRODUCT["id"]],
-        },
-    }
-    score, parts = _rule_adjustments(PRODUCT, profile)
-    assert score == RULE_BRAND_HIT + RULE_REPEAT_PURCHASE  # 0.2 - 0.3 = -0.1
-    assert parts == {"brandHit": RULE_BRAND_HIT, "repeatPurchase": RULE_REPEAT_PURCHASE}
+def test_profile_reranks_all_twenty_candidates_before_top_three_cutoff() -> None:
+    products = [
+        {
+            "id": f"product-{index}",
+            "brand": "Other",
+            "price": 500,
+            "vector_score": 1.0 - index / 100,
+        }
+        for index in range(20)
+    ]
+    products[19]["brand"] = "Preferred"
+
+    ranked = ProfileReranker().rerank(
+        products,
+        {"dynamic": {"brandAffinity": {"Preferred": 0.8}}},
+    )
+
+    assert len(ranked) == 3
+    assert ranked[0].product["id"] == "product-19"
+    assert ranked[0].score_breakdown["brandHit"] == RULE_BRAND_HIT
 
 
-def test_reranker_score_uses_model_score_when_present() -> None:
-    product_id = PRODUCT["id"]
-    score = _reranker_score(PRODUCT, {"utterance": "跑鞋"}, {product_id: 0.9})
-    assert score == 0.9
+def test_cold_start_preserves_pgvector_order_on_ties() -> None:
+    products = [
+        {"id": "first", "vector_score": 0.8},
+        {"id": "second", "vector_score": 0.8},
+    ]
+    ranked = ProfileReranker().rerank(products, {})
+    assert [item.product["id"] for item in ranked] == ["first", "second"]
 
 
-def test_reranker_score_clamps_out_of_range() -> None:
-    product_id = PRODUCT["id"]
-    score = _reranker_score(PRODUCT, {"utterance": "跑鞋"}, {product_id: 1.7})
-    assert score == 1.0
-    score = _reranker_score(PRODUCT, {"utterance": "跑鞋"}, {product_id: -0.2})
-    assert score == 0.0
-
-
-def test_match_score_caps_brand_boost_at_one() -> None:
-    assert _match_score(RULE_BRAND_HIT, 1.0) == 1.0
-
-
-def test_reranker_score_lexical_fallback_without_model() -> None:
-    # 无 LLM 分：名称命中 utterance 关键词 → 0.62；完全不命中 → 0.52
-    hit = _reranker_score(PRODUCT, {"utterance": "跑鞋"}, {})
-    miss = _reranker_score(PRODUCT, {"utterance": "毫无关系的内容"}, {})
-    assert hit == 0.62
-    assert miss == 0.52
+def test_match_score_is_clamped_to_public_range() -> None:
+    boosted = dict(PRODUCT, vector_score=0.95)
+    ranked = ProfileReranker().rerank([boosted], {"dynamic": {"brandAffinity": {"Asics": 1.0}}})
+    assert ranked[0].match_score == 1.0

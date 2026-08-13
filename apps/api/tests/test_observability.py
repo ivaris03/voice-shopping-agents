@@ -61,14 +61,14 @@ def test_start_and_finish_trace_preserve_run_fields(monkeypatch) -> None:
         "dashscope-test",
         run_type="retriever",
         inputs={"query": "通勤耳机"},
-        metadata={"ls_model_name": "qwen3-rerank"},
+        metadata={"ls_model_name": "qwen3.7-text-embedding"},
         tags=["dashscope", "test"],
         project_name="test-project",
     )
     assert handle is not None
     assert trace_args["name"] == "dashscope-test"
     assert trace_args["inputs"] == {"query": "通勤耳机"}
-    assert trace_args["metadata"] == {"ls_model_name": "qwen3-rerank"}
+    assert trace_args["metadata"] == {"ls_model_name": "qwen3.7-text-embedding"}
 
     observability.finish_trace(
         handle,

@@ -10,8 +10,8 @@
 | 图状态 | `agents/state.py` | TypedDict 状态契约、运行时依赖、持久化键筛选 |
 | 意图 | `agents/nodes/intent.py` | 模型/关键词识别、品类规范化、订单安全守卫 |
 | 澄清 | `agents/nodes/clarification.py` | 确定性槽位抽取、模型抽取、槽位校验和追问 |
-| 推荐 | `agents/nodes/recommendation.py`、`agents/service.py` | SQL 召回、向量排序、Reranker 和画像二排 |
-| 回复 | `agents/nodes/response.py`、`agents/model.py` | 逐卡理由、话术组装、流式发布和合规检查 |
+| 推荐 | `agents/nodes/recommendation.py`、`agents/profile_reranker.py`、`agents/service.py` | JSONB 过滤、PGVector Top 20 和画像重排 |
+| 回复 | `agents/nodes/response.py`、`agents/model.py` | Top 3 批量理由、话术组装、流式发布和合规检查 |
 | 会话服务 | `agents/service.py`、`modules/sessions/service.py` | turn 执行、状态投影、消息保存、画像收敛 |
 | 品类/属性 | `core/taxonomy.py`、`modules/platform/router.py` | 动态品类、槽位枚举、Redis 快照缓存和商品属性校验 |
 | 商品向量 | `core/product_embedding.py`、`core/embeddings.py` | 中文商品卡片文本、向量生成、归一化和降级 |
@@ -92,7 +92,7 @@ START
 
 `process_turn()` 用 `bool(settings.dashscope_api_key)` 设置 `model_enabled`：
 
-- 开启时使用 DashScope ChatQwen、Embedding 和 Reranker。意图识别、槽位抽取和单商品推荐理由通过 LangChain `with_structured_output()` 分别绑定 `IntentResult`、`SlotExtractionResult` 和 `ProductReason`；三类结果在模型边界直接完成 Pydantic 校验，Agent 模型禁止额外字段。情感回复仍保留 JSON mode，因为它需要兼容增量话术和短句发布。
+- 开启时使用 DashScope ChatQwen 和 Embedding。意图识别、槽位抽取和批量商品推荐理由通过 LangChain `with_structured_output()` 分别绑定 `IntentResult`、`SlotExtractionResult` 和 `ProductReasonBatch`；结果在模型边界直接完成 Pydantic 校验，Agent 模型禁止额外字段。情感回复仍保留 JSON mode，因为它需要兼容增量话术和短句发布。
 - 未开启或模型调用异常时，意图节点回退关键词位置选择和规则槽位抽取，推荐节点回退确定性排序，理由节点回退固定模板。
 - 模型失败只影响当前能力，不会让商品事实、订单事务或会话持久化绕过服务端校验。
 
@@ -172,23 +172,19 @@ m.is_enabled
 
 向量可用时追加 `p.embedding IS NOT NULL`，按 `p.embedding <=> CAST(:embedding AS vector)` 排序并 `LIMIT 20`。查询向量生成失败或模型关闭时不加 embedding 条件，按 `created_at DESC` 排序，含 NULL embedding 商品。
 
-### 5.2 两阶段精排
+### 5.2 ProfileReranker 画像重排
 
-第一阶段使用 `qwen3-rerank` 对候选商品事实文本打分，分数裁剪到 `[0, 1]` 并取 Top 3；Reranker 失败时使用：
-
-```text
-lexicalScore = min(1.0, 0.52 + 命中关键词数量 * 0.1)
-```
-
-第二阶段在 Top 3 内按画像快照增加规则分：
+`ProfileReranker` 接收 SQL 已按相似度排列的完整 Top 20，在每条商品的 `vector_score` 上叠加画像规则：
 
 ```text
 brandAffinity[product.brand] > 0       +0.20
-product.price > 1.5 * avgOrderAmount   -0.15
 product.id in recentPurchased          -0.30
+price > avgOrderAmount * (2 - priceSensitivity)  -0.15
 ```
 
-最终 `matchScore = min(1.0, rerankerScore + ruleScore)`，因此对外展示的匹配度最高为 100%；`scoreBreakdown` 保存 `reranker` 和命中的规则项。规则分相同依赖 Python 稳定排序保持第一阶段顺序。没有画像时不增加或扣减规则分。
+`priceSensitivity` 限制在 `[0, 1]`；越敏感，可接受的历史客单价上浮区间越小。缺失时按 `0.5` 处理，即沿用 1.5 倍平均客单价阈值。
+
+最终按 `vectorScore + profileScore` 对全部候选重排，然后截断 Top 3。`matchScore` 裁剪到 `[0, 1]`；`scoreBreakdown` 保存 `vector` 和命中的画像规则。总分相同依赖 Python 稳定排序保持 PGVector 原始顺序；没有画像时顺序不变。
 
 输出卡片字段包括 `productId`、`merchantId`、`merchantName`、`sku`、`name`、`categoryL1`、`categoryL2`、`brand`、`description`、`price`、`stock`、`imageUrl`、`imageUrls`、`status`、`createdAt`、`updatedAt`、`sellingPoints`、`attributes`、`matchScore` 和 `scoreBreakdown`。这些字段均来自后端商品事实，推荐节点不生成理由。
 
@@ -208,12 +204,12 @@ product.id in recentPurchased          -0.30
 
 ## 7. 理由、话术和合规
 
-当前工作流真正使用的是逐商品理由路径：
+当前工作流使用批量理由路径：
 
-1. `emotional_response()` 为每张卡调用一次 `generate_product_reason()`。
-2. 最多并发 3 个理由请求，模型返回的 `product_id` 必须和输入卡片一致，理由不能为空；每条理由
+1. `emotional_response()` 将 Top 3 一次传给 `generate_product_reasons()`，只发起一次结构化模型调用。
+2. 模型必须为每张卡返回恰好一条理由，`product_id` 集合必须和输入卡片一致，理由不能为空；每条理由
    最终统一为“第 N 款（商品名称）”开头，不能只使用“这款/该款”等无指向代词。
-3. 单卡模型失败、返回商品 ID 不一致、理由不合规或无法补全商品身份时，只对该卡使用确定性 fallback。
+3. 批量调用失败或商品 ID 集合不一致时整批使用确定性 fallback；调用成功后，单条理由不合规或无法补全商品身份时只降级该卡。
 4. 通过校验的理由通过 `reason_publisher` 按 `productId` 增量推送。
 5. 情感应答先从全部商品卡提取能够唯一对应一件商品的价格、属性或卖点差异，再生成选择钩子；
    续航等有明确“越大越好”语义的数值属性只推荐唯一最大值，不能把较小值当成偏好选项；同一
@@ -377,7 +373,7 @@ PostgreSQL 提交成功后递增 revision。Redis 不可用或缓存值无效时
 
 `core/observability.py` 提供 fail-open 的手动 trace helper：
 
-- Chat、Embedding、Reranker、ASR、TTS 分别标记 provider、模型名和 operation。
+- Chat、Embedding、ASR、TTS 分别标记 provider、模型名和 operation。
 - 保存 request ID、耗时、结果数量、Token/计费 usage、音频字节数、句子数等指标。
 - `process_turn()` 的 LangGraph run 使用 session UUID 作为 `thread_id`，metadata 附带 turn、环境和模型配置。
 - 追踪异常只写 debug 日志，不让 LangSmith 故障影响商品、订单或会话请求。
@@ -390,15 +386,15 @@ PostgreSQL 提交成功后递增 revision。Redis 不可用或缓存值无效时
 
 | 测试文件 | 覆盖内容 |
 | --- | --- |
-| `test_agents.py` | 意图优先级、订单守卫、品类切换、澄清恢复、逐卡理由、合规和状态持久化 |
+| `test_agents.py` | 意图优先级、订单守卫、品类切换、澄清恢复、批量理由、合规和状态持久化 |
 | `test_catalog_query.py` | 可见性、预算、布尔/数值/尺码/防水/枚举 SQL 条件和向量降级 |
-| `test_recommendation_e2e.py` | 多品类硬过滤、PGVector 召回、Reranker/画像排序、冷启动和禁用商家 |
-| `test_recommendation_rules.py` | 画像二排分数和词法 Reranker fallback |
+| `test_recommendation_e2e.py` | 多品类硬过滤、PGVector Top 20、画像排序、冷启动和禁用商家 |
+| `test_recommendation_rules.py` | ProfileReranker 全候选池加权、预算敏感和稳定排序 |
 | `test_taxonomy.py`、`test_taxonomy_cache.py` | 父级分类、槽位枚举、商品属性校验、缓存命中和失效 |
 | `test_product_embedding.py` | 中文向量卡片、单位归一化、标签/单位/价格带渲染 |
 | `test_profile_lifecycle.py` | 静态画像候选、显式覆盖、空值保护和持久化键筛选 |
 | `test_speech.py` | ASR 句子切分、TTS 分片、fallback 和安全 usage 统计 |
-| `test_model_adapters.py` | Chat/Embedding/Reranker/usage 适配 |
+| `test_model_adapters.py` | Chat/Embedding/usage 适配 |
 | `test_observability.py` | LangSmith fail-open 和 span 字段保留 |
 
 仓库根目录验证命令：

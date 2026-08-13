@@ -28,9 +28,7 @@ class Settings(BaseSettings):
     catalog_cache_redis_url: str = ""
     product_embedding_cache_ttl_seconds: int = 30 * 24 * 60 * 60
     langgraph_checkpoint_enabled: bool = True
-    langgraph_checkpoint_init_timeout_seconds: float = Field(
-        default=5.0, ge=0.1, le=60.0
-    )
+    langgraph_checkpoint_init_timeout_seconds: float = Field(default=5.0, ge=0.1, le=60.0)
     langgraph_checkpoint_database_url: str = Field(
         default="",
         validation_alias=AliasChoices(
@@ -64,7 +62,6 @@ class Settings(BaseSettings):
     dashscope_http_base_url: str = "https://dashscope.aliyuncs.com/api/v1"
     agent_model: str = "qwen3.7-flash"
     embedding_model: str = "qwen3.7-text-embedding"
-    reranker_model: str = "qwen3-rerank"
     asr_model: str = "qwen-audio-3.0-asr-flash-streaming"
     tts_model: str = "qwen-audio-3.0-tts-plus"
     tts_voice: str = "longanlingxin"

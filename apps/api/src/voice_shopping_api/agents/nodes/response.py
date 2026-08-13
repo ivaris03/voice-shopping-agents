@@ -7,7 +7,7 @@ from typing import Any
 from langgraph.runtime import Runtime
 
 from voice_shopping_api.agents.model import (
-    generate_product_reason,
+    generate_product_reasons,
     generate_recommendation_hook,
 )
 from voice_shopping_api.agents.nodes.constants import (
@@ -26,7 +26,6 @@ from voice_shopping_api.core.product_embedding import ATTRIBUTE_KEY_LABELS, rend
 from voice_shopping_api.core.text import split_sentences
 
 logger = logging.getLogger(__name__)
-REASON_MODEL_CONCURRENCY = 3
 # Numeric attributes with an unambiguous "higher is better" interpretation.
 # They are handled as a comparison across cards instead of as independent
 # unique values, otherwise a lower value can be presented as a preference.
@@ -160,8 +159,7 @@ def _unique_attribute_highlight(cards: list[dict[str, Any]], index: int) -> str 
     if not isinstance(attributes, dict):
         return None
     all_attributes = [
-        card.get("attributes") if isinstance(card.get("attributes"), dict) else {}
-        for card in cards
+        card.get("attributes") if isinstance(card.get("attributes"), dict) else {} for card in cards
     ]
     for key in sorted(attributes):
         # Numeric preference fields are compared in the directionally-aware
@@ -409,32 +407,6 @@ async def _generate_recommendation_hook(state: ShoppingState) -> str:
         return fallback
 
 
-async def _generate_one_reason(
-    index: int,
-    card: dict[str, Any],
-    utterance: str,
-    emotion_style: str,
-    reason_publisher: ReasonPublisher | None,
-    semaphore: asyncio.Semaphore,
-) -> ProductReason:
-    async with semaphore:
-        try:
-            reason = await generate_product_reason(utterance, card, emotion_style)
-            if not is_compliant(reason.reason):
-                raise ValueError("模型返回的推荐理由未通过合规检查")
-            reason = _ensure_reason_identity(index, card, reason)
-        except Exception as exc:
-            logger.warning(
-                "Product reason model failed for %s; using deterministic fallback: %s",
-                card.get("productId"),
-                exc,
-            )
-            reason = _fallback_reason(index, card)
-    if reason_publisher:
-        await reason_publisher(reason)
-    return reason
-
-
 async def _generate_reasons(
     state: ShoppingState,
     reason_publisher: ReasonPublisher | None,
@@ -446,22 +418,33 @@ async def _generate_reasons(
             for reason in reasons:
                 await reason_publisher(reason)
         return reasons
-    semaphore = asyncio.Semaphore(min(REASON_MODEL_CONCURRENCY, len(cards)))
-    return list(
-        await asyncio.gather(
-            *(
-                _generate_one_reason(
-                    index,
-                    card,
-                    state.get("utterance", ""),
-                    state.get("emotion_style", "warm-professional"),
-                    reason_publisher,
-                    semaphore,
-                )
-                for index, card in enumerate(cards, start=1)
-            )
+    try:
+        generated = await generate_product_reasons(
+            state.get("utterance", ""),
+            cards,
+            state.get("emotion_style", "warm-professional"),
         )
-    )
+    except Exception as exc:
+        logger.warning("Product reason batch failed; using deterministic fallbacks: %s", exc)
+        generated = [_fallback_reason(index, card) for index, card in enumerate(cards, start=1)]
+
+    reasons: list[ProductReason] = []
+    for index, (card, reason) in enumerate(zip(cards, generated, strict=True), start=1):
+        try:
+            if not is_compliant(reason.reason):
+                raise ValueError("模型返回的推荐理由未通过合规检查")
+            normalized = _ensure_reason_identity(index, card, reason)
+        except Exception as exc:
+            logger.warning(
+                "Product reason invalid for %s; using deterministic fallback: %s",
+                card.get("productId"),
+                exc,
+            )
+            normalized = _fallback_reason(index, card)
+        reasons.append(normalized)
+        if reason_publisher:
+            await reason_publisher(normalized)
+    return reasons
 
 
 def _build_speech(reasons: list[ProductReason], hook: str = "") -> str:

@@ -1,7 +1,7 @@
 """商品推荐 Agent 端到端效果测试。
 
-范围：``recommendation_agent`` 内部的召回 SQL → LLM 精排 +
-画像规则二次排序。为隔离"推荐"这一环节，用例直接给出已填槽位，绕过意图识别
+范围：``recommendation_agent`` 内部的 JSONB 过滤 + PGVector Top 20 →
+ProfileReranker 画像加权。为隔离"推荐"这一环节，用例直接给出已填槽位，绕过意图识别
 与澄清；意图相关节点（响应、下单）不在本套件覆盖内。
 
 依赖：由 ``VOICE_SHOPPING_TEST_DATABASE_URL`` 指定的独立 PostgreSQL/PGVector 测试库与
@@ -9,7 +9,7 @@
 
 - 数据库不可达时整模块跳过；
 - 模型不可用或调用失败时，Agent 按设计降级到确定性路径，过滤类断言不受影响，
-  精排类断言按降级路径验证（见 test_rule_penalty_reorders 与
+  排序类断言按降级路径验证（见 test_rule_penalty_reorders 与
   test_fallback_path_without_model）。
 """
 
@@ -163,7 +163,7 @@ async def run_scenario(
     profile: dict[str, Any] | None = None,
     model_enabled: bool = True,
 ) -> dict[str, Any]:
-    """直接驱动推荐 Agent（召回 + 精排），返回运行结果。"""
+    """直接驱动推荐 Agent（召回 + 画像重排），返回运行结果。"""
     snapshot = profile if profile is not None else await profile_snapshot(session, user_id)
     runtime = Runtime(
         context=ShoppingRuntimeDependencies(
@@ -228,9 +228,9 @@ async def run_and_record(
         {
             "name": card["name"],
             "price": card["price"],
-            "reranker": card["scoreBreakdown"]["reranker"],
+            "vector": card["scoreBreakdown"]["vector"],
             "rules": {
-                key: value for key, value in card["scoreBreakdown"].items() if key != "reranker"
+                key: value for key, value in card["scoreBreakdown"].items() if key != "vector"
             },
         }
         for card in cards
@@ -254,7 +254,7 @@ async def run_and_record(
 
 
 # ---------------------------------------------------------------------------
-# 场景用例：过滤合规（全部候选）、召回集合、精排 top-3、规则二次排序
+# 场景用例：过滤合规（全部候选）、向量 Top 20、画像加权、Top 3
 # ---------------------------------------------------------------------------
 
 # 用例名称到简短中文标签，报告用。
@@ -348,8 +348,7 @@ async def test_wired_headphones_match_only_wired_products(
     )
     assert outcome["candidates"]
     assert all(
-        product["attributes"]["connectivity"] == "wired"
-        for product in outcome["candidates"]
+        product["attributes"]["connectivity"] == "wired" for product in outcome["candidates"]
     )
 
 
@@ -402,7 +401,7 @@ async def test_flat_foot_stability_shoe(
 
 
 @pytest.mark.asyncio
-async def test_cold_start_female_shoes_rank_by_reranker_only(
+async def test_cold_start_female_shoes_rank_by_vector_only(
     session: AsyncSession,
     catalog: dict[str, dict[str, Any]],
     required_slots: dict[str, list[str]],
@@ -419,11 +418,12 @@ async def test_cold_start_female_shoes_rank_by_reranker_only(
         slots={"gender": "female"},
     )
     assert outcome["candidates"]
-    assert {
-        product["attributes"]["gender"] for product in outcome["candidates"]
-    } <= {"female", "unisex"}
+    assert {product["attributes"]["gender"] for product in outcome["candidates"]} <= {
+        "female",
+        "unisex",
+    }
     for card in outcome["cards"]:
-        assert set(card["scoreBreakdown"]) == {"reranker"}  # 冷启动：无规则分
+        assert set(card["scoreBreakdown"]) == {"vector"}  # 冷启动：无画像分
 
 
 @pytest.mark.asyncio
@@ -492,9 +492,7 @@ async def test_semi_auto_with_steam_wand_penalizes_repeat_purchase(
         model_enabled=False,
     )
     dedica_name = "De'Longhi Dedica EC685 半自动咖啡机"
-    assert dedica_name in {
-        product["name"] for product in outcome["candidates"]
-    }
+    assert dedica_name in {product["name"] for product in outcome["candidates"]}
     dedica = next(card for card in outcome["cards"] if card["name"] == dedica_name)
     breakdown = dedica["scoreBreakdown"]
     assert breakdown["repeatPurchase"] == -0.3  # 90 天内买过 Dedica
@@ -519,7 +517,7 @@ async def test_rule_penalty_reorders_top_choice_deterministically(
         model_enabled=False,
     )
     assert len(without_profile["cards"]) == 3
-    assert all(set(card["scoreBreakdown"]) == {"reranker"} for card in without_profile["cards"])
+    assert all(set(card["scoreBreakdown"]) == {"vector"} for card in without_profile["cards"])
     baseline_card = without_profile["cards"][0]
 
     outcome = await run_and_record(
@@ -542,9 +540,7 @@ async def test_rule_penalty_reorders_top_choice_deterministically(
     penalized = next(
         card for card in outcome["cards"] if card["productId"] == baseline_card["productId"]
     )
-    assert penalized["matchScore"] == pytest.approx(
-        baseline_card["matchScore"] - 0.3, abs=0.001
-    )
+    assert penalized["matchScore"] == pytest.approx(baseline_card["matchScore"] - 0.3, abs=0.001)
     assert penalized["scoreBreakdown"]["repeatPurchase"] == -0.3
     assert outcome["cards"][-1]["productId"] == baseline_card["productId"]
 
@@ -570,8 +566,7 @@ async def test_enabled_kettle_products_are_recommendable(
         product["name"] for product in outcome["candidates"]
     }
     assert all(
-        _slot_matches(product["attributes"], "capacityL", 1.5)
-        for product in outcome["candidates"]
+        _slot_matches(product["attributes"], "capacityL", 1.5) for product in outcome["candidates"]
     )
 
 
@@ -596,9 +591,7 @@ async def test_fallback_path_without_model_is_deterministic(
     )
     assert outcome["vector_used"] is False  # 无 embedding，走 created_at 排序
     assert [card["name"] for card in outcome["cards"]] == ["Nike Pegasus 41 跑鞋"]
-    assert outcome["cards"][0]["scoreBreakdown"]["reranker"] == pytest.approx(
-        0.52, abs=0.001
-    )
+    assert outcome["cards"][0]["scoreBreakdown"]["vector"] == pytest.approx(0.52, abs=0.001)
     assert outcome["cards"][0]["matchScore"] == pytest.approx(0.72, abs=0.001)  # 0.52 + 品牌 0.2
 
 
@@ -642,8 +635,7 @@ async def test_automatic_watch_filter_matches_only_automatic_products(
     )
     assert outcome["candidates"]
     assert all(
-        product["attributes"]["movement"] == "automatic"
-        for product in outcome["candidates"]
+        product["attributes"]["movement"] == "automatic" for product in outcome["candidates"]
     )
     assert any(product["brand"] == "Seiko" for product in outcome["candidates"])
 
@@ -661,7 +653,7 @@ def test_recommendation_agent_report() -> None:
     print("-" * 120)
     for result in RESULTS:
         top3 = " / ".join(
-            f"{card['name']}(精排{card['reranker']:.2f}"
+            f"{card['name']}(向量{card['vector']:.2f}"
             + ("".join(f",{label}" for key, label in RULE_LABELS.items() if key in card["rules"]))
             + ")"
             for card in result["cards"]

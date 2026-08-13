@@ -27,8 +27,8 @@
   订单确认/取消和本人订单列表。
 - 商家端：按店主身份隔离的店铺/商品 CRUD、软删除、上下架、价格库存维护和本店订单。
 - 平台端：全量商家/商品/订单总览，以及带禁用原因的商家启停。
-- Agent：六类单意图、品类动态槽位、每轮最多两个问题澄清、PGVector 召回分数、
-  `qwen3-rerank` 与静态/动态画像加权精排、逐商品理由、增量与短句合规检查。
+- Agent：六类单意图、品类动态槽位、每轮最多两个问题澄清、JSONB + PGVector Top 20、
+  `ProfileReranker` 画像加权、Top 3 批量理由、增量与短句合规检查。
 - 语音：浏览器 PCM16 上行、`qwen-audio-3.0-asr-flash-streaming` 流式识别、
   `qwen-audio-3.0-tts-plus` 分片下行；文本 Agent 和 TTS 未配置模型时可确定性降级，
   服务端 ASR 仍需要可用的 ASR 模型。
@@ -98,7 +98,7 @@ pnpm test:e2e
 测试运行时会反复重建这个库的 `public` schema，因此不能指向任何含业务数据的数据库。
 
 复制 `.env.example` 为 `.env` 后可接入 DashScope 和 LangSmith。无 DashScope Key 时，
-文本 Agent 保持确定性可运行，TTS 使用浏览器语音降级；服务端 ASR、Embedding、Reranker
+文本 Agent 保持确定性可运行，TTS 使用浏览器语音降级；服务端 ASR、Embedding
 和模型生成的文本/TTS 需要配置对应能力后才会启用。
 
 ## POC 登录
@@ -157,4 +157,4 @@ pnpm test:api
 pnpm lint:api
 ```
 
-API 集成测试依赖本机 PostgreSQL/PGVector 和 Redis；未配置 DashScope Key 时，确定性 Agent 测试仍可运行，依赖真实模型的 ASR、Embedding、Reranker 和 TTS 测试需要相应配置。Windows/Python 版本差异导致的 asyncpg 事件循环问题属于测试环境治理事项，见 [任务文档](docs/tasks.md) 的 `TASK-007`。
+API 集成测试依赖本机 PostgreSQL/PGVector 和 Redis；未配置 DashScope Key 时，确定性 Agent 测试仍可运行，依赖真实模型的 ASR、Embedding 和 TTS 测试需要相应配置。Windows/Python 版本差异导致的 asyncpg 事件循环问题属于测试环境治理事项，见 [任务文档](docs/tasks.md) 的 `TASK-007`。

@@ -60,10 +60,10 @@ flowchart LR
 | --- | --- |
 | API | FastAPI + SQLAlchemy asyncio + asyncpg |
 | 工作流 | LangGraph `StateGraph`，Agent 节点和普通业务节点统一装配 |
-| 模型封装 | LangChain `ChatQwen`、DashScope Embedding、DashScope Rerank |
+| 模型封装 | LangChain `ChatQwen`、DashScope Embedding |
 | Agent LLM | `qwen3.7-flash` |
 | Embedding | `qwen3.7-text-embedding`，商品向量 1024 维且入库前归一化 |
-| Reranker | `qwen3-rerank` |
+| 画像重排 | 服务端确定性 `ProfileReranker` |
 | ASR | `qwen-audio-3.0-asr-flash-streaming` |
 | TTS | `qwen-audio-3.0-tts-plus` |
 | 数据库 | PostgreSQL + PGVector、JSONB、数组、部分索引 |
@@ -182,7 +182,7 @@ graph TD;
 
 商品创建时生成向量；更新名称、品类、品牌、描述、价格、属性或卖点时按拼装文本变化重新生成；只更新 SKU、库存、状态或图片时保留原向量。模型不可用时写入 `NULL`，不阻断商品 CRUD。平台提供全量向量重建接口。
 
-`products` 上有属性 JSONB GIN 索引、名称 trigram 索引和带 `embedding IS NOT NULL` 谓词的 HNSW 余弦索引。当前推荐召回实际使用向量排序或 `created_at` 降级排序；trigram 索引为后续词法查询保留，Reranker 失败时的当前词法兜底在 Python 中完成。
+`products` 上有属性 JSONB GIN 索引、名称 trigram 索引和带 `embedding IS NOT NULL` 谓词的 HNSW 余弦索引。当前推荐召回实际使用向量排序或 `created_at` 降级排序；trigram 索引为后续词法查询保留。
 
 ### 5.3 推荐链路
 
@@ -192,16 +192,16 @@ flowchart LR
     B --> C{"查询向量可用?"}
     C -->|是| D["PGVector 余弦排序，LIMIT 20"]
     C -->|否| E["created_at DESC，仍保留 NULL embedding 商品"]
-    D --> F["Reranker 精排"]
+    D --> F["ProfileReranker 对完整候选池画像加权"]
     E --> F
-    F --> G["Top 3"]
-    G --> H["画像规则二次排序"]
+    F --> G["截断 Top 3"]
+    G --> H["LLM 批量生成三条理由"]
     H --> I["商品卡 + matchScore + scoreBreakdown"]
 ```
 
 硬过滤会把所有已经填入的必填和选填槽位都传入 SQL。枚举使用 JSONB 包含语义，布尔值按 JSON 布尔序列化；数值使用最低值比较；尺码支持 `size` 或 `sizeRange`；防水值提取数字部分；商品为 `unisex` 时可满足性别需求。
 
-Reranker 分数先裁剪到 `[0, 1]`，前 20 条取 Top 3；Reranker 不可用时使用关键词命中分 `min(1, 0.52 + 0.1 * 命中数)`。随后只在这 3 条内叠加画像规则：品牌偏好 `+0.2`、价格超过平均客单价 1.5 倍 `-0.15`、最近购买过 `-0.3`。规则分相同则保持第一阶段顺序。
+ProfileReranker 在完整 Top 20 上把向量分与画像规则相加：品牌偏好 `+0.2`、超出由价格敏感度决定的历史客单价区间 `-0.15`、最近购买过同款 `-0.3`。重排完成后才截断 Top 3；冷启动或规则总分相同时保持 PGVector 原始顺序。
 
 对比和查询优先使用上一轮商品卡；没有商品卡时才进入正常召回路径。商品卡由后端事实构造，理由生成被拆到下一个回复节点。
 
@@ -299,16 +299,15 @@ LangGraph Checkpointer 和业务状态投影各自承担不同职责：
 
 | 场景 | 当前降级 |
 | --- | --- |
-| 无 DashScope Key | 意图关键词识别、确定性槽位抽取、created_at 候选排序、词法 Reranker 分、确定性理由 |
+| 无 DashScope Key | 意图关键词识别、确定性槽位抽取、created_at 候选排序、画像规则重排、确定性理由 |
 | Query Embedding 失败 | SQL 不加向量条件，按 `created_at DESC` 取候选 |
-| Reranker 失败 | 使用商品事实文本的词法命中分 |
 | 单商品理由模型失败或不合规 | 仅该卡使用固定理由，不影响其他卡 |
 | TTS 无音频或失败 | 发送 fallback 标志，前端使用浏览器语音 |
 | LangSmith 不可用 | 日志记录调试信息，业务请求继续执行 |
 
 ### 10.2 LangSmith
 
-LangSmith 追踪由环境变量可选开启。代码会记录工作流的 session/turn 元数据、模型/Embedding/Reranker 的 provider 和模型名、请求 ID、耗时、Token/计费信息，以及 ASR/TTS 的音频统计。当前实现的模型输入、Embedding 文本、ASR transcript 和 TTS 文本可能进入 trace；生产环境必须在启用外部追踪前增加脱敏、访问控制和保留期限策略。
+LangSmith 追踪由环境变量可选开启。代码会记录工作流的 session/turn 元数据、模型/Embedding 的 provider 和模型名、请求 ID、耗时、Token/计费信息，以及 ASR/TTS 的音频统计。当前实现的模型输入、Embedding 文本、ASR transcript 和 TTS 文本可能进入 trace；生产环境必须在启用外部追踪前增加脱敏、访问控制和保留期限策略。
 
 ## 11. 核心数据模型
 

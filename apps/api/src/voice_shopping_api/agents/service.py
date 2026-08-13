@@ -360,9 +360,7 @@ async def _handle_order(
     order_id = UUID(str(pending["id"])) if pending.get("id") else None
     order_id = order_id or await _latest_pending_order_id(session, user_id, session_id)
     if action == "CREATE":
-        product_id = _selected_product_id(
-            state.get("utterance", ""), previous_cards
-        )
+        product_id = _selected_product_id(state.get("utterance", ""), previous_cards)
         if product_id is None:
             reply = "请告诉我要购买推荐结果中的第几款商品。"
             return {"speech_text": reply, "final_reply": reply}
@@ -428,9 +426,7 @@ async def _persist(
     persistable = state_for_persistence(state)
     payload = json.dumps(persistable, ensure_ascii=False, default=_json_default)
     pending = state.get("pending_order") or {}
-    pending_order_id = (
-        pending.get("id") if pending.get("status", "pending") == "pending" else None
-    )
+    pending_order_id = pending.get("id") if pending.get("status", "pending") == "pending" else None
     await session.execute(
         text(
             """
@@ -568,7 +564,6 @@ async def process_turn(
             "environment": settings.environment,
             "agent_model": settings.agent_model,
             "embedding_model": settings.embedding_model,
-            "reranker_model": settings.reranker_model,
         },
     }
     previous: ShoppingState = {}
@@ -585,11 +580,7 @@ async def process_turn(
         previous = await _load_business_state(session, session_id, user_id)
     carried_forward = carry_forward_state(previous)
     pending_order_id = await _latest_pending_order_id(session, user_id, session_id)
-    pending_order = (
-        {"id": str(pending_order_id), "status": "pending"}
-        if pending_order_id
-        else None
-    )
+    pending_order = {"id": str(pending_order_id), "status": "pending"} if pending_order_id else None
     model_enabled = bool(settings.dashscope_api_key)
     taxonomy_context = await _taxonomy_context(session)
     profile_candidates = merge_static_profile_patches(
@@ -604,9 +595,7 @@ async def process_turn(
         "turn_id": turn_key,
         "user_id": str(user_id),
         "utterance": utterance.strip(),
-        "conversation_history": await _conversation_history(
-            session, session_id, user_id
-        ),
+        "conversation_history": await _conversation_history(session, session_id, user_id),
         "model_enabled": model_enabled,
         "catalog_products": [],
         # The graph's memory_injection node loads the live snapshot. Keeping an
@@ -733,9 +722,7 @@ async def process_turn(
                 )
     result["user_profile_updates"] = merge_static_profile_patches(
         state_input.get("user_profile_updates", {}),
-        extract_static_profile_candidates(
-            result.get("utterance", ""), result.get("slots", {})
-        ),
+        extract_static_profile_candidates(result.get("utterance", ""), result.get("slots", {})),
     )
     if result.get("clarification_status") == "READY":
         # Keep emitted output aligned with the durable projection. A streamed

@@ -1,4 +1,3 @@
-import asyncio
 from typing import get_args
 from uuid import UUID
 
@@ -12,7 +11,6 @@ from voice_shopping_api.agents import service as service_module
 from voice_shopping_api.agents.graph import build_workflow, shopping_workflow
 from voice_shopping_api.agents.nodes import clarification as clarification_module
 from voice_shopping_api.agents.nodes import intent as intent_module
-from voice_shopping_api.agents.nodes import recommendation as recommendation_module
 from voice_shopping_api.agents.nodes import response as response_module
 from voice_shopping_api.agents.nodes.clarification import (
     clarify_requirements,
@@ -33,6 +31,7 @@ from voice_shopping_api.agents.state import (
     IntentResult,
     IntentType,
     ProductReason,
+    ProductReasonBatch,
     RecommendationHook,
     ShoppingInputState,
     ShoppingOutputState,
@@ -87,9 +86,7 @@ async def test_budget_phrase_becomes_a_current_request_catalog_filter() -> None:
     }
     retrievals: list[dict[str, object]] = []
 
-    async def load_catalog(
-        _: str, __: bool, filters: dict[str, object]
-    ) -> list[dict[str, object]]:
+    async def load_catalog(_: str, __: bool, filters: dict[str, object]) -> list[dict[str, object]]:
         retrievals.append(filters)
         return [product]
 
@@ -174,11 +171,8 @@ async def test_pending_question_is_classified_as_requirement_clarification_and_c
     async def fake_extract_slots_with_model(*_: object) -> dict[str, object]:
         return {}
 
-    async def fake_rerank_products(*_: object) -> dict[str, float]:
-        return {"watch-1": 0.8}
-
-    async def fake_product_reason(*_: object) -> ProductReason:
-        return ProductReason(product_id="watch-1", reason="自动机械机芯符合你的偏好。")
+    async def fake_product_reasons(*_: object) -> list[ProductReason]:
+        return [ProductReason(product_id="watch-1", reason="自动机械机芯符合你的偏好。")]
 
     product = {
         "id": "watch-1",
@@ -194,9 +188,7 @@ async def test_pending_question_is_classified_as_requirement_clarification_and_c
         "image_urls": [],
     }
 
-    async def load_catalog(
-        _: str, __: bool, filters: dict[str, object]
-    ) -> list[dict[str, object]]:
+    async def load_catalog(_: str, __: bool, filters: dict[str, object]) -> list[dict[str, object]]:
         assert filters["slots"] == {"movement": "automatic"}
         return [product]
 
@@ -204,8 +196,7 @@ async def test_pending_question_is_classified_as_requirement_clarification_and_c
     monkeypatch.setattr(
         clarification_module, "extract_slots_with_model", fake_extract_slots_with_model
     )
-    monkeypatch.setattr(recommendation_module, "rerank_products", fake_rerank_products)
-    monkeypatch.setattr(response_module, "generate_product_reason", fake_product_reason)
+    monkeypatch.setattr(response_module, "generate_product_reasons", fake_product_reasons)
     result = await shopping_workflow.ainvoke(
         {
             "utterance": "嗯其嗯，机械的吧。",
@@ -385,26 +376,26 @@ async def test_explicit_slot_answer_is_not_overwritten_by_conflicting_model_valu
         clarification_module, "extract_slots_with_model", fake_extract_slots_with_model
     )
     state = {
-            "utterance": "嗯其嗯，机械的吧。",
-            "model_enabled": True,
-            "product_category": "WATCHES",
-            "slots": {},
-            "pending_question": {
-                "slot": "movement",
-                "slots": ["movement"],
-                "question": "你偏好机械、石英还是光动能机芯？",
-            },
-            "required_slots_by_category": {"WATCHES": ["movement"]},
-            "allowed_slots_by_category": {"WATCHES": ["movement"]},
-            "taxonomy_slot_definitions_by_category": {
-                "WATCHES": {
-                    "movement": {
-                        "type": "enum",
-                        "values": ["automatic", "quartz", "eco-drive"],
-                    }
+        "utterance": "嗯其嗯，机械的吧。",
+        "model_enabled": True,
+        "product_category": "WATCHES",
+        "slots": {},
+        "pending_question": {
+            "slot": "movement",
+            "slots": ["movement"],
+            "question": "你偏好机械、石英还是光动能机芯？",
+        },
+        "required_slots_by_category": {"WATCHES": ["movement"]},
+        "allowed_slots_by_category": {"WATCHES": ["movement"]},
+        "taxonomy_slot_definitions_by_category": {
+            "WATCHES": {
+                "movement": {
+                    "type": "enum",
+                    "values": ["automatic", "quartz", "eco-drive"],
                 }
-            },
-        }
+            }
+        },
+    }
     intent_updates = await recognize_intent(state)
     result = await clarify_requirements({**state, **intent_updates})
 
@@ -447,11 +438,8 @@ async def test_model_compare_for_explicit_purchase_routes_through_clarification(
     async def fake_extract_slots_with_model(*_: object) -> dict[str, object]:
         return {}
 
-    async def fake_rerank_products(*_: object) -> dict[str, float]:
-        return {"headphone-1": 0.8}
-
-    async def fake_product_reason(*_: object) -> ProductReason:
-        return ProductReason(product_id="headphone-1", reason="符合头戴式蓝牙需求。")
+    async def fake_product_reasons(*_: object) -> list[ProductReason]:
+        return [ProductReason(product_id="headphone-1", reason="符合头戴式蓝牙需求。")]
 
     product = {
         "id": "headphone-1",
@@ -468,9 +456,7 @@ async def test_model_compare_for_explicit_purchase_routes_through_clarification(
     }
     retrievals: list[dict[str, object]] = []
 
-    async def load_catalog(
-        _: str, __: bool, filters: dict[str, object]
-    ) -> list[dict[str, object]]:
+    async def load_catalog(_: str, __: bool, filters: dict[str, object]) -> list[dict[str, object]]:
         retrievals.append(filters)
         return [product]
 
@@ -478,8 +464,7 @@ async def test_model_compare_for_explicit_purchase_routes_through_clarification(
     monkeypatch.setattr(
         clarification_module, "extract_slots_with_model", fake_extract_slots_with_model
     )
-    monkeypatch.setattr(recommendation_module, "rerank_products", fake_rerank_products)
-    monkeypatch.setattr(response_module, "generate_product_reason", fake_product_reason)
+    monkeypatch.setattr(response_module, "generate_product_reasons", fake_product_reasons)
     result = await shopping_workflow.ainvoke(
         {
             "utterance": "我要买一个。嗯。口袋的头戴的耳机、蓝牙耳机吧头戴的耳机，蓝牙耳机吧。",
@@ -538,9 +523,7 @@ async def test_model_compare_category_switch_clears_old_slots(
 async def test_retrieval_ignores_slots_outside_current_category() -> None:
     retrievals: list[dict[str, object]] = []
 
-    async def load_catalog(
-        _: str, __: bool, filters: dict[str, object]
-    ) -> list[dict[str, object]]:
+    async def load_catalog(_: str, __: bool, filters: dict[str, object]) -> list[dict[str, object]]:
         retrievals.append(filters)
         return []
 
@@ -623,9 +606,7 @@ async def test_slot_answers_keep_memory_and_recommend_when_requirements_are_comp
 
     retrievals: list[dict[str, object]] = []
 
-    async def load_catalog(
-        _: str, __: bool, filters: dict[str, object]
-    ) -> list[dict[str, object]]:
+    async def load_catalog(_: str, __: bool, filters: dict[str, object]) -> list[dict[str, object]]:
         retrievals.append(filters)
         return [product]
 
@@ -1090,9 +1071,7 @@ async def test_category_switch_clears_old_slots_and_routes_to_clarification() ->
                 "noiseCancellation": True,
             },
             "catalog_products": [],
-            "user_profile_snapshot": {
-                "dynamic": {"categoryAffinity": {"HEADPHONES": 0.94}}
-            },
+            "user_profile_snapshot": {"dynamic": {"categoryAffinity": {"HEADPHONES": 0.94}}},
         }
     )
 
@@ -1314,17 +1293,17 @@ async def test_intent_agent_resolves_contextual_asr_error(
         clarification_module, "extract_slots_with_model", fake_extract_slots_with_model
     )
     state = {
-            "utterance": "想要热辣死的。",
-            "model_enabled": True,
-            "product_category": "HEADPHONES",
-            "category_changed": False,
-            "slots": {"noiseCancellation": True},
-            "pending_question": {
-                "slot": "form",
-                "question": "你想要入耳式还是头戴式？",
-            },
-            "conversation_history": ["assistant: 你想要入耳式还是头戴式？"],
-        }
+        "utterance": "想要热辣死的。",
+        "model_enabled": True,
+        "product_category": "HEADPHONES",
+        "category_changed": False,
+        "slots": {"noiseCancellation": True},
+        "pending_question": {
+            "slot": "form",
+            "question": "你想要入耳式还是头戴式？",
+        },
+        "conversation_history": ["assistant: 你想要入耳式还是头戴式？"],
+    }
     slots = await extract_slots_for_intent(state)
     result = await clarify_requirements({**state, "slots": slots})
 
@@ -1393,16 +1372,16 @@ async def test_intent_agent_rejects_unknown_or_invalid_slot_values(
         clarification_module, "extract_slots_with_model", fake_extract_slots_with_model
     )
     state = {
-            "utterance": "随便吧",
-            "model_enabled": True,
-            "product_category": "HEADPHONES",
-            "category_changed": False,
-            "slots": {"noiseCancellation": True},
-            "pending_question": {
-                "slot": "form",
-                "question": "你想要入耳式还是头戴式？",
-            },
-        }
+        "utterance": "随便吧",
+        "model_enabled": True,
+        "product_category": "HEADPHONES",
+        "category_changed": False,
+        "slots": {"noiseCancellation": True},
+        "pending_question": {
+            "slot": "form",
+            "question": "你想要入耳式还是头戴式？",
+        },
+    }
     slots = await extract_slots_for_intent(state)
     result = await clarify_requirements({**state, "slots": slots})
 
@@ -1415,23 +1394,23 @@ async def test_intent_agent_rejects_unknown_or_invalid_slot_values(
 @pytest.mark.asyncio
 async def test_answering_second_question_does_not_pollute_first_slot() -> None:
     state = {
-            "utterance": "想要一个蓝牙的。",
-            "model_enabled": False,
-            "product_category": "HEADPHONES",
-            "category_changed": False,
-            "required_slots_by_category": {"HEADPHONES": ["form", "connectivity"]},
-            "allowed_slots_by_category": {"HEADPHONES": ["form", "connectivity"]},
-            "taxonomy_slot_definitions": {
-                "form": {"type": "enum", "values": ["in-ear", "over-ear"]},
-                "connectivity": {"type": "enum", "values": ["bluetooth", "wired"]},
-            },
-            "slots": {"form": "想要一个蓝牙的。", "connectivity": "bluetooth"},
-            "pending_question": {
-                "slot": "form",
-                "slots": ["form", "connectivity"],
-                "question": "你想要入耳式还是头戴式？另外，你希望使用蓝牙还是有线连接？",
-            },
-        }
+        "utterance": "想要一个蓝牙的。",
+        "model_enabled": False,
+        "product_category": "HEADPHONES",
+        "category_changed": False,
+        "required_slots_by_category": {"HEADPHONES": ["form", "connectivity"]},
+        "allowed_slots_by_category": {"HEADPHONES": ["form", "connectivity"]},
+        "taxonomy_slot_definitions": {
+            "form": {"type": "enum", "values": ["in-ear", "over-ear"]},
+            "connectivity": {"type": "enum", "values": ["bluetooth", "wired"]},
+        },
+        "slots": {"form": "想要一个蓝牙的。", "connectivity": "bluetooth"},
+        "pending_question": {
+            "slot": "form",
+            "slots": ["form", "connectivity"],
+            "question": "你想要入耳式还是头戴式？另外，你希望使用蓝牙还是有线连接？",
+        },
+    }
     slots = await extract_slots_for_intent(state)
     result = await clarify_requirements({**state, "slots": slots})
 
@@ -1444,22 +1423,22 @@ async def test_answering_second_question_does_not_pollute_first_slot() -> None:
 @pytest.mark.asyncio
 async def test_dynamic_enum_slot_can_be_answered_without_model() -> None:
     state = {
-            "utterance": "blue",
-            "model_enabled": False,
-            "product_category": "CUSTOM_ITEM",
-            "category_changed": False,
-            "required_slots_by_category": {"CUSTOM_ITEM": ["color"]},
-            "allowed_slots_by_category": {"CUSTOM_ITEM": ["color"]},
-            "taxonomy_slot_definitions_by_category": {
-                "CUSTOM_ITEM": {"color": {"type": "enum", "values": ["red", "blue"]}}
-            },
-            "slots": {},
-            "pending_question": {
-                "slot": "color",
-                "slots": ["color"],
-                "question": "请告诉我color？",
-            },
-        }
+        "utterance": "blue",
+        "model_enabled": False,
+        "product_category": "CUSTOM_ITEM",
+        "category_changed": False,
+        "required_slots_by_category": {"CUSTOM_ITEM": ["color"]},
+        "allowed_slots_by_category": {"CUSTOM_ITEM": ["color"]},
+        "taxonomy_slot_definitions_by_category": {
+            "CUSTOM_ITEM": {"color": {"type": "enum", "values": ["red", "blue"]}}
+        },
+        "slots": {},
+        "pending_question": {
+            "slot": "color",
+            "slots": ["color"],
+            "question": "请告诉我color？",
+        },
+    }
     slots = await extract_slots_for_intent(state)
     result = await clarify_requirements({**state, "slots": slots})
 
@@ -1499,9 +1478,7 @@ async def test_graph_routes_violation_before_publishing_original_response(
             "final_reply": "第一句安全。第二句百分百有效。",
         }
 
-    async def load_catalog(
-        _: str, __: bool, ___: dict[str, object]
-    ) -> list[dict[str, object]]:
+    async def load_catalog(_: str, __: bool, ___: dict[str, object]) -> list[dict[str, object]]:
         return []
 
     deltas: list[str] = []
@@ -1536,9 +1513,7 @@ async def test_publish_response_only_publishes_the_post_compliance_text() -> Non
     deltas: list[str] = []
     sentences: list[str] = []
 
-    async def load_catalog(
-        _: str, __: bool, ___: dict[str, object]
-    ) -> list[dict[str, object]]:
+    async def load_catalog(_: str, __: bool, ___: dict[str, object]) -> list[dict[str, object]]:
         return []
 
     async def publish_delta(value: str) -> None:
@@ -1568,9 +1543,7 @@ async def test_publish_response_only_publishes_the_post_compliance_text() -> Non
 async def test_publish_response_passes_sentence_metadata_to_audio_publisher() -> None:
     metadata: list[tuple[int, int]] = []
 
-    async def load_catalog(
-        _: str, __: bool, ___: dict[str, object]
-    ) -> list[dict[str, object]]:
+    async def load_catalog(_: str, __: bool, ___: dict[str, object]) -> list[dict[str, object]]:
         return []
 
     async def publish_sentence(_: str, sentence_index: int, sentence_count: int) -> None:
@@ -1595,9 +1568,7 @@ async def test_compliance_node_checks_replaces_and_publishes_atomically() -> Non
     deltas: list[str] = []
     sentences: list[str] = []
 
-    async def load_catalog(
-        _: str, __: bool, ___: dict[str, object]
-    ) -> list[dict[str, object]]:
+    async def load_catalog(_: str, __: bool, ___: dict[str, object]) -> list[dict[str, object]]:
         return []
 
     async def publish_delta(value: str) -> None:
@@ -1669,30 +1640,41 @@ async def test_response_model_uses_streaming_json_when_a_delta_handler_is_provid
 
 
 @pytest.mark.asyncio
-async def test_product_reason_model_uses_one_product_card_payload(
+async def test_product_reason_batch_uses_one_call_and_restores_card_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    calls = 0
     captured: dict[str, object] = {}
 
     async def fake_structured_chat(
         system_prompt: str, payload: dict[str, object], schema: type[object]
-    ) -> ProductReason:
+    ) -> ProductReasonBatch:
+        nonlocal calls
+        calls += 1
         captured["system_prompt"] = system_prompt
         captured["payload"] = payload
-        assert schema is ProductReason
-        return ProductReason(product_id="product-1", reason="适合你的通勤场景。")
+        assert schema is ProductReasonBatch
+        return ProductReasonBatch(
+            reasons=[
+                ProductReason(product_id="product-2", reason="理由二"),
+                ProductReason(product_id="product-1", reason="理由一"),
+            ]
+        )
 
     monkeypatch.setattr(model_module, "_structured_chat", fake_structured_chat)
-    result = await model_module.generate_product_reason(
+    reasons = await model_module.generate_product_reasons(
         "推荐通勤耳机",
-        {"productId": "product-1", "name": "通勤耳机"},
+        [
+            {"productId": "product-1", "name": "商品一"},
+            {"productId": "product-2", "name": "商品二"},
+        ],
         "warm-professional",
     )
 
-    assert result == ProductReason(product_id="product-1", reason="适合你的通勤场景。")
-    assert "productCard" in str(captured["payload"])
-    assert "一张商品卡" in str(captured["system_prompt"])
-    assert "不能只用" in str(captured["system_prompt"])
+    assert calls == 1
+    assert [reason.product_id for reason in reasons] == ["product-1", "product-2"]
+    assert len(captured["payload"]["productCards"]) == 2  # type: ignore[index]
+    assert "每张商品卡恰好生成一条理由" in str(captured["system_prompt"])
 
 
 @pytest.mark.asyncio
@@ -1744,9 +1726,7 @@ async def test_recommendation_hook_model_uses_all_product_cards(
 
 @pytest.mark.asyncio
 async def test_emotional_response_appends_a_fact_based_selection_hook() -> None:
-    async def load_catalog(
-        _: str, __: bool, ___: dict[str, object]
-    ) -> list[dict[str, object]]:
+    async def load_catalog(_: str, __: bool, ___: dict[str, object]) -> list[dict[str, object]]:
         return []
 
     result = await emotional_response(
@@ -1780,9 +1760,7 @@ async def test_emotional_response_appends_a_fact_based_selection_hook() -> None:
 
 @pytest.mark.asyncio
 async def test_emotional_response_omits_selection_hook_for_a_single_product() -> None:
-    async def load_catalog(
-        _: str, __: bool, ___: dict[str, object]
-    ) -> list[dict[str, object]]:
+    async def load_catalog(_: str, __: bool, ___: dict[str, object]) -> list[dict[str, object]]:
         return []
 
     result = await emotional_response(
@@ -2127,25 +2105,23 @@ async def test_model_selection_hook_falls_back_when_it_reuses_a_shared_condition
 
 
 @pytest.mark.asyncio
-async def test_product_reasons_are_generated_concurrently_and_published_by_product(
+async def test_product_reasons_are_generated_in_one_batch_and_published_by_product(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    active = 0
-    max_active = 0
-    started: list[str] = []
+    calls = 0
     published: list[str] = []
 
-    async def fake_generate_product_reason(
-        utterance: str, card: dict[str, object], emotion_style: str
-    ) -> ProductReason:
-        nonlocal active, max_active
-        product_id = str(card["productId"])
-        started.append(product_id)
-        active += 1
-        max_active = max(max_active, active)
-        await asyncio.sleep(0.01)
-        active -= 1
-        return ProductReason(product_id=product_id, reason=f"理由-{product_id}")
+    async def fake_generate_product_reasons(
+        utterance: str, cards: list[dict[str, object]], emotion_style: str
+    ) -> list[ProductReason]:
+        nonlocal calls
+        calls += 1
+        assert utterance == "推荐通勤耳机"
+        assert emotion_style == "warm-professional"
+        return [
+            ProductReason(product_id=str(card["productId"]), reason=f"理由-{card['productId']}")
+            for card in cards
+        ]
 
     async def publish_reason(reason: ProductReason) -> None:
         published.append(reason.product_id)
@@ -2155,7 +2131,7 @@ async def test_product_reasons_are_generated_concurrently_and_published_by_produ
     ) -> list[dict[str, object]]:
         return []
 
-    monkeypatch.setattr(response_module, "generate_product_reason", fake_generate_product_reason)
+    monkeypatch.setattr(response_module, "generate_product_reasons", fake_generate_product_reasons)
     cards = [
         {"productId": "product-1", "name": "商品一"},
         {"productId": "product-2", "name": "商品二"},
@@ -2176,14 +2152,13 @@ async def test_product_reasons_are_generated_concurrently_and_published_by_produ
         ),
     )
 
-    assert set(started) == {"product-1", "product-2", "product-3"}
-    assert max_active == 3
+    assert calls == 1
     assert [reason["product_id"] for reason in result["reasons"]] == [
         "product-1",
         "product-2",
         "product-3",
     ]
-    assert set(published) == set(started)
+    assert published == ["product-1", "product-2", "product-3"]
     assert result["reasons_streamed"] is True
 
 
@@ -2210,8 +2185,5 @@ def test_state_events_use_the_shared_realtime_envelope() -> None:
     )
 
     assert events
-    assert all(
-        set(event) == {"type", "sessionId", "turnId", "seq", "payload"}
-        for event in events
-    )
+    assert all(set(event) == {"type", "sessionId", "turnId", "seq", "payload"} for event in events)
     assert [event["seq"] for event in events] == list(range(1, len(events) + 1))

@@ -99,22 +99,6 @@ class _FakeEmbeddingsWithUsage:
         return response["output"]["embeddings"][0]["embedding"]
 
 
-class _FakeReranker:
-    init_kwargs: dict[str, Any] = {}
-
-    def __init__(self, **kwargs: Any) -> None:
-        type(self).init_kwargs = kwargs
-
-    def rerank(self, documents: list[str], query: str, *, top_n: int) -> list[dict[str, Any]]:
-        assert query == "通勤耳机"
-        assert len(documents) == 2
-        assert top_n == 2
-        return [
-            {"index": 1, "relevance_score": 0.8},
-            {"index": 0, "relevance_score": 0.4},
-        ]
-
-
 @pytest.mark.asyncio
 async def test_chat_json_uses_chat_qwen(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(model_module, "ChatQwen", _FakeChatModel)
@@ -157,9 +141,7 @@ async def test_streaming_chat_qwen_exposes_speech_text_deltas(
     async def collect_sentence(sentence: str) -> None:
         sentences.append(sentence)
 
-    result = await model_module._stream_chat_json(
-        "system prompt", {}, collect, collect_sentence
-    )
+    result = await model_module._stream_chat_json("system prompt", {}, collect, collect_sentence)
 
     assert result == {"speech_text": "正在，筛选。", "reasons": []}
     assert "".join(deltas) == "正在，筛选。"
@@ -214,37 +196,3 @@ def test_usage_normalization_preserves_provider_costs() -> None:
         "input_cost": 0.01,
         "total_cost": 0.01,
     }
-
-
-@pytest.mark.asyncio
-async def test_rerank_uses_dashscope_rerank(monkeypatch: pytest.MonkeyPatch) -> None:
-    started: list[tuple[str, dict[str, Any]]] = []
-    finished: list[dict[str, Any]] = []
-    monkeypatch.setattr(model_module, "DashScopeRerank", _FakeReranker)
-    monkeypatch.setattr(
-        model_module,
-        "start_trace",
-        lambda name, **kwargs: started.append((name, kwargs)) or object(),
-    )
-    monkeypatch.setattr(
-        model_module,
-        "finish_trace",
-        lambda handle, **kwargs: finished.append(kwargs),
-    )
-    products = [
-        {"id": "product-1", "name": "商品一"},
-        {"id": "product-2", "name": "商品二"},
-    ]
-
-    result = await model_module.rerank_products("通勤耳机", products)
-
-    assert result == {"product-1": 0.4, "product-2": 0.8}
-    assert _FakeReranker.init_kwargs["model"] == "qwen3-rerank"
-    assert _FakeReranker.init_kwargs["dashscope_api_key"]
-    assert isinstance(_FakeReranker.init_kwargs["client"], model_module._InstructionalRerankClient)
-    assert started[0][1]["inputs"]["query"] == "通勤耳机"
-    assert len(started[0][1]["inputs"]["documents"]) == 2
-    assert started[0][1]["metadata"]["query"] == "通勤耳机"
-    assert len(started[0][1]["metadata"]["documents"]) == 2
-    assert finished[0]["outputs"]["scores"] == result
-    assert finished[0]["metadata"]["scores"] == result

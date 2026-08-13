@@ -46,6 +46,10 @@ class ProductReason(AgentModel):
     reason: str
 
 
+class ProductReasonBatch(AgentModel):
+    reasons: list[ProductReason]
+
+
 class RecommendationHook(AgentModel):
     hook: str
 
