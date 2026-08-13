@@ -14,7 +14,10 @@ from voice_shopping_api.agents.nodes import clarification as clarification_modul
 from voice_shopping_api.agents.nodes import intent as intent_module
 from voice_shopping_api.agents.nodes import recommendation as recommendation_module
 from voice_shopping_api.agents.nodes import response as response_module
-from voice_shopping_api.agents.nodes.clarification import clarify_requirements
+from voice_shopping_api.agents.nodes.clarification import (
+    clarify_requirements,
+    extract_slots_for_intent,
+)
 from voice_shopping_api.agents.nodes.constants import COMPLIANCE_FALLBACK, REQUIRED_SLOTS
 from voice_shopping_api.agents.nodes.intent import recognize_intent
 from voice_shopping_api.agents.nodes.recommendation import recommend_products
@@ -168,7 +171,7 @@ async def test_pending_question_is_classified_as_requirement_clarification_and_c
         intent_calls.append("called")
         return IntentResult(type="CHAT", confidence=0.91)
 
-    async def fake_clarify_with_model(*_: object) -> dict[str, object]:
+    async def fake_extract_slots_with_model(*_: object) -> dict[str, object]:
         return {}
 
     async def fake_rerank_products(*_: object) -> dict[str, float]:
@@ -198,7 +201,9 @@ async def test_pending_question_is_classified_as_requirement_clarification_and_c
         return [product]
 
     monkeypatch.setattr(intent_module, "recognize_with_model", fake_recognize_with_model)
-    monkeypatch.setattr(clarification_module, "clarify_with_model", fake_clarify_with_model)
+    monkeypatch.setattr(
+        clarification_module, "extract_slots_with_model", fake_extract_slots_with_model
+    )
     monkeypatch.setattr(recommendation_module, "rerank_products", fake_rerank_products)
     monkeypatch.setattr(response_module, "generate_product_reason", fake_product_reason)
     result = await shopping_workflow.ainvoke(
@@ -341,7 +346,7 @@ async def test_asr_filler_in_negated_category_does_not_override_a_new_category()
     assert result["intent"]["product_category"] == "HEADPHONES"
     assert result["product_category"] == "HEADPHONES"
     assert result["category_changed"] is True
-    assert result["slots"] == {}
+    assert result["slots"] == {"connectivity": "bluetooth"}
     assert result["pending_question"] is None
 
 
@@ -373,12 +378,13 @@ async def test_negated_selected_order_routes_to_the_new_category_request() -> No
 async def test_explicit_slot_answer_is_not_overwritten_by_conflicting_model_value(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_clarify_with_model(*_: object) -> dict[str, object]:
+    async def fake_extract_slots_with_model(*_: object) -> dict[str, object]:
         return {"movement": "quartz"}
 
-    monkeypatch.setattr(clarification_module, "clarify_with_model", fake_clarify_with_model)
-    result = await clarify_requirements(
-        {
+    monkeypatch.setattr(
+        clarification_module, "extract_slots_with_model", fake_extract_slots_with_model
+    )
+    state = {
             "utterance": "嗯其嗯，机械的吧。",
             "model_enabled": True,
             "product_category": "WATCHES",
@@ -399,10 +405,30 @@ async def test_explicit_slot_answer_is_not_overwritten_by_conflicting_model_valu
                 }
             },
         }
+    intent_updates = await recognize_intent(state)
+    result = await clarify_requirements({**state, **intent_updates})
+
+    assert intent_updates["slots"] == {"movement": "automatic"}
+    assert "slots" not in result
+    assert result["clarification_status"] == "READY"
+
+
+@pytest.mark.asyncio
+async def test_clarification_agent_only_asks_and_does_not_fill_slots() -> None:
+    result = await clarify_requirements(
+        {
+            "utterance": "我要头戴式蓝牙耳机",
+            "product_category": "HEADPHONES",
+            "slots": {},
+            "required_slots_by_category": {"HEADPHONES": ["form", "connectivity"]},
+            "allowed_slots_by_category": {"HEADPHONES": ["form", "connectivity"]},
+        }
     )
 
-    assert result["slots"] == {"movement": "automatic"}
-    assert result["clarification_status"] == "READY"
+    assert "slots" not in result
+    assert result["clarification_status"] == "ASK"
+    assert result["missing_slots"] == ["form", "connectivity"]
+    assert result["pending_question"]["slots"] == ["form", "connectivity"]
 
 
 @pytest.mark.asyncio
@@ -418,7 +444,7 @@ async def test_model_compare_for_explicit_purchase_routes_through_clarification(
             product_category="HEADPHONES",
         )
 
-    async def fake_clarify_with_model(*_: object) -> dict[str, object]:
+    async def fake_extract_slots_with_model(*_: object) -> dict[str, object]:
         return {}
 
     async def fake_rerank_products(*_: object) -> dict[str, float]:
@@ -449,7 +475,9 @@ async def test_model_compare_for_explicit_purchase_routes_through_clarification(
         return [product]
 
     monkeypatch.setattr(intent_module, "recognize_with_model", fake_recognize_with_model)
-    monkeypatch.setattr(clarification_module, "clarify_with_model", fake_clarify_with_model)
+    monkeypatch.setattr(
+        clarification_module, "extract_slots_with_model", fake_extract_slots_with_model
+    )
     monkeypatch.setattr(recommendation_module, "rerank_products", fake_rerank_products)
     monkeypatch.setattr(response_module, "generate_product_reason", fake_product_reason)
     result = await shopping_workflow.ainvoke(
@@ -1155,11 +1183,13 @@ async def test_model_category_switch_overrides_history_and_does_not_create_order
             product_category="鞋子",
         )
 
-    async def fake_clarify_with_model(*args: object) -> dict[str, object]:
+    async def fake_extract_slots_with_model(*args: object) -> dict[str, object]:
         return {}
 
     monkeypatch.setattr(intent_module, "recognize_with_model", fake_recognize_with_model)
-    monkeypatch.setattr(clarification_module, "clarify_with_model", fake_clarify_with_model)
+    monkeypatch.setattr(
+        clarification_module, "extract_slots_with_model", fake_extract_slots_with_model
+    )
     result = await shopping_workflow.ainvoke(
         {
             "utterance": "我想买一双鞋",
@@ -1258,12 +1288,12 @@ async def test_intent_system_prompt_contains_all_category_slot_configuration(
 
 
 @pytest.mark.asyncio
-async def test_clarification_agent_resolves_contextual_asr_error(
+async def test_intent_agent_resolves_contextual_asr_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, object] = {}
 
-    async def fake_clarify_with_model(
+    async def fake_extract_slots_with_model(
         utterance: str,
         product_category: str,
         required_slots: list[str],
@@ -1280,9 +1310,10 @@ async def test_clarification_agent_resolves_contextual_asr_error(
         )
         return {"form": "in-ear"}
 
-    monkeypatch.setattr(clarification_module, "clarify_with_model", fake_clarify_with_model)
-    result = await clarify_requirements(
-        {
+    monkeypatch.setattr(
+        clarification_module, "extract_slots_with_model", fake_extract_slots_with_model
+    )
+    state = {
             "utterance": "想要热辣死的。",
             "model_enabled": True,
             "product_category": "HEADPHONES",
@@ -1294,25 +1325,27 @@ async def test_clarification_agent_resolves_contextual_asr_error(
             },
             "conversation_history": ["assistant: 你想要入耳式还是头戴式？"],
         }
-    )
+    slots = await extract_slots_for_intent(state)
+    result = await clarify_requirements({**state, "slots": slots})
 
     assert captured["utterance"] == "想要热辣死的。"
     assert captured["pending_question"] == {
         "slot": "form",
         "question": "你想要入耳式还是头戴式？",
     }
-    assert result["slots"] == {"noiseCancellation": True, "form": "in-ear"}
+    assert slots == {"noiseCancellation": True, "form": "in-ear"}
+    assert "slots" not in result
     assert result["pending_question"]["slot"] == "connectivity"
     assert result["pending_question"]["slots"] == ["connectivity", "batteryHours"]
 
 
 @pytest.mark.asyncio
-async def test_clarification_agent_receives_numeric_shoe_size_definition(
+async def test_intent_agent_receives_numeric_shoe_size_definition(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, object] = {}
 
-    async def fake_clarify_with_model(
+    async def fake_extract_slots_with_model(
         utterance: str,
         product_category: str,
         required_slots: list[str],
@@ -1324,8 +1357,10 @@ async def test_clarification_agent_receives_numeric_shoe_size_definition(
         captured["slot_definitions"] = slot_definitions
         return {"size": 42}
 
-    monkeypatch.setattr(clarification_module, "clarify_with_model", fake_clarify_with_model)
-    result = await clarify_requirements(
+    monkeypatch.setattr(
+        clarification_module, "extract_slots_with_model", fake_extract_slots_with_model
+    )
+    slots = await extract_slots_for_intent(
         {
             "utterance": "四十二码",
             "model_enabled": True,
@@ -1344,19 +1379,20 @@ async def test_clarification_agent_receives_numeric_shoe_size_definition(
     assert size_definition["type"] == "number"
     assert size_definition["productAttribute"] == "sizeRange"
     assert size_definition["matchMode"] == "range_contains"
-    assert result["slots"] == {"size": 42}
+    assert slots == {"size": 42}
 
 
 @pytest.mark.asyncio
-async def test_clarification_agent_rejects_unknown_or_invalid_slot_values(
+async def test_intent_agent_rejects_unknown_or_invalid_slot_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_clarify_with_model(*args: object) -> dict[str, object]:
+    async def fake_extract_slots_with_model(*args: object) -> dict[str, object]:
         return {"form": "speaker", "inventedSlot": True}
 
-    monkeypatch.setattr(clarification_module, "clarify_with_model", fake_clarify_with_model)
-    result = await clarify_requirements(
-        {
+    monkeypatch.setattr(
+        clarification_module, "extract_slots_with_model", fake_extract_slots_with_model
+    )
+    state = {
             "utterance": "随便吧",
             "model_enabled": True,
             "product_category": "HEADPHONES",
@@ -1367,17 +1403,18 @@ async def test_clarification_agent_rejects_unknown_or_invalid_slot_values(
                 "question": "你想要入耳式还是头戴式？",
             },
         }
-    )
+    slots = await extract_slots_for_intent(state)
+    result = await clarify_requirements({**state, "slots": slots})
 
-    assert result["slots"] == {"noiseCancellation": True}
+    assert slots == {"noiseCancellation": True}
+    assert "slots" not in result
     assert result["pending_question"]["slot"] == "form"
     assert result["pending_question"]["slots"] == ["form", "connectivity"]
 
 
 @pytest.mark.asyncio
 async def test_answering_second_question_does_not_pollute_first_slot() -> None:
-    result = await clarify_requirements(
-        {
+    state = {
             "utterance": "想要一个蓝牙的。",
             "model_enabled": False,
             "product_category": "HEADPHONES",
@@ -1395,17 +1432,18 @@ async def test_answering_second_question_does_not_pollute_first_slot() -> None:
                 "question": "你想要入耳式还是头戴式？另外，你希望使用蓝牙还是有线连接？",
             },
         }
-    )
+    slots = await extract_slots_for_intent(state)
+    result = await clarify_requirements({**state, "slots": slots})
 
-    assert result["slots"] == {"connectivity": "bluetooth"}
+    assert slots == {"connectivity": "bluetooth"}
+    assert "slots" not in result
     assert result["clarification_status"] == "ASK"
     assert result["pending_question"]["slots"] == ["form"]
 
 
 @pytest.mark.asyncio
 async def test_dynamic_enum_slot_can_be_answered_without_model() -> None:
-    result = await clarify_requirements(
-        {
+    state = {
             "utterance": "blue",
             "model_enabled": False,
             "product_category": "CUSTOM_ITEM",
@@ -1422,9 +1460,11 @@ async def test_dynamic_enum_slot_can_be_answered_without_model() -> None:
                 "question": "请告诉我color？",
             },
         }
-    )
+    slots = await extract_slots_for_intent(state)
+    result = await clarify_requirements({**state, "slots": slots})
 
-    assert result["slots"] == {"color": "blue"}
+    assert slots == {"color": "blue"}
+    assert "slots" not in result
     assert result["clarification_status"] == "READY"
 
 

@@ -123,8 +123,8 @@ graph TD;
 
 | 节点 | 输入重点 | 输出重点 |
 | --- | --- | --- |
-| `intent_agent` | 当前话语、最近 6 条消息、动态品类上下文、上一轮卡片/待确认订单 | 单意图、置信度、品类、订单 action、品类变化标记 |
-| `clarification_agent` | 品类必填/允许槽位、槽位定义、当前槽位、pending question、当前话语 | `ASK/READY`、过滤后的槽位、缺失槽位、下一问题 |
+| `intent_agent` | 当前话语、最近 6 条消息、动态品类及槽位定义、当前槽位、pending question、上一轮卡片/待确认订单 | 单意图、置信度、品类、订单 action、品类变化标记，以及校验并合并后的槽位 |
+| `clarification_agent` | 品类必填/允许槽位、当前槽位、问题文案 | `ASK/READY`、缺失槽位、下一问题；不填写槽位 |
 | `recommendation_agent` | 意图、品类、已填槽位、画像快照、注入的 catalog loader | Top 3 商品卡、匹配分、评分拆解、情绪风格 |
 | `order_node` | 意图 action、上一轮商品卡、待确认订单 | 订单服务返回的状态和播报文本 |
 | `emotional_agent` | 商品卡、原话、情绪风格 | 每卡理由、完整话术，不直接发布 |

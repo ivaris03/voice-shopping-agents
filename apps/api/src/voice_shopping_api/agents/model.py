@@ -11,11 +11,11 @@ from langchain_qwq import ChatQwen
 from langsmith import get_current_run_tree, traceable
 
 from voice_shopping_api.agents.prompts import (
-    CLARIFICATION_SYSTEM_PROMPT,
     EMOTIONAL_RESPONSE_SYSTEM_PROMPT,
     PRODUCT_REASON_SYSTEM_PROMPT,
     RECOMMENDATION_HOOK_SYSTEM_PROMPT,
     RECOMMENDATION_RERANK_INSTRUCTION,
+    SLOT_EXTRACTION_SYSTEM_PROMPT,
     build_intent_system_prompt,
 )
 from voice_shopping_api.agents.state import (
@@ -262,7 +262,7 @@ async def recognize_with_model(
     )
 
 
-async def clarify_with_model(
+async def extract_slots_with_model(
     utterance: str,
     product_category: str,
     required_slots: list[str],
@@ -272,7 +272,7 @@ async def clarify_with_model(
     conversation_history: list[str],
 ) -> dict[str, Any]:
     result = await _structured_chat(
-        CLARIFICATION_SYSTEM_PROMPT,
+        SLOT_EXTRACTION_SYSTEM_PROMPT,
         {
             "utterance": utterance,
             "productCategory": product_category,

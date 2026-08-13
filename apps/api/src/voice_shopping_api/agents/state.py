@@ -28,7 +28,6 @@ class IntentResult(AgentModel):
 
 class ClarificationResult(AgentModel):
     status: Literal["ASK", "READY"]
-    slots: dict[str, Any]
     missing_slots: list[str]
     question: str | None = None
 

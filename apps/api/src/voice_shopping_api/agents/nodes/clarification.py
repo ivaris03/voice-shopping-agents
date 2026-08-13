@@ -2,7 +2,7 @@ import logging
 import re
 from typing import Any
 
-from voice_shopping_api.agents.model import clarify_with_model
+from voice_shopping_api.agents.model import extract_slots_with_model
 from voice_shopping_api.agents.nodes.constants import QUESTIONS, REQUIRED_SLOTS, SLOT_DEFINITIONS
 from voice_shopping_api.agents.state import ClarificationResult, ShoppingState
 
@@ -215,7 +215,13 @@ def _question_for_slots(slots: list[str], taxonomy_questions: dict[str, str]) ->
     return questions[0] if len(questions) < 2 else f"{questions[0]}另外，{questions[1]}"
 
 
-async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
+async def extract_slots_for_intent(state: ShoppingState) -> dict[str, Any]:
+    """Extract and validate slot values owned by the intent Agent.
+
+    This helper stays next to the slot parsing rules, but it is invoked only by
+    ``intent_agent``.  The clarification Agent below only inspects the resulting
+    slots and decides whether another question is required.
+    """
     category = state.get("product_category")
     required_slots_by_category = state.get("required_slots_by_category")
     allowed_slots_by_category = state.get("allowed_slots_by_category")
@@ -297,7 +303,7 @@ async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
                 if (definition := _effective_slot_definition(slot, taxonomy_definitions))
                 is not None
             }
-            agent_slots = await clarify_with_model(
+            agent_slots = await extract_slots_with_model(
                 state.get("utterance", ""),
                 category,
                 required_slots,
@@ -315,11 +321,32 @@ async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
                 }
             )
         except Exception as exc:
-            logger.warning("Clarification model failed; using deterministic fallback: %s", exc)
+            logger.warning("Intent slot model failed; using deterministic fallback: %s", exc)
+    return slots
+
+
+async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
+    """Ask for missing requirements without extracting or changing slot values."""
+    category = state.get("product_category")
+    required_slots_by_category = state.get("required_slots_by_category")
+    allowed_slots_by_category = state.get("allowed_slots_by_category")
+    if required_slots_by_category and category in required_slots_by_category:
+        required_slots = required_slots_by_category[category]
+    elif "required_slots" in state:
+        required_slots = state["required_slots"]
+    else:
+        required_slots = REQUIRED_SLOTS.get(category or "", [])
+    if allowed_slots_by_category and category in allowed_slots_by_category:
+        allowed_slots = allowed_slots_by_category[category]
+    elif "allowed_slots" in state:
+        allowed_slots = state["allowed_slots"]
+    else:
+        allowed_slots = required_slots
+
+    slots = state.get("slots", {})
     if not category:
         result = ClarificationResult(
             status="ASK",
-            slots=slots,
             missing_slots=["productCategory"],
             question=QUESTIONS["productCategory"],
         )
@@ -329,7 +356,6 @@ async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
         question_slots = missing[:2]
         result = ClarificationResult(
             status="ASK" if missing else "READY",
-            slots=slots,
             missing_slots=missing,
             question=_question_for_slots(question_slots, state.get("taxonomy_slot_questions", {}))
             if missing
@@ -338,7 +364,6 @@ async def clarify_requirements(state: ShoppingState) -> dict[str, Any]:
     return {
         "required_slots": required_slots,
         "allowed_slots": allowed_slots,
-        "slots": result.slots,
         "clarification_status": result.status,
         "missing_slots": result.missing_slots,
         "pending_question": {

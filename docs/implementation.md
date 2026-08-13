@@ -52,8 +52,7 @@
 
 ```text
 START
-  -> clarification_agent          (存在 pending_question)
-  -> intent_agent                 (无 pending_question)
+  -> intent_agent                 (每一轮都先识别意图并写入槽位)
      -> clarification_agent       (REQUIREMENT_CLARIFICATION / PRODUCT_RECOMMENDATION)
         -> recommendation_agent   (clarification_status=READY)
         -> emotional_agent         (clarification_status=ASK)
@@ -65,7 +64,7 @@ START
    -> END
 ```
 
-存在 `pending_question` 时，图会从 `START` 直接进入澄清节点，把本轮话语当作上一问题的回答处理，不会再次调用意图识别。没有待回答问题的对话才进入意图节点。`recommendation_agent` 和 `order_node` 都是图节点，订单事务由 context 中的 `order_handler` 执行。
+图始终从 `START` 进入意图节点。存在 `pending_question` 时，意图节点把本轮话语当作上一问题的回答处理、写入通过校验的槽位，再进入只负责判断和提问的澄清节点。`recommendation_agent` 和 `order_node` 都是图节点，订单事务由 context 中的 `order_handler` 执行。
 
 ### 3.2 状态契约
 
@@ -94,14 +93,14 @@ START
 `process_turn()` 用 `bool(settings.dashscope_api_key)` 设置 `model_enabled`：
 
 - 开启时使用 DashScope ChatQwen、Embedding 和 Reranker。意图识别、槽位抽取和单商品推荐理由通过 LangChain `with_structured_output()` 分别绑定 `IntentResult`、`SlotExtractionResult` 和 `ProductReason`；三类结果在模型边界直接完成 Pydantic 校验，Agent 模型禁止额外字段。情感回复仍保留 JSON mode，因为它需要兼容增量话术和短句发布。
-- 未开启或模型调用异常时，意图节点回退关键词位置选择，澄清节点回退规则抽取，推荐节点回退确定性排序，理由节点回退固定模板。
+- 未开启或模型调用异常时，意图节点回退关键词位置选择和规则槽位抽取，推荐节点回退确定性排序，理由节点回退固定模板。
 - 模型失败只影响当前能力，不会让商品事实、订单事务或会话持久化绕过服务端校验。
 
 ## 4. 意图和需求澄清
 
 ### 4.1 意图节点
 
-当没有 `pending_question` 时，`recognize_intent()` 会识别新一轮请求。存在待回答问题时，工作流直接复用已有品类和槽位上下文进入需求澄清节点，避免把“机械的吧”这类槽位回答误判为 `CHAT`。意图模型提示词由 `service._taxonomy_context()` 生成，包含当前数据库中的所有二级品类和槽位定义。
+`recognize_intent()` 每轮都会先执行。存在 `pending_question` 时，节点把本轮话语识别为需求回答，并在进入需求澄清节点之前完成槽位抽取，避免把“机械的吧”这类槽位回答误判为 `CHAT`。意图模型提示词由 `service._taxonomy_context()` 生成，包含当前数据库中的所有二级品类和槽位定义。
 
 识别结果经过 `_finalize_intent()` 再进入路由：
 
@@ -112,9 +111,7 @@ START
 - `PRODUCT_ORDER + CREATE` 必须有上一轮商品卡；没有卡、品类变了且没有明确目标，或用户明显是在开始新推荐时，会安全降级为推荐意图。
 - 确认只在存在待确认订单且用户使用确认表达时产生；没有待确认订单时不会伪造确认动作。
 
-### 4.2 澄清节点
-
-澄清节点的数据来源优先级为：数据库当前品类槽位定义、应用内 canonical 定义、确定性抽取、模型抽取。最终写入前统一经过 `_validated_agent_slots()`：
+意图节点在完成意图归一化后抽取并写入 `slots`。槽位数据来源优先级为：数据库当前品类槽位定义、应用内 canonical 定义、确定性抽取、模型抽取。最终写入前统一经过 `_validated_agent_slots()`：
 
 - 丢弃不在允许集合中的键。
 - 枚举值必须在定义的 `values` 中。
@@ -124,12 +121,15 @@ START
 
 确定性抽取覆盖预算、布尔需求、耳机形态/连接方式/续航、咖啡机和水壶参数、跑鞋尺码/路面/足型、手表机芯/材质/防水、口红色调/妆效/肤质等常见表达。模型补充抽取只接收当前话语、已有槽位、最多两个 pending 槽位和标准定义，不能写入未定义值。
 
+### 4.2 澄清节点
+
+澄清节点只读取意图节点写入的 `slots`，检查当前品类的必填槽位，不再处理本轮话语、调用槽位抽取模型或写回 `slots`。
+
 节点返回：
 
 ```json
 {
   "required_slots": ["form", "connectivity"],
-  "slots": {"form": "over-ear"},
   "clarification_status": "ASK",
   "missing_slots": ["connectivity"],
   "pending_question": {

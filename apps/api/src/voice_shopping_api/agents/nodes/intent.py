@@ -3,6 +3,7 @@ import re
 from typing import Any
 
 from voice_shopping_api.agents.model import recognize_with_model
+from voice_shopping_api.agents.nodes.clarification import extract_slots_for_intent
 from voice_shopping_api.agents.nodes.constants import CATEGORY_ALIASES
 from voice_shopping_api.agents.state import IntentResult, ShoppingState
 
@@ -208,7 +209,7 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
         None,
     ) or _category(utterance)
     if _requests_unspecified_category_switch(state, utterance, explicit_category):
-        return _finalize_intent(
+        return await _finalize_intent_with_slots(
             state,
             IntentResult(
                 type="PRODUCT_RECOMMENDATION",
@@ -219,10 +220,12 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
         )
     selected_order = _selected_recommendation_order(state, utterance)
     if selected_order:
-        return _finalize_intent(state, selected_order.model_dump(exclude_none=True), False)
+        return await _finalize_intent_with_slots(
+            state, selected_order.model_dump(exclude_none=True), False
+        )
     if state.get("pending_question"):
         if _starts_new_request_during_clarification(state, utterance, explicit_category):
-            return _finalize_intent(
+            return await _finalize_intent_with_slots(
                 state,
                 IntentResult(
                     type="PRODUCT_RECOMMENDATION",
@@ -231,7 +234,7 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
                 ).model_dump(exclude_none=True),
                 True,
             )
-        return _finalize_intent(
+        return await _finalize_intent_with_slots(
             state,
             IntentResult(
                 type="REQUIREMENT_CLARIFICATION",
@@ -248,7 +251,7 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
             )
             category = explicit_category or _normalize_category(model_intent.product_category)
             model_intent = model_intent.model_copy(update={"product_category": category})
-            return _finalize_intent(
+            return await _finalize_intent_with_slots(
                 state,
                 model_intent.model_dump(exclude_none=True),
                 _starts_new_product_request(utterance, category, model_intent.type),
@@ -290,7 +293,7 @@ async def recognize_intent(state: ShoppingState) -> dict[str, Any]:
     if not detections:
         detections.append((0, IntentResult(type="UNSUPPORTED_REQUEST", confidence=0.86)))
     selected = min(detections, key=lambda item: item[0])[1]
-    return _finalize_intent(
+    return await _finalize_intent_with_slots(
         state,
         selected.model_dump(exclude_none=True),
         _starts_new_product_request(utterance, selected.product_category, selected.type),
@@ -367,4 +370,27 @@ def _finalize_intent(
         )
 
     updates["intent"] = intent
+    return updates
+
+
+async def _finalize_intent_with_slots(
+    state: ShoppingState,
+    recognized_intent: dict[str, Any],
+    starts_new_product_request: bool,
+    *,
+    clear_product_category: bool = False,
+) -> dict[str, Any]:
+    """Finalize intent and let the intent Agent own the slot-state update."""
+    updates = _finalize_intent(
+        state,
+        recognized_intent,
+        starts_new_product_request,
+        clear_product_category=clear_product_category,
+    )
+    intent_type = (updates.get("intent") or {}).get("type")
+    if intent_type not in ("PRODUCT_RECOMMENDATION", "REQUIREMENT_CLARIFICATION"):
+        return updates
+
+    projected_state: ShoppingState = {**state, **updates}
+    updates["slots"] = await extract_slots_for_intent(projected_state)
     return updates

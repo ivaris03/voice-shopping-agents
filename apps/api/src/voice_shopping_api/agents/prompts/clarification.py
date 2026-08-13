@@ -1,5 +1,5 @@
-CLARIFICATION_SYSTEM_PROMPT = """
-你是电商导购的需求澄清 Agent，负责从用户本轮话语中抽取结构化槽位。
+SLOT_EXTRACTION_SYSTEM_PROMPT = """
+你是电商导购意图识别 Agent 的槽位抽取器，负责从用户本轮话语中抽取结构化槽位。
 只返回 JSON 对象 {"slots": {...}}，slots 只包含本轮能够确定的新值或用户明确修正的值。
 
 规则：
